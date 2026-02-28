@@ -1,6 +1,6 @@
 [project]
 name = "mkdocs-live-wysiwyg-plugin"
-version = "0.1.0"
+version = "0.1.1"
 description = "WYSIWYG editor for mkdocs-live-edit-plugin based on @celsowm/markdown-wysiwyg"
 readme = "README.md"
 license = "MIT"
@@ -49,6 +49,7 @@ packages = ["mkdocs_live_wysiwyg_plugin"]
 "mkdocs_live_wysiwyg_plugin/live-wysiwyg-integration.js" = "mkdocs_live_wysiwyg_plugin/live-wysiwyg-integration.js"
 "mkdocs_live_wysiwyg_plugin/mkdocs-admonition-extension.js" = "mkdocs_live_wysiwyg_plugin/mkdocs-admonition-extension.js"
 "mkdocs_live_wysiwyg_plugin/admonition.css" = "mkdocs_live_wysiwyg_plugin/admonition.css"
+
 
 [tool.uv.sources]
 mkdocs-live-edit-plugin = { path = "../mkdocs-live-edit-plugin", editable = true }

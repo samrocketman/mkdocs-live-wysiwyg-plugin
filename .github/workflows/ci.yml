@@ -7,6 +7,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
 
@@ -20,8 +24,8 @@ jobs:
           ./"$INSTALL_DIR/download-utilities.sh" .github/download-utilities.yml uv
           echo "/usr/local/bin" >> $GITHUB_PATH
 
-      - name: Set up Python
-        run: uv python install 3.12
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Build package
         run: uv build --no-sources
@@ -32,6 +36,10 @@ jobs:
 
   render:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +52,9 @@ jobs:
           chmod +x "$INSTALL_DIR/download-utilities.sh"
           ./"$INSTALL_DIR/download-utilities.sh" .github/download-utilities.yml uv yq
           echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Download techdocs-preview.sh
         run: |

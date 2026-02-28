@@ -8,7 +8,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     # Skip when the last commit is a release commit to avoid re-running after we push
-    if: ${{ !contains(github.event.head_commit.message, 'chore: release') }}
+    if: "${{ !contains(github.event.head_commit.message, 'chore: release') }}"
     permissions:
       contents: write
     steps:
@@ -28,10 +28,17 @@ jobs:
           echo "/usr/local/bin" >> $GITHUB_PATH
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install 3.10
 
       - name: Bump version
-        run: uv version --bump patch
+        run: |
+          # Remove local path override so uv can resolve from PyPI (path doesn't exist in CI)
+          sed -i '/^\[tool\.uv\.sources\]$/,/^[^[]/d' pyproject.toml
+          uv version --bump patch
+          # Restore tool.uv.sources for local development
+          echo '' >> pyproject.toml
+          echo '[tool.uv.sources]' >> pyproject.toml
+          echo 'mkdocs-live-edit-plugin = { path = "../mkdocs-live-edit-plugin", editable = true }' >> pyproject.toml
 
       - name: Get version
         id: version

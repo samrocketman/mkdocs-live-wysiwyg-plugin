@@ -212,16 +212,14 @@ wheels = [
 [[package]]
 name = "mkdocs-live-edit-plugin"
 version = "0.3.1"
-source = { editable = "../mkdocs-live-edit-plugin" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mkdocs" },
     { name = "websockets" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "mkdocs" },
-    { name = "websockets", specifier = ">=14" },
+sdist = { url = "https://files.pythonhosted.org/packages/34/9f/ef9c0fb3889bea169c32f4475e77248b5374166afd93feed49b05c386f50/mkdocs_live_edit_plugin-0.3.1.tar.gz", hash = "sha256:201c8453e89af9117b1bf2f6a17fd616d564d3f17d5b5d752a6387e11fc3f9b9", size = 14730, upload-time = "2025-02-23T21:34:21.534Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/de/80/a680f49c678d1ad87d4198afe3085368ae339772bcc70b8f2bd63940ffff/mkdocs_live_edit_plugin-0.3.1-py3-none-any.whl", hash = "sha256:e6d19bd0bf7e44c2539d15bfb39f9cf3c9976e28dd784e2e07b1bfb73aad940c", size = 16837, upload-time = "2025-02-23T21:34:20.344Z" },
 ]
 
 [[package]]
@@ -241,7 +239,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mkdocs", specifier = ">=1.5" },
-    { name = "mkdocs-live-edit-plugin", editable = "../mkdocs-live-edit-plugin" },
+    { name = "mkdocs-live-edit-plugin" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
 ]
 provides-extras = ["dev"]

@@ -31,14 +31,7 @@ jobs:
         run: uv python install 3.10
 
       - name: Bump version
-        run: |
-          # Remove local path override so uv can resolve from PyPI (path doesn't exist in CI)
-          sed -i '/^\[tool\.uv\.sources\]$/,/^[^[]/d' pyproject.toml
-          uv version --bump patch
-          # Restore tool.uv.sources for local development
-          echo '' >> pyproject.toml
-          echo '[tool.uv.sources]' >> pyproject.toml
-          echo 'mkdocs-live-edit-plugin = { path = "../mkdocs-live-edit-plugin", editable = true }' >> pyproject.toml
+        run: uv version --bump patch
 
       - name: Get version
         id: version

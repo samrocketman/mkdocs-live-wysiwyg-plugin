@@ -54,5 +54,6 @@ Contributions to add support for other themes are welcome; see [CONTRIBUTING.md]
 
 ## Requirements
 
+- Python 3.10 or higher.
 - mkdocs-live-edit-plugin (must be installed and configured)
 - mkdocs >= 1.5

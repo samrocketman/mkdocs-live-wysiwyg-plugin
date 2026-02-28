@@ -49,7 +49,3 @@ packages = ["mkdocs_live_wysiwyg_plugin"]
 "mkdocs_live_wysiwyg_plugin/live-wysiwyg-integration.js" = "mkdocs_live_wysiwyg_plugin/live-wysiwyg-integration.js"
 "mkdocs_live_wysiwyg_plugin/mkdocs-admonition-extension.js" = "mkdocs_live_wysiwyg_plugin/mkdocs-admonition-extension.js"
 "mkdocs_live_wysiwyg_plugin/admonition.css" = "mkdocs_live_wysiwyg_plugin/admonition.css"
-
-
-[tool.uv.sources]
-mkdocs-live-edit-plugin = { path = "../mkdocs-live-edit-plugin", editable = true }

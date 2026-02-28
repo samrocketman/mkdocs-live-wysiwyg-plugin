@@ -2,23 +2,12 @@
 
 ## Development Setup
 
-### Local development with sibling mkdocs-live-edit-plugin
-
-When developing with a local clone of `mkdocs-live-edit-plugin` in a sibling directory:
-
 ```bash
 cd mkdocs-live-wysiwyg-plugin
 uv sync
 ```
 
-The `pyproject.toml` includes a `[tool.uv.sources]` override to use the local `../mkdocs-live-edit-plugin` when present.
-
-### Standalone development (without local mkdocs-live-edit-plugin)
-
-```bash
-uv pip install mkdocs-live-edit-plugin
-uv pip install -e .
-```
+This installs `mkdocs-live-edit-plugin` from PyPI along with the plugin in editable mode.
 
 ### Building the site for testing
 

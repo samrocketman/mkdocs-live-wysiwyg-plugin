@@ -97,6 +97,5 @@ The `.github/workflows/publish.yml` workflow publishes to PyPI on tag push (e.g.
 
 ## Troubleshooting
 
-- **Build fails with path dependency**: Ensure `uv build --no-sources` is used so `mkdocs-live-edit-plugin` is resolved from PyPI, not a local path.
 - **Version already exists**: PyPI rejects re-uploads. Bump the version and rebuild.
 - **Missing files in package**: Check `[tool.hatch.build.targets.wheel.force-include]` in `pyproject.toml` includes all required assets (JS, CSS).

@@ -1,0 +1,78 @@
+/* MkDocs admonition styling for WYSIWYG editor */
+/* No custom icons - uses built-in theme icons. padding-left keeps editable text clear of icon. */
+.md-editable-area .admonition,
+.live-edit-wysiwyg-wrapper .admonition {
+  margin: 1em 0;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  border-left: 4px solid #6ab0de;
+  background-color: #f7f9fc;
+}
+
+/* padding-left reserves space for built-in theme icon so editable text doesn't overlap */
+.md-editable-area .admonition .admonition-title,
+.live-edit-wysiwyg-wrapper .admonition .admonition-title {
+  font-weight: bold;
+  margin: 0 0 0.5em 0;
+  padding: 0 0 0 1.75rem;
+}
+
+/* Move the built-in theme icon up 0.5em and left 0.5em (transform preserves theme styling) */
+.md-editable-area .admonition .admonition-title::before,
+.live-edit-wysiwyg-wrapper .admonition .admonition-title::before {
+  transform: translate(-0.5em, -0.5em);
+}
+
+.md-editable-area .admonition.note,
+.live-edit-wysiwyg-wrapper .admonition.note {
+  border-left-color: #6ab0de;
+  background-color: #f0f7ff;
+}
+
+.md-editable-area .admonition.warning,
+.live-edit-wysiwyg-wrapper .admonition.warning {
+  border-left-color: #f0ad4e;
+  background-color: #fff8e6;
+}
+
+.md-editable-area .admonition.danger,
+.live-edit-wysiwyg-wrapper .admonition.danger {
+  border-left-color: #d9534f;
+  background-color: #fff0f0;
+}
+
+.md-editable-area .admonition.tip,
+.live-edit-wysiwyg-wrapper .admonition.tip {
+  border-left-color: #5cb85c;
+  background-color: #f0fff4;
+}
+
+.md-editable-area .admonition.important,
+.live-edit-wysiwyg-wrapper .admonition.important {
+  border-left-color: #f0ad4e;
+  background-color: #fffbf0;
+}
+
+.md-editable-area .admonition.caution,
+.live-edit-wysiwyg-wrapper .admonition.caution {
+  border-left-color: #f0ad4e;
+  background-color: #fff8e6;
+}
+
+.md-editable-area .admonition.error,
+.live-edit-wysiwyg-wrapper .admonition.error {
+  border-left-color: #d9534f;
+  background-color: #fff0f0;
+}
+
+.md-editable-area .admonition.attention,
+.live-edit-wysiwyg-wrapper .admonition.attention {
+  border-left-color: #f0ad4e;
+  background-color: #fff8e6;
+}
+
+.md-editable-area .admonition.hint,
+.live-edit-wysiwyg-wrapper .admonition.hint {
+  border-left-color: #5cb85c;
+  background-color: #f0fff4;
+}

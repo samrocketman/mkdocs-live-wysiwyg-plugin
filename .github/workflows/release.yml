@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Skip when the last commit is a release commit to avoid re-running after we push
+    if: ${{ !contains(github.event.head_commit.message, 'chore: release') }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Install uv from .github/download-utilities.yml
+        run: |
+          RELEASE_TAG=$(curl -sL https://api.github.com/repos/samrocketman/yml-install-files/releases/latest | jq -r '.tag_name')
+          curl -fsSL -o release.tar.gz "https://github.com/samrocketman/yml-install-files/archive/refs/tags/${RELEASE_TAG}.tar.gz"
+          tar -xzf release.tar.gz
+          INSTALL_DIR=$(ls -d yml-install-files-* | head -1)
+          chmod +x "$INSTALL_DIR/download-utilities.sh"
+          ./"$INSTALL_DIR/download-utilities.sh" .github/download-utilities.yml uv
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Bump version
+        run: uv version --bump patch
+
+      - name: Get version
+        id: version
+        run: echo "version=$(grep -oP '^version = "\K[^"]+' pyproject.toml)" >> $GITHUB_OUTPUT
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "chore: release v${{ steps.version.outputs.version }}"
+          git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
+
+      - name: Push
+        run: |
+          git push origin main
+          git push origin "v${{ steps.version.outputs.version }}"

@@ -1,0 +1,46 @@
+versions:
+  uv: 0.10.7
+  yq: 4.49.2
+checksums:
+  uv:
+    unknown-linux-gnu:
+      x86_64: 3b9d43bace955a409eb6f012b0932a4935534bdb54b85b9fd696cabbb15979a0
+      aarch64: ad4f54ea470da62875ba5c45d4bd8e0bd0271989c68ce3335bbea26a5a6706e8
+    apple-darwin:
+      aarch64: e7a5bf88df262cdf04ee035ac75dc91b753316dab29730ab4c08e03c40d11c7e
+      x86_64: 9ce2a8d60b251ef51f3469ba80ac362f6dcf5a25f6871024385e2c6aa13e201f
+  yq:
+    darwin:
+      arm64: b0b70ede2b392ba02091b8137b42db819a7968cf232d595dd7394ac5668b4a0b
+      amd64: c14cd4ae68d42074e58463f5ebdbc3c49ec27c6de6a23b4af58a483bc3f15aa0
+    linux:
+      arm64: 783aa3c3beedcf2bf4aaf6262eca38b92a16d3ea31e2218ca80ba8ec7226b248
+      amd64: be2c0ddcf426b6a231648610ec5d1666ae50e9f6473e82f6486f9f4cb6e3e2f7
+
+defaults: &defaults
+  dest: /usr/local/bin
+  perm: '0755'
+
+utility:
+  uv:
+    <<: *defaults
+    # uv uses different naming: x86_64/aarch64 and unknown-linux-gnu/apple-darwin
+    os:
+      Linux: unknown-linux-gnu
+      Darwin: apple-darwin
+    arch:
+      Darwin:
+        arm64: aarch64
+    download: https://github.com/astral-sh/uv/releases/download/${version}/uv-${arch}-${os}.tar.gz
+    extract: tar -xzC ${dest}/ --no-same-owner --strip-components=1 uv-${arch}-${os}/uv
+  yq:
+    <<: *defaults
+    os:
+      Linux: linux
+      Darwin: darwin
+    arch:
+      x86_64: amd64
+      aarch64: arm64
+      Darwin:
+        i386: amd64
+    download: https://github.com/mikefarah/yq/releases/download/v${version}/yq_${os}_${arch}

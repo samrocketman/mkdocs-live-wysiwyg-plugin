@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv from .github/download-utilities.yml
+        run: |
+          RELEASE_TAG=$(curl -sL https://api.github.com/repos/samrocketman/yml-install-files/releases/latest | jq -r '.tag_name')
+          curl -fsSL -o release.tar.gz "https://github.com/samrocketman/yml-install-files/archive/refs/tags/${RELEASE_TAG}.tar.gz"
+          tar -xzf release.tar.gz
+          INSTALL_DIR=$(ls -d yml-install-files-* | head -1)
+          chmod +x "$INSTALL_DIR/download-utilities.sh"
+          ./"$INSTALL_DIR/download-utilities.sh" .github/download-utilities.yml uv
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build package
+        run: uv build --no-sources
+
+      - name: Verify build
+        run: |
+          uv run --with ./dist/mkdocs_live_wysiwyg_plugin-*.whl --no-project -- python -c "import mkdocs_live_wysiwyg_plugin; print('OK')"
+
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv and yq from .github/download-utilities.yml
+        run: |
+          RELEASE_TAG=$(curl -sL https://api.github.com/repos/samrocketman/yml-install-files/releases/latest | jq -r '.tag_name')
+          curl -fsSL -o release.tar.gz "https://github.com/samrocketman/yml-install-files/archive/refs/tags/${RELEASE_TAG}.tar.gz"
+          tar -xzf release.tar.gz
+          INSTALL_DIR=$(ls -d yml-install-files-* | head -1)
+          chmod +x "$INSTALL_DIR/download-utilities.sh"
+          ./"$INSTALL_DIR/download-utilities.sh" .github/download-utilities.yml uv yq
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Download techdocs-preview.sh
+        run: |
+          curl -fsSL -o techdocs-preview.sh \
+            https://raw.githubusercontent.com/samrocketman/home/main/bin/techdocs-preview.sh
+          chmod +x techdocs-preview.sh
+
+      - name: Add plugin and build site
+        run: |
+          ./techdocs-preview.sh add_plugins --upgrade .
+          ./techdocs-preview.sh build

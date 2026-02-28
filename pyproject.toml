@@ -1,0 +1,54 @@
+[project]
+name = "mkdocs-live-wysiwyg-plugin"
+version = "0.1.0"
+description = "WYSIWYG editor for mkdocs-live-edit-plugin based on @celsowm/markdown-wysiwyg"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Sam Gleske", url = "https://github.com/samrocketman" },
+]
+keywords = ["mkdocs", "plugin", "wysiwyg", "editor", "live-edit", "markdown"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Documentation",
+]
+dependencies = [
+    "mkdocs>=1.5",
+    "mkdocs-live-edit-plugin",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+]
+
+[project.urls]
+Homepage = "https://github.com/samrocketman/mkdocs-live-edit-wyswyg-plugin"
+Repository = "https://github.com/samrocketman/mkdocs-live-edit-wyswyg-plugin"
+Issues = "https://github.com/samrocketman/mkdocs-live-edit-wyswyg-plugin/issues"
+
+[project.entry-points."mkdocs.plugins"]
+live-wysiwyg = "mkdocs_live_wysiwyg_plugin.plugin:LiveWysiwygPlugin"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mkdocs_live_wysiwyg_plugin"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"mkdocs_live_wysiwyg_plugin/live-wysiwyg-integration.js" = "mkdocs_live_wysiwyg_plugin/live-wysiwyg-integration.js"
+"mkdocs_live_wysiwyg_plugin/mkdocs-admonition-extension.js" = "mkdocs_live_wysiwyg_plugin/mkdocs-admonition-extension.js"
+"mkdocs_live_wysiwyg_plugin/admonition.css" = "mkdocs_live_wysiwyg_plugin/admonition.css"
+
+[tool.uv.sources]
+mkdocs-live-edit-plugin = { path = "../mkdocs-live-edit-plugin", editable = true }

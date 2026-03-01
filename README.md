@@ -16,6 +16,8 @@ This plugin incorporates or depends on the following works:
 
 All listed components are distributed under the MIT License. See each project's repository for full license text.
 
+The WYSIWYG editor and its dependencies (marked, editor.css, editor.js) are bundled locally in `mkdocs_live_wysiwyg_plugin/vendor/`—no external JavaScript or CSS is loaded at runtime.
+
 ## MkDocs Admonitions
 
 The WYSIWYG editor supports MkDocs admonition syntax (`!!! note`, `!!! warning`, etc.) in both modes:

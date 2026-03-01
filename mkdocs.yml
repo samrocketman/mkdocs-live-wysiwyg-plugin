@@ -1,5 +1,5 @@
 site_name: WYSIWYG Test
 plugins:
   - live-edit
-  - live-wysiwyg:
-      article_selector: null  # uses default: article, [itemprop="articleBody"], etc.
+  - live-wysiwyg
+  - mkdocs-nav-weight

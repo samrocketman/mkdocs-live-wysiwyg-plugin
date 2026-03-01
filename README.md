@@ -2,6 +2,7 @@
 
 A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](https://github.com/eddyluten/mkdocs-live-edit-plugin), based on [@celsowm/markdown-wysiwyg](https://www.npmjs.com/package/@celsowm/markdown-wysiwyg).
 
+- :white_check_mark: Non-destructive WYSIWYG editing is a top priority.  Only changes the user makes applies to documents.  If the WYSIWYG makes unrelated changes to documents, then it is likely a bug.
 - :white_check_mark: Dual-mode editing (WYSIWYG and Markdown) with toolbar formatting
 - :white_check_mark: MkDocs admonitions (`!!! note`, `!!! warning`, etc.)
 - :white_check_mark: YAML frontmatter preserved when editing and switching modes
@@ -56,6 +57,8 @@ plugins:
   - live-edit
   - live-wysiwyg:
       article_selector: ".md-content"  # optional, same as mkdocs-live-edit-plugin
+      menu_selector: ".md-content"     # optional, area to add the Enable/Disable Editor button
+      autoload_wysiwyg: true          # optional, if false, start with plain textarea and show "Enable Editor"
 ```
 
 ### Options
@@ -63,6 +66,8 @@ plugins:
 | Option | Type | Default | Description |
 |-------|------|---------|-------------|
 | `article_selector` | string | `null` | CSS selector for the article element where controls appear. Same behavior as mkdocs-live-edit-plugin. Falls back to `[itemprop="articleBody"]`, `div[role="main"]`, or `article` if not specified. |
+| `menu_selector` | string | `null` | CSS selector for the area where the "Enable Editor" / "Disable Editor" button is added. Defaults to `.live-edit-controls` (the live-edit plugin's control bar). The button uses class `live-edit-button` and appears alongside Rename, Delete, New when in edit mode. |
+| `autoload_wysiwyg` | boolean | `true` | If `true`, the WYSIWYG editor loads automatically when entering edit mode. If `false`, the plain textarea is shown initially and the "Enable Editor" button allows switching to WYSIWYG. |
 
 ## MkDocs Theme Support
 

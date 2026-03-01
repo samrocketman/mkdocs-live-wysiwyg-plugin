@@ -55,3 +55,4 @@ packages = ["mkdocs_live_wysiwyg_plugin"]
 "mkdocs_live_wysiwyg_plugin/vendor/README.md" = "mkdocs_live_wysiwyg_plugin/vendor/README.md"
 "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.marked" = "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.marked"
 "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.editor" = "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.editor"
+"mkdocs_live_wysiwyg_plugin/wysiwyg.svg" = "mkdocs_live_wysiwyg_plugin/wysiwyg.svg"

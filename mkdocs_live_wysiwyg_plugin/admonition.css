@@ -76,3 +76,11 @@
   border-left-color: #5cb85c;
   background-color: #f0fff4;
 }
+
+/* WYSIWYG toggle button icon */
+.live-wysiwyg-btn-icon {
+  width: 1.2em;
+  height: 1.2em;
+  vertical-align: middle;
+  margin-right: 0.25em;
+}

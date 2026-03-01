@@ -331,6 +331,146 @@
     return result;
   }
 
+  function dryDuplicateInlineLinks(markdown, linkData) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+
+    var parsed = parseFrontmatter(markdown);
+    var body = parsed.body;
+    if (!body) return markdown;
+
+
+    var codeRanges = [];
+    var fencedRe = /^(`{3,}|~{3,}).*\n[\s\S]*?\n\1\s*$/gm;
+    var fm;
+    var bodyNoFences = body;
+    while ((fm = fencedRe.exec(body)) !== null) {
+      codeRanges.push({ start: fm.index, end: fm.index + fm[0].length });
+      var blank = body.slice(fm.index, fm.index + fm[0].length).replace(/[^\n]/g, ' ');
+      bodyNoFences = bodyNoFences.slice(0, fm.index) + blank + bodyNoFences.slice(fm.index + fm[0].length);
+    }
+    var inlineCodeRe = /`[^`]+`/g;
+    while ((fm = inlineCodeRe.exec(bodyNoFences)) !== null) {
+      codeRanges.push({ start: fm.index, end: fm.index + fm[0].length });
+    }
+    function insideCodeBlock(idx) {
+      for (var fi = 0; fi < codeRanges.length; fi++) {
+        if (idx >= codeRanges[fi].start && idx < codeRanges[fi].end) return true;
+      }
+      return false;
+    }
+
+    var inlineLinkRe = /\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
+    var match;
+    var urlGroups = {};
+
+    while ((match = inlineLinkRe.exec(body)) !== null) {
+      if (insideCodeBlock(match.index)) continue;
+      var normUrl = normalizeUrl(match[2]);
+      if (!urlGroups[normUrl]) urlGroups[normUrl] = [];
+      urlGroups[normUrl].push({
+        fullMatch: match[0],
+        text: match[1],
+        rawUrl: match[2],
+        index: match.index
+      });
+    }
+
+    var refsToCreate = {};
+    var usedRefNames = {};
+    var refCounter = 1;
+
+    var existingRefDefRe = /^\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/gm;
+    var existingRef;
+    var existingRefsByUrl = {};
+    while ((existingRef = existingRefDefRe.exec(body)) !== null) {
+      var defName = existingRef[1];
+      var defUrl = normalizeUrl(existingRef[2] || existingRef[3] || '');
+      usedRefNames[defName.toLowerCase()] = true;
+      if (defUrl && !existingRefsByUrl[defUrl]) {
+        existingRefsByUrl[defUrl] = defName;
+      }
+    }
+
+    for (var url in urlGroups) {
+      var hasExistingDef = !!existingRefsByUrl[url];
+
+      var origRefName = null;
+      if (linkData && linkData.linkOriginals) {
+        for (var i = 0; i < linkData.linkOriginals.length; i++) {
+          var orig = linkData.linkOriginals[i];
+          if (normalizeUrl(orig.url) === url && !orig.isImage) {
+            var refMatch = orig.original.match(/\]\[([^\]]+)\]$/);
+            if (refMatch && refMatch[1]) {
+              origRefName = refMatch[1];
+              break;
+            }
+            var shortMatch = orig.original.match(/^\[([^\]]+)\]$/);
+            if (shortMatch) {
+              origRefName = shortMatch[1];
+              break;
+            }
+          }
+        }
+      }
+
+      if (urlGroups[url].length < 2 && !hasExistingDef && !origRefName) continue;
+
+      var refName = null;
+      if (hasExistingDef) {
+        refName = existingRefsByUrl[url];
+      }
+      if (!refName && origRefName) {
+        refName = origRefName;
+      }
+      if (!refName) {
+        while (usedRefNames[String(refCounter)]) refCounter++;
+        refName = String(refCounter);
+        refCounter++;
+      }
+
+      usedRefNames[refName.toLowerCase()] = true;
+      refsToCreate[url] = { refName: refName, rawUrl: urlGroups[url][0].rawUrl };
+    }
+
+    var replacements = [];
+    for (var url in refsToCreate) {
+      var entries = urlGroups[url];
+      for (var j = 0; j < entries.length; j++) {
+        replacements.push({
+          index: entries[j].index,
+          length: entries[j].fullMatch.length,
+          replacement: '[' + entries[j].text + '][' + refsToCreate[url].refName + ']'
+        });
+      }
+    }
+
+    if (replacements.length === 0) return markdown;
+
+    replacements.sort(function (a, b) { return b.index - a.index; });
+
+    var result = body;
+    for (var k = 0; k < replacements.length; k++) {
+      var r = replacements[k];
+      result = result.slice(0, r.index) + r.replacement + result.slice(r.index + r.length);
+    }
+
+    var newDefs = [];
+    for (var url in refsToCreate) {
+      var info = refsToCreate[url];
+      var escapedRefName = info.refName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      var defRegex = new RegExp('^\\[' + escapedRefName + '\\]:', 'mi');
+      if (!defRegex.test(result)) {
+        newDefs.push('[' + info.refName + ']: ' + info.rawUrl);
+      }
+    }
+
+    if (newDefs.length > 0) {
+      result = result.replace(/\s+$/, '') + '\n\n' + newDefs.join('\n');
+    }
+
+    return serializeWithFrontmatter(parsed.frontmatter, result);
+  }
+
   (function patchSetValueAndSwitchToModeForLinkPrePost() {
     var proto = MarkdownWYSIWYG.prototype;
     var origSetValue = proto.setValue;
@@ -354,6 +494,7 @@
         var md = this.markdownArea.value;
         if (this._liveWysiwygLinkData) {
           md = postprocessMarkdownLinks(md, this._liveWysiwygLinkData);
+          md = dryDuplicateInlineLinks(md, this._liveWysiwygLinkData);
           if (md !== this.markdownArea.value) {
             this.markdownArea.value = md;
             if (this.options && this.options.onUpdate) this.options.onUpdate(this.getValue());
@@ -1089,6 +1230,7 @@
         onUpdate: function (markdownContent) {
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygLinkData) {
             markdownContent = postprocessMarkdownLinks(markdownContent, wysiwygEditor._liveWysiwygLinkData);
+            markdownContent = dryDuplicateInlineLinks(markdownContent, wysiwygEditor._liveWysiwygLinkData);
           }
           if (markdownContent && !markdownContent.endsWith('\n')) {
             markdownContent = markdownContent + '\n';

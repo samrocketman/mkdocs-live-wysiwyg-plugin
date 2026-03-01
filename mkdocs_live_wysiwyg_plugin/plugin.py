@@ -3,6 +3,7 @@
 WYSIWYG editor for mkdocs-live-edit-plugin based on @celsowm/markdown-wysiwyg.
 """
 
+import base64
 from pathlib import Path
 from typing import Literal
 
@@ -18,6 +19,8 @@ class LiveWysiwygPlugin(BasePlugin):
 
     config_scheme = (
         ("article_selector", config_options.Type(str, default=None)),
+        ("menu_selector", config_options.Type(str, default=None)),
+        ("autoload_wysiwyg", config_options.Type(bool, default=True)),
     )
 
     is_serving: bool = False
@@ -51,10 +54,28 @@ class LiveWysiwygPlugin(BasePlugin):
             admonition_extension_script = f.read()
 
         article_selector = self.config.get("article_selector")
-        if article_selector:
-            preamble = f"const liveWysiwygArticleSelector = '{article_selector}';\n"
+        menu_selector = self.config.get("menu_selector")
+        autoload_wysiwyg = self.config.get("autoload_wysiwyg")
+        preamble_parts = []
+        preamble_parts.append(
+            f"const liveWysiwygArticleSelector = {repr(article_selector) if article_selector else 'null'};\n"
+        )
+        preamble_parts.append(
+            f"const liveWysiwygMenuSelector = {repr(menu_selector) if menu_selector else 'null'};\n"
+        )
+        preamble_parts.append(
+            f"const liveWysiwygAutoload = {str(autoload_wysiwyg).lower()};\n"
+        )
+        wysiwyg_svg_path = parent_dir / "wysiwyg.svg"
+        if wysiwyg_svg_path.exists():
+            with open(wysiwyg_svg_path, "rb") as f:
+                wysiwyg_svg_b64 = base64.b64encode(f.read()).decode("ascii")
+            preamble_parts.append(
+                f"const liveWysiwygIconDataUrl = 'data:image/svg+xml;base64,{wysiwyg_svg_b64}';\n"
+            )
         else:
-            preamble = "const liveWysiwygArticleSelector = null;\n"
+            preamble_parts.append("const liveWysiwygIconDataUrl = null;\n")
+        preamble = "".join(preamble_parts)
 
         admonition_css = parent_dir / "admonition.css"
         with open(admonition_css, "r", encoding="utf-8") as f:

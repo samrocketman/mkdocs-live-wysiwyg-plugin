@@ -382,8 +382,69 @@
   let wysiwygEditor = null;
   let wysiwygContainer = null;
   let cancelObserver = null;
+  let toggleButton = null;
 
-  function destroyWysiwyg(textarea) {
+  function getControlsElement(textarea) {
+    var controls = textarea ? textarea.closest('.live-edit-controls') : null;
+    if (controls) return controls;
+    var sel = typeof liveWysiwygMenuSelector === 'string' && liveWysiwygMenuSelector
+      ? liveWysiwygMenuSelector
+      : null;
+    if (sel) return document.querySelector(sel);
+    return document.querySelector('.live-edit-controls');
+  }
+
+  function getButtonLabel(isWysiwygActive) {
+    var text = isWysiwygActive ? 'Disable Editor' : 'Enable Editor';
+    if (typeof liveWysiwygIconDataUrl !== 'undefined' && liveWysiwygIconDataUrl) {
+      return '<img src="' + liveWysiwygIconDataUrl + '" alt="" class="live-wysiwyg-btn-icon" aria-hidden="true"> ' + text;
+    }
+    return text;
+  }
+
+  function updateToggleButton(isWysiwygActive) {
+    if (!toggleButton) return;
+    if (typeof liveWysiwygIconDataUrl !== 'undefined' && liveWysiwygIconDataUrl) {
+      toggleButton.innerHTML = getButtonLabel(isWysiwygActive);
+    } else {
+      toggleButton.textContent = getButtonLabel(isWysiwygActive);
+    }
+  }
+
+  function ensureToggleButton(textarea, isWysiwygActive) {
+    if (toggleButton && toggleButton.parentNode) return;
+    var controls = getControlsElement(textarea);
+    if (!controls) return;
+    var label = controls.querySelector('.live-edit-label');
+    toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.className = 'live-edit-button';
+    if (typeof liveWysiwygIconDataUrl !== 'undefined' && liveWysiwygIconDataUrl) {
+      toggleButton.innerHTML = getButtonLabel(isWysiwygActive);
+    } else {
+      toggleButton.textContent = getButtonLabel(isWysiwygActive);
+    }
+    toggleButton.title = isWysiwygActive ? 'Switch to plain textarea' : 'Switch to WYSIWYG editor';
+    toggleButton.addEventListener('click', function () {
+      if (wysiwygEditor) {
+        destroyWysiwyg(textarea, false, true);
+        updateToggleButton(false);
+      } else {
+        replaceTextareaWithWysiwyg(textarea);
+        updateToggleButton(true);
+      }
+    });
+    controls.insertBefore(toggleButton, label ? label.nextSibling : controls.firstChild);
+  }
+
+  function removeToggleButton() {
+    if (toggleButton && toggleButton.parentNode) {
+      toggleButton.parentNode.removeChild(toggleButton);
+      toggleButton = null;
+    }
+  }
+
+  function destroyWysiwyg(textarea, leavingEditMode, userRequestedDisable) {
     if (cancelObserver) {
       cancelObserver.disconnect();
       cancelObserver = null;
@@ -400,10 +461,24 @@
       wysiwygContainer.parentNode.removeChild(wysiwygContainer);
       wysiwygContainer = null;
     }
+    if (leavingEditMode) {
+      removeToggleButton();
+    }
     if (textarea) {
       textarea.style.display = '';
       textarea.removeAttribute('data-live-wysiwyg-replaced');
-      setupReplacementObserver(textarea);
+      if (leavingEditMode) {
+        return;
+      }
+      if (userRequestedDisable) {
+        ensureToggleButton(textarea, false);
+        updateToggleButton(false);
+      } else if (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload) {
+        setupReplacementObserver(textarea);
+      } else {
+        ensureToggleButton(textarea, false);
+        updateToggleButton(false);
+      }
     }
   }
 
@@ -413,6 +488,7 @@
     cancelObserver = new MutationObserver(function () {
       if (!textarea.parentNode) return;
       if (!textarea.classList.contains('live-edit-hidden') && !textarea.dataset.liveWysiwygReplaced) {
+        if (typeof liveWysiwygAutoload !== 'undefined' && !liveWysiwygAutoload) return;
         cancelObserver.disconnect();
         cancelObserver = null;
         replaceTextareaWithWysiwyg(textarea);
@@ -471,16 +547,23 @@
       if (!textarea.parentNode) return;
       if (textarea.classList.contains('live-edit-hidden')) {
         observer.disconnect();
-        destroyWysiwyg(textarea);
+        destroyWysiwyg(textarea, true, false);
       }
     });
     observer.observe(textarea, { attributes: true, attributeFilter: ['class'] });
+    ensureToggleButton(textarea, true);
+    updateToggleButton(true);
   }
 
   function observeForTextarea() {
     const textarea = document.querySelector('.live-edit-source');
     if (textarea) {
-      replaceTextareaWithWysiwyg(textarea);
+      if (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload) {
+        replaceTextareaWithWysiwyg(textarea);
+      } else {
+        ensureToggleButton(textarea, false);
+        updateToggleButton(false);
+      }
       return true;
     }
     return false;

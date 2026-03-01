@@ -46,18 +46,14 @@ Add both plugins to your `mkdocs.yml`. **Important:** `live-edit` must be listed
 plugins:
   - live-edit
   - live-wysiwyg:
-      article_selector: ".md-content"  # optional, same as mkdocs-live-edit-plugin
-      menu_selector: ".md-content"     # optional, area to add the Enable/Disable Editor button
-      autoload_wysiwyg: true          # optional, if false, start with plain textarea and show "Enable Editor"
+      autoload_wysiwyg: true # optional, if false, start with plain textarea and show "Enable Editor"
 ```
 
 ### Options
 
 | Option | Type | Default | Description |
 |-------|------|---------|-------------|
-| `article_selector` | string | `null` | CSS selector for the article element where controls appear. Same behavior as mkdocs-live-edit-plugin. Falls back to `[itemprop="articleBody"]`, `div[role="main"]`, or `article` if not specified. |
-| `menu_selector` | string | `null` | CSS selector for the area where the "Enable Editor" / "Disable Editor" button is added. Defaults to `.live-edit-controls` (the live-edit plugin's control bar). The button uses class `live-edit-button` and appears alongside Rename, Delete, New when in edit mode. |
-| `autoload_wysiwyg` | boolean | `true` | If `true`, the WYSIWYG editor loads automatically when entering edit mode. If `false`, the plain textarea is shown initially and the "Enable Editor" button allows switching to WYSIWYG. |
+| `autoload_wysiwyg` | boolean | `true` | Default behavior when no user preference cookie exists. If `true`, the WYSIWYG editor loads automatically when entering edit mode. If `false`, the plain textarea is shown initially with an "Enable Editor" button. Once the user explicitly enables or disables the editor, their preference is stored in a cookie and takes priority over this setting. |
 
 ## Attributions
 

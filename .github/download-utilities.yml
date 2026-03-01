@@ -1,6 +1,6 @@
 versions:
   uv: 0.10.7
-  yq: 4.49.2
+  yq: 4.52.4
 checksums:
   uv:
     unknown-linux-gnu:
@@ -11,15 +11,20 @@ checksums:
       x86_64: 9ce2a8d60b251ef51f3469ba80ac362f6dcf5a25f6871024385e2c6aa13e201f
   yq:
     darwin:
-      arm64: b0b70ede2b392ba02091b8137b42db819a7968cf232d595dd7394ac5668b4a0b
-      amd64: c14cd4ae68d42074e58463f5ebdbc3c49ec27c6de6a23b4af58a483bc3f15aa0
+      arm64: 6bfa43a439936644d63c70308832390c8838290d064970eaada216219c218a13
+      amd64: d72a75fe9953c707d395f653d90095b133675ddd61aa738e1ac9a73c6c05e8be
     linux:
-      arm64: 783aa3c3beedcf2bf4aaf6262eca38b92a16d3ea31e2218ca80ba8ec7226b248
-      amd64: be2c0ddcf426b6a231648610ec5d1666ae50e9f6473e82f6486f9f4cb6e3e2f7
+      arm64: 4c2cc022a129be5cc1187959bb4b09bebc7fb543c5837b93001c68f97ce39a5d
+      amd64: 0c4d965ea944b64b8fddaf7f27779ee3034e5693263786506ccd1c120f184e8c
 
 defaults: &defaults
   dest: /usr/local/bin
   perm: '0755'
+  update: |
+    owner="$(awk -F/ '{print $4"/"$5}' <<< "${download}")"
+    export download=https://github.com/"${owner}"/releases/latest
+    eval "${default_download_head}" |
+    awk '$1 ~ /[Ll]ocation:/ { gsub(".*/[^0-9.]*", "", $0); print;exit}'
 
 utility:
   uv:

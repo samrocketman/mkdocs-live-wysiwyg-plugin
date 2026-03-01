@@ -63,7 +63,7 @@
         }
         if (type) {
           var titleEl = node.querySelector('.admonition-title');
-          var title = titleEl ? titleEl.textContent.trim() : '';
+          var title = titleEl ? titleEl.textContent.replace(/\u00a0/g, ' ').trim() : '';
           var contentParts = [];
           for (var j = 0; j < node.childNodes.length; j++) {
             var c = node.childNodes[j];
@@ -73,7 +73,8 @@
           var body = contentParts.join('').trim();
           var bodyIndented = body ? body.split('\n').map(function (l) { return '    ' + l; }).join('\n') : '';
           var out = '!!! ' + type;
-          if (title) out += ' "' + title.replace(/"/g, '\\"') + '"';
+          var defaultTitle = type.charAt(0).toUpperCase() + type.slice(1);
+          if (title && title !== defaultTitle) out += ' "' + title.replace(/"/g, '\\"') + '"';
           out += '\n' + (bodyIndented ? bodyIndented + '\n' : '');
           return out + '\n';
         }
@@ -456,6 +457,21 @@
     return { start: startOffset, end: endOffset };
   }
 
+  function getBlockIndexForLine(md, lineIdx) {
+    var lines = md.split('\n');
+    var blockIdx = -1;
+    var inBlock = false;
+    for (var i = 0; i <= Math.min(lineIdx, lines.length - 1); i++) {
+      if (lines[i].trim() === '') {
+        inBlock = false;
+      } else if (!inBlock) {
+        blockIdx++;
+        inBlock = true;
+      }
+    }
+    return Math.max(0, blockIdx);
+  }
+
   function findCursorSpanAndSetCaret(editable) {
     var span = editable.querySelector('[' + CURSOR_SPAN_ATTR + ']');
     if (!span) return false;
@@ -579,6 +595,8 @@
         var checkStart = capturedMarkdownSelection ? capturedMarkdownSelection.start : savedSelStart;
         cursorInFrontmatter = checkStart < frontmatterLen;
       }
+      var cursorAtDocStart = false;
+      var cursorBlockFallback = -1;
       var savedScroll = null;
       var markdownMarkerInserted = false;
       if (!isInitialSetup) {
@@ -608,7 +626,9 @@
           }
           var insertStart = selStart;
           var insertEnd = selEnd;
-          if (insertStart === insertEnd) {
+          if (insertStart === 0) {
+            cursorAtDocStart = true;
+          } else if (insertStart === insertEnd) {
             if (insertStart > 0 && mdVal.charAt(insertStart - 1) === '\n') {
               insertStart = insertStart - 1;
               insertEnd = insertEnd - 1;
@@ -618,14 +638,26 @@
               insertEnd = insertEnd - 1;
             }
           }
-          var spanMarker = '<span ' + CURSOR_SPAN_ATTR + '></span>';
-          var spanMarkerEnd = '<span ' + CURSOR_SPAN_ATTR_END + '></span>';
-          if (insertStart === insertEnd) {
-            this.markdownArea.value = mdVal.slice(0, insertStart) + spanMarker + mdVal.slice(insertStart);
-          } else {
-            this.markdownArea.value = mdVal.slice(0, insertStart) + spanMarker + mdVal.slice(insertStart, insertEnd) + spanMarkerEnd + mdVal.slice(insertEnd);
+          if (!cursorAtDocStart) {
+            var spanMarker = '<span ' + CURSOR_SPAN_ATTR + '></span>';
+            var spanMarkerEnd = '<span ' + CURSOR_SPAN_ATTR_END + '></span>';
+            var testMd;
+            if (insertStart === insertEnd) {
+              testMd = mdVal.slice(0, insertStart) + spanMarker + mdVal.slice(insertStart);
+            } else {
+              testMd = mdVal.slice(0, insertStart) + spanMarker + mdVal.slice(insertStart, insertEnd) + spanMarkerEnd + mdVal.slice(insertEnd);
+            }
+            var testHtml = this._markdownToHtml(testMd);
+            var roundTrippedMd = this._htmlToMarkdown(testHtml);
+            roundTrippedMd = roundTrippedMd.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
+            var normMd = function (s) { return (s || '').replace(/\n\s*\n\s*\n+/g, '\n\n').replace(/ +\n/g, '\n').trim(); };
+            if (normMd(roundTrippedMd) === normMd(mdVal)) {
+              this.markdownArea.value = testMd;
+              markdownMarkerInserted = true;
+            } else {
+              cursorBlockFallback = getBlockIndexForLine(mdVal, mdVal.slice(0, selStart).split('\n').length - 1);
+            }
           }
-          markdownMarkerInserted = true;
         }
       }
       var result = origSwitchToMode.call(this, mode, isInitialSetup);
@@ -639,11 +671,32 @@
       if (!isInitialSetup && savedScroll !== null) {
         if (mode === 'wysiwyg') {
           var editableArea = this.editableArea;
-          if (cursorInFrontmatter) {
+          if (cursorInFrontmatter || cursorAtDocStart) {
             requestAnimationFrame(function () {
               editableArea.focus();
               setSelectionInEditable(editableArea, 0, 0);
               editableArea.scrollTop = 0;
+            });
+          } else if (cursorBlockFallback >= 0) {
+            var blockIdx = cursorBlockFallback;
+            requestAnimationFrame(function () {
+              editableArea.focus();
+              var blockEls = [];
+              for (var c = editableArea.firstElementChild; c; c = c.nextElementSibling) {
+                blockEls.push(c);
+              }
+              var target = blockEls[Math.min(blockIdx, blockEls.length - 1)];
+              if (target) {
+                var range = document.createRange();
+                range.selectNodeContents(target);
+                range.collapse(true);
+                var sel = window.getSelection();
+                if (sel) {
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                }
+              }
+              scrollToCenterCursor(editableArea, false);
             });
           } else {
             var cursorSet = findCursorSpanAndSetCaret(editableArea);

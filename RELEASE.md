@@ -95,6 +95,12 @@ The `.github/workflows/publish.yml` workflow publishes to PyPI on tag push (e.g.
 3. Owner, repository, and workflow name: `publish.yml`
 4. Create a GitHub environment named `pypi` (optional, for deployment protection)
 
+## Test publishing
+
+    uv build --no-sources
+    export UV_PUBLISH_TOKEN=pypi-xxx
+    uv publish --index testpypi
+
 ## Troubleshooting
 
 - **Version already exists**: PyPI rejects re-uploads. Bump the version and rebuild.

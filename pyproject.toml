@@ -56,3 +56,9 @@ packages = ["mkdocs_live_wysiwyg_plugin"]
 "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.marked" = "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.marked"
 "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.editor" = "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.editor"
 "mkdocs_live_wysiwyg_plugin/wysiwyg.svg" = "mkdocs_live_wysiwyg_plugin/wysiwyg.svg"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true

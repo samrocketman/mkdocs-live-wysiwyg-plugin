@@ -10,12 +10,6 @@ from mkdocs.config import config_options
 from mkdocs.config.defaults import MkDocsConfig
 from mkdocs.plugins import BasePlugin
 
-# CDN URLs for @celsowm/markdown-wysiwyg and its dependency (marked.js)
-MARKED_JS_URL = "https://cdn.jsdelivr.net/npm/marked/marked.min.js"
-EDITOR_CSS_URL = "https://cdn.jsdelivr.net/gh/celsowm/markdown-wysiwyg@latest/dist/editor.css"
-EDITOR_JS_URL = "https://cdn.jsdelivr.net/gh/celsowm/markdown-wysiwyg@latest/dist/editor.js"
-
-
 class LiveWysiwygPlugin(BasePlugin):
     """
     WYSIWYG editor plugin that enhances mkdocs-live-edit-plugin with
@@ -48,6 +42,7 @@ class LiveWysiwygPlugin(BasePlugin):
             return html
 
         parent_dir = Path(__file__).parent
+        vendor_dir = parent_dir / "vendor"
         integration_js = parent_dir / "live-wysiwyg-integration.js"
         admonition_extension_js = parent_dir / "mkdocs-admonition-extension.js"
         with open(integration_js, "r", encoding="utf-8") as f:
@@ -65,13 +60,20 @@ class LiveWysiwygPlugin(BasePlugin):
         with open(admonition_css, "r", encoding="utf-8") as f:
             admonition_css_content = f.read()
 
-        # Inject: marked.js, MkDocs admonition extension, editor CSS, admonition CSS, editor JS, integration script
+        with open(vendor_dir / "editor.css", "r", encoding="utf-8") as f:
+            editor_css_content = f.read()
+        with open(vendor_dir / "marked.min.js", "r", encoding="utf-8") as f:
+            marked_js_content = f.read()
+        with open(vendor_dir / "editor.js", "r", encoding="utf-8") as f:
+            editor_js_content = f.read()
+
+        # Inject: marked.js, MkDocs admonition extension, editor CSS, admonition CSS, editor JS, integration script (all local)
         assets = (
-            f'<link rel="stylesheet" href="{EDITOR_CSS_URL}">'
+            f'<style>{editor_css_content}</style>'
             f'<style>{admonition_css_content}</style>'
-            f'<script src="{MARKED_JS_URL}"></script>'
+            f'<script>{marked_js_content}</script>'
             f'<script>{admonition_extension_script}</script>'
-            f'<script src="{EDITOR_JS_URL}"></script>'
+            f'<script>{editor_js_content}</script>'
             f'<script>{preamble}\n{integration_script}</script>'
         )
         return f"{assets}\n{html}"

@@ -4,3 +4,6 @@ plugins:
   - live-wysiwyg:
       autoload_wysiwyg: true         # set to false to start with plain textarea
   - mkdocs-nav-weight
+theme:
+  features:
+    - content.code.annotate

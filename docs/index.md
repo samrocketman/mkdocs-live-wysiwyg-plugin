@@ -5,6 +5,14 @@ title: Example WYSIWYG site
 
 This is a test page for the mkdocs-live-wysiwyg-plugin.
 
+```yaml title="Preview Example"
+build: techdocs-preview.sh build # (1)
+preview: techdocs-preview.sh # (2)
+```
+
+1. Build the `site`.
+2. Launch a server on `http://127.0.0.1:8000/`.
+
 Click **Edit** above to try the WYSIWYG editor.
 
 ## Admonition Support

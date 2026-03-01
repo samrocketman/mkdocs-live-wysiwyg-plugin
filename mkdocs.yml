@@ -2,6 +2,5 @@ site_name: WYSIWYG Test
 plugins:
   - live-edit
   - live-wysiwyg:
-      menu_selector: ".md-content"  # area for Enable/Disable Editor button
       autoload_wysiwyg: true         # set to false to start with plain textarea
   - mkdocs-nav-weight

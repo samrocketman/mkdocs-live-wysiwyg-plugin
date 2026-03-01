@@ -574,6 +574,11 @@
           this.markdownArea.setSelectionRange(adj, adj);
         }
       }
+      var cursorInFrontmatter = false;
+      if (frontmatterLen > 0) {
+        var checkStart = capturedMarkdownSelection ? capturedMarkdownSelection.start : savedSelStart;
+        cursorInFrontmatter = checkStart < frontmatterLen;
+      }
       var savedScroll = null;
       var markdownMarkerInserted = false;
       if (!isInitialSetup) {
@@ -582,6 +587,8 @@
           : (this.markdownArea ? this.markdownArea.scrollTop : 0);
         if (this.currentMode === 'wysiwyg') {
           injectMarkerAtCaretInEditable(this.editableArea);
+        } else if (cursorInFrontmatter) {
+          capturedMarkdownSelection = null;
         } else {
           var mdVal = this.markdownArea.value;
           var selStart, selEnd;
@@ -632,33 +639,41 @@
       if (!isInitialSetup && savedScroll !== null) {
         if (mode === 'wysiwyg') {
           var editableArea = this.editableArea;
-          var cursorSet = findCursorSpanAndSetCaret(editableArea);
-          var offsets = null;
-          if (!cursorSet) {
-            offsets = getTextOffsetsOfMarkersInEditable(editableArea);
-            if (offsets.start >= 0) {
-              var html = editableArea.innerHTML;
-              editableArea.innerHTML = html.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
-            } else if (markdownMarkerInserted) {
-              var leftover = editableArea.querySelectorAll('[' + CURSOR_SPAN_ATTR + '], [' + CURSOR_SPAN_ATTR_END + ']');
-              for (var i = 0; i < leftover.length; i++) leftover[i].parentNode.removeChild(leftover[i]);
+          if (cursorInFrontmatter) {
+            requestAnimationFrame(function () {
+              editableArea.focus();
+              setSelectionInEditable(editableArea, 0, 0);
+              editableArea.scrollTop = 0;
+            });
+          } else {
+            var cursorSet = findCursorSpanAndSetCaret(editableArea);
+            var offsets = null;
+            if (!cursorSet) {
+              offsets = getTextOffsetsOfMarkersInEditable(editableArea);
+              if (offsets.start >= 0) {
+                var html = editableArea.innerHTML;
+                editableArea.innerHTML = html.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
+              } else if (markdownMarkerInserted) {
+                var leftover = editableArea.querySelectorAll('[' + CURSOR_SPAN_ATTR + '], [' + CURSOR_SPAN_ATTR_END + ']');
+                for (var i = 0; i < leftover.length; i++) leftover[i].parentNode.removeChild(leftover[i]);
+              }
             }
+            requestAnimationFrame(function () {
+              if (cursorSet) {
+                editableArea.focus();
+              } else if (offsets && offsets.start >= 0) {
+                var hasSelection = offsets.end >= 0 && offsets.end > offsets.start;
+                var selStart = offsets.start;
+                var selEnd = hasSelection
+                  ? Math.max(selStart, offsets.end - 6)
+                  : selStart;
+                editableArea.focus();
+                setSelectionInEditable(editableArea, selStart, selEnd);
+              }
+              scrollToCenterCursor(editableArea, false);
+              editableArea.focus();
+            });
           }
-          requestAnimationFrame(function () {
-            if (cursorSet) {
-              editableArea.focus();
-            } else if (offsets && offsets.start >= 0) {
-              var hasSelection = offsets.end >= 0 && offsets.end > offsets.start;
-              var selStart = offsets.start;
-              var selEnd = hasSelection
-                ? Math.max(selStart, offsets.end - 6)
-                : selStart;
-              editableArea.focus();
-              setSelectionInEditable(editableArea, selStart, selEnd);
-            }
-            scrollToCenterCursor(editableArea, false);
-            editableArea.focus();
-          });
         } else {
           var mdVal = this.markdownArea.value;
           var markerIdx = mdVal.indexOf(CURSOR_MARKER);
@@ -730,10 +745,6 @@
   function getControlsElement(textarea) {
     var controls = textarea ? textarea.closest('.live-edit-controls') : null;
     if (controls) return controls;
-    var sel = typeof liveWysiwygMenuSelector === 'string' && liveWysiwygMenuSelector
-      ? liveWysiwygMenuSelector
-      : null;
-    if (sel) return document.querySelector(sel);
     return document.querySelector('.live-edit-controls');
   }
 
@@ -892,11 +903,15 @@
       if (userRequestedDisable) {
         ensureToggleButton(textarea, false);
         updateToggleButton(false);
-      } else if (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload) {
-        setupReplacementObserver(textarea);
       } else {
-        ensureToggleButton(textarea, false);
-        updateToggleButton(false);
+        var ck = isEditorEnabledByCookie();
+        var shouldReload = ck !== null ? ck : (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload);
+        if (shouldReload) {
+          setupReplacementObserver(textarea);
+        } else {
+          ensureToggleButton(textarea, false);
+          updateToggleButton(false);
+        }
       }
     }
   }
@@ -907,7 +922,8 @@
     cancelObserver = new MutationObserver(function () {
       if (!textarea.parentNode) return;
       if (!textarea.classList.contains('live-edit-hidden') && !textarea.dataset.liveWysiwygReplaced) {
-        if (typeof liveWysiwygAutoload !== 'undefined' && !liveWysiwygAutoload) return;
+        var ck = isEditorEnabledByCookie();
+        if (!(ck !== null ? ck : (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload))) return;
         cancelObserver.disconnect();
         cancelObserver = null;
         replaceTextareaWithWysiwyg(textarea);
@@ -1018,7 +1034,7 @@
     var textarea = document.querySelector('.live-edit-source');
     if (!textarea || textarea.classList.contains('live-edit-hidden')) return false;
     var cookieEnabled = isEditorEnabledByCookie();
-    var shouldAutoload = (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload) && (cookieEnabled !== false);
+    var shouldAutoload = cookieEnabled !== null ? cookieEnabled : (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload);
     ensureToggleButton(textarea, false);
     if (shouldAutoload) {
       replaceTextareaWithWysiwyg(textarea);

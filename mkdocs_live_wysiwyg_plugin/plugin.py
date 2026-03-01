@@ -18,8 +18,6 @@ class LiveWysiwygPlugin(BasePlugin):
     """
 
     config_scheme = (
-        ("article_selector", config_options.Type(str, default=None)),
-        ("menu_selector", config_options.Type(str, default=None)),
         ("autoload_wysiwyg", config_options.Type(bool, default=True)),
     )
 
@@ -53,16 +51,8 @@ class LiveWysiwygPlugin(BasePlugin):
         with open(admonition_extension_js, "r", encoding="utf-8") as f:
             admonition_extension_script = f.read()
 
-        article_selector = self.config.get("article_selector")
-        menu_selector = self.config.get("menu_selector")
         autoload_wysiwyg = self.config.get("autoload_wysiwyg")
         preamble_parts = []
-        preamble_parts.append(
-            f"const liveWysiwygArticleSelector = {repr(article_selector) if article_selector else 'null'};\n"
-        )
-        preamble_parts.append(
-            f"const liveWysiwygMenuSelector = {repr(menu_selector) if menu_selector else 'null'};\n"
-        )
         preamble_parts.append(
             f"const liveWysiwygAutoload = {str(autoload_wysiwyg).lower()};\n"
         )

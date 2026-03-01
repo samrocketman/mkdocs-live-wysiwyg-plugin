@@ -341,6 +341,9 @@
     proto.getValue = function () {
       var raw = origGetValue.call(this);
       var parsed = parseFrontmatter(raw);
+      if (parsed.frontmatter) {
+        this._liveWysiwygFrontmatter = parsed.frontmatter;
+      }
       var body = parsed.body;
       if (this._liveWysiwygListMarkerData) {
         body = postprocessListMarkers(body, this._liveWysiwygListMarkerData);
@@ -828,12 +831,13 @@
     var cursorState = null;
     if (textarea && wysiwygEditor && !leavingEditMode) {
       var ed = wysiwygEditor;
-      var parsed = parseFrontmatter(textarea.value || '');
-      var frontmatterLen = (parsed.frontmatter || '').length;
       if (ed.currentMode === 'markdown') {
+        var mdContent = ed.markdownArea.value;
+        if (mdContent && !mdContent.endsWith('\n')) mdContent += '\n';
+        textarea.value = mdContent;
         cursorState = {
-          start: ed.markdownArea.selectionStart + frontmatterLen,
-          end: ed.markdownArea.selectionEnd + frontmatterLen,
+          start: ed.markdownArea.selectionStart,
+          end: ed.markdownArea.selectionEnd,
           scrollTop: ed.markdownArea ? ed.markdownArea.scrollTop : 0
         };
       } else {

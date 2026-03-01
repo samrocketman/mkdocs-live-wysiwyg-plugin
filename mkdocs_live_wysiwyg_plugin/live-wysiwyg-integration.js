@@ -351,15 +351,65 @@
 
   var CURSOR_MARKER = '\u200C\u200C\u200C\u200C\u200C\u200C';
   var CURSOR_MARKER_RE = /\u200C\u200C\u200C\u200C\u200C\u200C/g;
+  var CURSOR_MARKER_END = '\u200D\u200D\u200D\u200D\u200D\u200D';
+  var CURSOR_MARKER_END_RE = /\u200D\u200D\u200D\u200D\u200D\u200D/g;
+  var CURSOR_SPAN_ATTR = 'data-live-wysiwyg-cursor';
+  var CURSOR_SPAN_ATTR_END = 'data-live-wysiwyg-cursor-end';
+  var CURSOR_PLACEHOLDER = 'LIVEWYSIWYG_CURSOR_9X7K2';
+  var CURSOR_PLACEHOLDER_END = 'LIVEWYSIWYG_CURSOR_END_9X7K2';
+
+  (function patchMarkdownToHtmlForCursorMarker() {
+    var proto = MarkdownWYSIWYG.prototype;
+    var orig = proto._markdownToHtml;
+    if (!orig) return;
+    var spanPattern = new RegExp('<span\\s+' + CURSOR_SPAN_ATTR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*></span>', 'g');
+    var spanEndPattern = new RegExp('<span\\s+' + CURSOR_SPAN_ATTR_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*></span>', 'g');
+    proto._markdownToHtml = function (markdown) {
+      var s = (markdown || '').replace(spanPattern, CURSOR_PLACEHOLDER).replace(spanEndPattern, CURSOR_PLACEHOLDER_END);
+      var html = orig.call(this, s);
+      return (html || '').split(CURSOR_PLACEHOLDER).join(CURSOR_MARKER).split(CURSOR_PLACEHOLDER_END).join(CURSOR_MARKER_END);
+    };
+  })();
+
+  function insertTextNodeAt(container, offset, textNode) {
+    if (container.nodeType === 3) {
+      var next = container.splitText(offset);
+      container.parentNode.insertBefore(textNode, next);
+    } else {
+      var ref = container.childNodes[offset] || null;
+      container.insertBefore(textNode, ref);
+    }
+  }
 
   function injectMarkerAtCaretInEditable(editable) {
     var sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return false;
     var range = sel.getRangeAt(0);
     if (!editable.contains(range.commonAncestorContainer)) return false;
-    var textNode = document.createTextNode(CURSOR_MARKER);
-    range.collapse(true);
-    range.insertNode(textNode);
+    var collapsed = range.collapsed;
+    try {
+      if (collapsed) {
+        var textNode = document.createTextNode(CURSOR_MARKER);
+        range.collapse(true);
+        range.insertNode(textNode);
+      } else {
+        var startContainer = range.startContainer;
+        var startOffset = range.startOffset;
+        var endContainer = range.endContainer;
+        var endOffset = range.endOffset;
+        insertTextNodeAt(endContainer, endOffset, document.createTextNode(CURSOR_MARKER_END));
+        insertTextNodeAt(startContainer, startOffset, document.createTextNode(CURSOR_MARKER));
+      }
+    } catch (e) {
+      if (!collapsed) {
+        try {
+          range.collapse(true);
+          range.insertNode(document.createTextNode(CURSOR_MARKER));
+        } catch (e2) {
+          console.warn('live-wysiwyg: could not inject selection marker', e2);
+        }
+      }
+    }
     return true;
   }
 
@@ -386,28 +436,66 @@
     return -1;
   }
 
+  function getTextOffsetsOfMarkersInEditable(editable) {
+    var walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT, null, false);
+    var pos = 0;
+    var node;
+    var startOffset = -1;
+    var endOffset = -1;
+    while ((node = walker.nextNode())) {
+      var text = node.textContent;
+      var idxStart = text.indexOf(CURSOR_MARKER);
+      var idxEnd = text.indexOf(CURSOR_MARKER_END);
+      if (idxStart >= 0) startOffset = pos + idxStart;
+      if (idxEnd >= 0) endOffset = pos + idxEnd;
+      pos += text.length;
+    }
+    return { start: startOffset, end: endOffset };
+  }
+
+  function findCursorSpanAndSetCaret(editable) {
+    var span = editable.querySelector('[' + CURSOR_SPAN_ATTR + ']');
+    if (!span) return false;
+    var range = document.createRange();
+    range.setStartBefore(span);
+    range.collapse(true);
+    var sel = window.getSelection();
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    span.parentNode.removeChild(span);
+    return true;
+  }
+
   function setCaretInEditable(editable, offset) {
+    setSelectionInEditable(editable, offset, offset);
+  }
+
+  function setSelectionInEditable(editable, startOffset, endOffset) {
     var sel = window.getSelection();
     if (!sel) return;
     var range = document.createRange();
     var walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT, null, false);
     var pos = 0;
-    var startNode, startOffset, endNode, endOffset;
+    var startNode, startNodeOffset, endNode, endNodeOffset;
     var node;
     while ((node = walker.nextNode())) {
       var len = node.textContent.length;
-      if (pos + len >= offset) {
+      if (startNode === undefined && pos + len >= startOffset) {
         startNode = node;
-        startOffset = offset - pos;
+        startNodeOffset = startOffset - pos;
+      }
+      if (endNode === undefined && pos + len >= endOffset) {
         endNode = node;
-        endOffset = startOffset;
+        endNodeOffset = endOffset - pos;
         break;
       }
       pos += len;
     }
-    if (startNode) {
-      range.setStart(startNode, startOffset);
-      range.setEnd(endNode, endOffset);
+    if (startNode && endNode) {
+      range.setStart(startNode, startNodeOffset);
+      range.setEnd(endNode, endNodeOffset);
       sel.removeAllRanges();
       sel.addRange(range);
     }
@@ -470,10 +558,17 @@
       return serializeWithFrontmatter(this._liveWysiwygFrontmatter, body);
     };
     proto.switchToMode = function (mode, isInitialSetup) {
+      var savedSelStart = this.markdownArea ? this.markdownArea.selectionStart : 0;
+      var frontmatterLen = 0;
       if (mode === 'wysiwyg' && !isInitialSetup && this.markdownArea && this.markdownArea.value) {
         var parsed = parseFrontmatter(this.markdownArea.value);
         this._liveWysiwygFrontmatter = parsed.frontmatter;
+        frontmatterLen = (parsed.frontmatter || '').length;
         this.markdownArea.value = parsed.body;
+        if (frontmatterLen > 0) {
+          var adj = Math.max(0, Math.min(savedSelStart - frontmatterLen, parsed.body.length));
+          this.markdownArea.setSelectionRange(adj, adj);
+        }
       }
       var savedScroll = null;
       var markdownMarkerInserted = false;
@@ -485,38 +580,99 @@
           injectMarkerAtCaretInEditable(this.editableArea);
         } else {
           var mdVal = this.markdownArea.value;
-          var insertAt = Math.min(this.markdownArea.selectionStart, mdVal.length);
-          var lineStart = mdVal.lastIndexOf('\n', insertAt - 1) + 1;
-          if (insertAt !== lineStart) {
-            this.markdownArea.value = mdVal.slice(0, insertAt) + CURSOR_MARKER + mdVal.slice(insertAt);
-            markdownMarkerInserted = true;
+          var selStart, selEnd;
+          if (capturedMarkdownSelection) {
+            selStart = capturedMarkdownSelection.start;
+            selEnd = capturedMarkdownSelection.end;
+            if (frontmatterLen > 0) {
+              selStart = Math.max(0, selStart - frontmatterLen);
+              selEnd = Math.max(0, selEnd - frontmatterLen);
+            }
+            selStart = Math.min(selStart, mdVal.length);
+            selEnd = Math.min(selEnd, mdVal.length);
+            capturedMarkdownSelection = null;
+          } else {
+            selStart = Math.min(this.markdownArea.selectionStart, mdVal.length);
+            selEnd = Math.min(this.markdownArea.selectionEnd, mdVal.length);
           }
+          var insertStart = selStart;
+          var insertEnd = selEnd;
+          if (insertStart === insertEnd) {
+            if (insertStart > 0 && mdVal.charAt(insertStart - 1) === '\n') {
+              insertStart = insertStart - 1;
+              insertEnd = insertEnd - 1;
+            }
+          } else {
+            if (insertEnd > 0 && mdVal.charAt(insertEnd - 1) === '\n' && insertEnd > insertStart) {
+              insertEnd = insertEnd - 1;
+            }
+          }
+          var spanMarker = '<span ' + CURSOR_SPAN_ATTR + '></span>';
+          var spanMarkerEnd = '<span ' + CURSOR_SPAN_ATTR_END + '></span>';
+          if (insertStart === insertEnd) {
+            this.markdownArea.value = mdVal.slice(0, insertStart) + spanMarker + mdVal.slice(insertStart);
+          } else {
+            this.markdownArea.value = mdVal.slice(0, insertStart) + spanMarker + mdVal.slice(insertStart, insertEnd) + spanMarkerEnd + mdVal.slice(insertEnd);
+          }
+          markdownMarkerInserted = true;
         }
       }
       var result = origSwitchToMode.call(this, mode, isInitialSetup);
-      if (mode === 'markdown' && this._liveWysiwygFrontmatter) {
-        this.markdownArea.value = serializeWithFrontmatter(this._liveWysiwygFrontmatter, this.markdownArea.value);
-        if (this._updateMarkdownLineNumbers) this._updateMarkdownLineNumbers();
+      if (mode === 'markdown') {
+        capturedMarkdownSelection = null;
+        if (this._liveWysiwygFrontmatter) {
+          this.markdownArea.value = serializeWithFrontmatter(this._liveWysiwygFrontmatter, this.markdownArea.value);
+          if (this._updateMarkdownLineNumbers) this._updateMarkdownLineNumbers();
+        }
       }
       if (!isInitialSetup && savedScroll !== null) {
         if (mode === 'wysiwyg') {
-          var textOffset = getTextOffsetOfMarkerInEditable(this.editableArea);
-          if (textOffset >= 0) {
-            var html = this.editableArea.innerHTML;
-            this.editableArea.innerHTML = html.replace(CURSOR_MARKER_RE, '');
-            setCaretInEditable(this.editableArea, textOffset);
-          } else if (markdownMarkerInserted) {
-            this.markdownArea.value = this.markdownArea.value.replace(CURSOR_MARKER_RE, '');
-            this.editableArea.innerHTML = this.editableArea.innerHTML.replace(CURSOR_MARKER_RE, '');
-          }
           var editableArea = this.editableArea;
-          requestAnimationFrame(function () { scrollToCenterCursor(editableArea, false); });
+          var cursorSet = findCursorSpanAndSetCaret(editableArea);
+          var offsets = null;
+          if (!cursorSet) {
+            offsets = getTextOffsetsOfMarkersInEditable(editableArea);
+            if (offsets.start >= 0) {
+              var html = editableArea.innerHTML;
+              editableArea.innerHTML = html.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
+            } else if (markdownMarkerInserted) {
+              var leftover = editableArea.querySelectorAll('[' + CURSOR_SPAN_ATTR + '], [' + CURSOR_SPAN_ATTR_END + ']');
+              for (var i = 0; i < leftover.length; i++) leftover[i].parentNode.removeChild(leftover[i]);
+            }
+          }
+          requestAnimationFrame(function () {
+            if (cursorSet) {
+              editableArea.focus();
+            } else if (offsets && offsets.start >= 0) {
+              var hasSelection = offsets.end >= 0 && offsets.end > offsets.start;
+              var selStart = hasSelection ? Math.max(0, offsets.start - 1) : offsets.start;
+              var selEnd = hasSelection
+                ? Math.max(selStart, offsets.end - 6)
+                : selStart;
+              editableArea.focus();
+              setSelectionInEditable(editableArea, selStart, selEnd);
+            }
+            scrollToCenterCursor(editableArea, false);
+            editableArea.focus();
+          });
         } else {
           var mdVal = this.markdownArea.value;
           var markerIdx = mdVal.indexOf(CURSOR_MARKER);
+          var markerEndIdx = mdVal.indexOf(CURSOR_MARKER_END);
           if (markerIdx >= 0) {
-            this.markdownArea.value = mdVal.replace(CURSOR_MARKER_RE, '');
-            this.markdownArea.setSelectionRange(markerIdx, markerIdx);
+            var selStart = markerIdx;
+            var selEnd = markerIdx;
+            if (markerEndIdx >= 0 && markerEndIdx > markerIdx) {
+              selEnd = markerEndIdx;
+            }
+            this.markdownArea.value = mdVal.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
+            var len = this.markdownArea.value.length;
+            if (markerEndIdx >= 0 && markerEndIdx > markerIdx) {
+              selEnd = markerEndIdx - 6;
+            }
+            selStart = Math.min(selStart, len);
+            selEnd = Math.min(Math.max(selEnd, selStart), len);
+            this.markdownArea.setSelectionRange(selStart, selEnd);
             if (this._updateMarkdownLineNumbers) this._updateMarkdownLineNumbers();
           }
           scrollToCenterCursor(this.markdownArea, true, this.markdownArea.selectionStart);
@@ -565,6 +721,7 @@
   let cancelObserver = null;
   let toggleButton = null;
   let bodyObserver = null;
+  var capturedMarkdownSelection = null;
 
   function getControlsElement(textarea) {
     var controls = textarea ? textarea.closest('.live-edit-controls') : null;
@@ -805,6 +962,16 @@
       textarea.removeAttribute('data-live-wysiwyg-replaced');
       return;
     }
+
+    (function () {
+      var ma = wysiwygEditor.markdownArea;
+      if (ma && !ma.dataset.liveWysiwygBlurAttached) {
+        ma.dataset.liveWysiwygBlurAttached = '1';
+        ma.addEventListener('blur', function () {
+          capturedMarkdownSelection = { start: ma.selectionStart, end: ma.selectionEnd };
+        });
+      }
+    })();
 
     const observer = new MutationObserver(function () {
       if (!textarea.parentNode) return;

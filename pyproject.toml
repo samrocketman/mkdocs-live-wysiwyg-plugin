@@ -1,6 +1,6 @@
 [project]
 name = "mkdocs-live-wysiwyg-plugin"
-version = "0.1.16"
+version = "0.1.17"
 description = "WYSIWYG editor for mkdocs-live-edit-plugin based on @celsowm/markdown-wysiwyg"
 readme = "README.md"
 license = "MIT"

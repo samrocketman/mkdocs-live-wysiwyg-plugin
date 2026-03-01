@@ -10,6 +10,7 @@
  * Patches text node handling to preserve multiple spaces (e.g. "Foo.  Bar", leading spaces).
  * Uses a preprocessor/postprocessor to preserve all markdown link styles (inline, reference,
  * shortcut) exactly as the original author intended when loading, saving, and switching modes.
+ * Preserves unordered list markers (*, -, +) when content is unchanged; new/modified lists use '-'.
  */
 (function () {
   if (typeof MarkdownWYSIWYG === 'undefined') {
@@ -116,6 +117,58 @@
       return protected_.trim();
     };
   })();
+
+  /**
+   * Parse YAML frontmatter from document content.
+   * Returns { frontmatter: string, body: string }.
+   * Frontmatter must be at the very start: --- newline, YAML, newline ---
+   */
+  function parseFrontmatter(content) {
+    if (!content || typeof content !== 'string') return { frontmatter: '', body: content || '' };
+    var m = content.match(/^(---\s*[\r\n]+[\s\S]*?[\r\n]+---\s*[\r\n]*)([\s\S]*)$/);
+    if (m) return { frontmatter: m[1].replace(/\s+$/, ''), body: m[2] };
+    return { frontmatter: '', body: content };
+  }
+
+  function serializeWithFrontmatter(frontmatter, body) {
+    if (!frontmatter) return body || '';
+    return frontmatter + '\n' + (body || '');
+  }
+
+  /**
+   * Preprocess unordered list markers (*, -, +) from markdown.
+   * Returns { listItems: [{ indent, marker, content }] } for preservation.
+   */
+  function preprocessListMarkers(markdown) {
+    if (!markdown || typeof markdown !== 'string') return { listItems: [] };
+    var listItems = [];
+    var re = /^(\s*)([-*+])\s+(.*)$/gm;
+    var m;
+    while ((m = re.exec(markdown)) !== null) {
+      listItems.push({ indent: m[1], marker: m[2] + ' ', content: m[3] });
+    }
+    return { listItems: listItems };
+  }
+
+  /**
+   * Postprocess markdown to restore original list markers where content matches.
+   * New or modified list items use '- '.
+   */
+  function postprocessListMarkers(markdown, listData) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+    if (!listData || !listData.listItems || !listData.listItems.length) return markdown;
+    var originals = listData.listItems;
+    var used = 0;
+    return markdown.replace(/^(\s*)(-\s+)(.*)$/gm, function (match, indent, marker, content) {
+      for (var i = used; i < originals.length; i++) {
+        if (originals[i].indent === indent && originals[i].content === content) {
+          used = i + 1;
+          return indent + originals[i].marker + content;
+        }
+      }
+      return match;
+    });
+  }
 
   function normalizeUrl(url) {
     if (!url || typeof url !== 'string') return '';
@@ -247,21 +300,80 @@
     var origSwitchToMode = proto.switchToMode;
     if (!origSetValue || !origSwitchToMode) return;
     proto.setValue = function (markdown, isInitialSetup) {
-      if (markdown) this._liveWysiwygLinkData = preprocessMarkdownLinks(markdown);
+      if (markdown) {
+        this._liveWysiwygLinkData = preprocessMarkdownLinks(markdown);
+        this._liveWysiwygListMarkerData = preprocessListMarkers(markdown);
+      }
       return origSetValue.apply(this, arguments);
     };
     proto.switchToMode = function (mode, isInitialSetup) {
       if (mode === 'wysiwyg' && !isInitialSetup && this.markdownArea && this.markdownArea.value) {
-        this._liveWysiwygLinkData = preprocessMarkdownLinks(this.markdownArea.value);
+        var body = parseFrontmatter(this.markdownArea.value).body;
+        this._liveWysiwygLinkData = preprocessMarkdownLinks(body);
+        this._liveWysiwygListMarkerData = preprocessListMarkers(body);
       }
       var result = origSwitchToMode.apply(this, arguments);
-      if (mode === 'markdown' && this._liveWysiwygLinkData) {
+      if (mode === 'markdown') {
         var md = this.markdownArea.value;
-        var post = postprocessMarkdownLinks(md, this._liveWysiwygLinkData);
-        if (post !== md) {
-          this.markdownArea.value = post;
-          if (this.options && this.options.onUpdate) this.options.onUpdate(this.getValue());
+        if (this._liveWysiwygLinkData) {
+          md = postprocessMarkdownLinks(md, this._liveWysiwygLinkData);
+          if (md !== this.markdownArea.value) {
+            this.markdownArea.value = md;
+            if (this.options && this.options.onUpdate) this.options.onUpdate(this.getValue());
+          }
         }
+        if (this._liveWysiwygListMarkerData) {
+          md = postprocessListMarkers(this.markdownArea.value, this._liveWysiwygListMarkerData);
+          if (md !== this.markdownArea.value) {
+            this.markdownArea.value = md;
+            if (this.options && this.options.onUpdate) this.options.onUpdate(this.getValue());
+          }
+        }
+      }
+      return result;
+    };
+  })();
+
+  (function patchGetValueForListMarkers() {
+    var proto = MarkdownWYSIWYG.prototype;
+    var origGetValue = proto.getValue;
+    if (!origGetValue) return;
+    proto.getValue = function () {
+      var raw = origGetValue.call(this);
+      var parsed = parseFrontmatter(raw);
+      var body = parsed.body;
+      if (this._liveWysiwygListMarkerData) {
+        body = postprocessListMarkers(body, this._liveWysiwygListMarkerData);
+      }
+      return body;
+    };
+  })();
+
+  (function patchSetValueAndGetValueForFrontmatter() {
+    var proto = MarkdownWYSIWYG.prototype;
+    var origSetValue = proto.setValue;
+    var origGetValue = proto.getValue;
+    var origSwitchToMode = proto.switchToMode;
+    if (!origSetValue || !origGetValue || !origSwitchToMode) return;
+    proto.setValue = function (markdown, isInitialSetup) {
+      var parsed = parseFrontmatter(markdown || '');
+      this._liveWysiwygFrontmatter = parsed.frontmatter;
+      return origSetValue.call(this, parsed.body, isInitialSetup);
+    };
+    proto.getValue = function () {
+      var body = origGetValue.call(this);
+      return serializeWithFrontmatter(this._liveWysiwygFrontmatter, body);
+    };
+    proto.switchToMode = function (mode, isInitialSetup) {
+      if (mode === 'wysiwyg' && !isInitialSetup && this.markdownArea && this.markdownArea.value) {
+        var parsed = parseFrontmatter(this.markdownArea.value);
+        this._liveWysiwygFrontmatter = parsed.frontmatter;
+        this.markdownArea.value = parsed.body;
+      }
+      var result = origSwitchToMode.call(this, mode, isInitialSetup);
+      if (mode === 'markdown' && this._liveWysiwygFrontmatter) {
+        this.markdownArea.value = serializeWithFrontmatter(this._liveWysiwygFrontmatter, this.markdownArea.value);
+        if (this._updateMarkdownLineNumbers) this._updateMarkdownLineNumbers();
       }
       return result;
     };

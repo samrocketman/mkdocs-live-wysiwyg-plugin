@@ -2,7 +2,13 @@
 
 A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](https://github.com/eddyluten/mkdocs-live-edit-plugin), based on [@celsowm/markdown-wysiwyg](https://www.npmjs.com/package/@celsowm/markdown-wysiwyg).
 
-When you click "Edit" in the live-edit plugin, this plugin replaces the plain textarea with a rich WYSIWYG editor that supports dual-mode editing (visual and Markdown), toolbar formatting, and smart conversion.
+- :white_check_mark: Dual-mode editing (WYSIWYG and Markdown) with toolbar formatting
+- :white_check_mark: MkDocs admonitions (`!!! note`, `!!! warning`, etc.)
+- :white_check_mark: YAML frontmatter preserved when editing and switching modes
+- :white_check_mark: Markdown link styles preserved (inline, reference, shortcut)
+- :white_check_mark: No external JavaScript; all assets are bundled locally within the mkdocs plugin.
+
+When you click "Edit" in the live-edit plugin, this plugin replaces the plain textarea with a rich WYSIWYG editor.
 
 ## Attributions
 

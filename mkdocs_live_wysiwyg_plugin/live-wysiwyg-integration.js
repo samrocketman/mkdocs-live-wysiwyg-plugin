@@ -230,6 +230,7 @@
     var fullImgRefRe = /!\[([^\]]*)\]\[([^\]]*)\]/g;
     var shortcutRe = /\[([^\]]+)\](?!\s*[(\[])/g;
     var shortcutImgRe = /!\[([^\]]+)\](?!\s*[(\[])/g;
+    var autolinkRe = /<(https?:\/\/[^>]+)>/g;
     var match, best, bestPos;
 
     while (pos < markdown.length) {
@@ -276,6 +277,13 @@
       if (match && refs[match[1].toLowerCase()] && match.index < bestPos) {
         bestPos = match.index;
         best = { url: normalizeUrl(refs[match[1].toLowerCase()]), text: match[1], original: match[0], isImage: true };
+      }
+
+      autolinkRe.lastIndex = pos;
+      match = autolinkRe.exec(markdown);
+      if (match && match.index < bestPos) {
+        bestPos = match.index;
+        best = { url: normalizeUrl(match[1]), text: match[1], original: match[0], isAutolink: true };
       }
 
       if (!best) break;
@@ -465,7 +473,10 @@
     }
 
     if (newDefs.length > 0) {
-      result = result.replace(/\s+$/, '') + '\n\n' + newDefs.join('\n');
+      var trimmed = result.replace(/\s+$/, '');
+      var lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1);
+      var endsWithRefDef = /^\[([^\]]+)\]:\s/.test(lastLine);
+      result = trimmed + (endsWithRefDef ? '\n' : '\n\n') + newDefs.join('\n');
     }
 
     return serializeWithFrontmatter(parsed.frontmatter, result);
@@ -494,18 +505,16 @@
         var md = this.markdownArea.value;
         if (this._liveWysiwygLinkData) {
           md = postprocessMarkdownLinks(md, this._liveWysiwygLinkData);
-          md = dryDuplicateInlineLinks(md, this._liveWysiwygLinkData);
-          if (md !== this.markdownArea.value) {
-            this.markdownArea.value = md;
-            if (this.options && this.options.onUpdate) this.options.onUpdate(this.getValue());
-          }
         }
         if (this._liveWysiwygListMarkerData) {
-          md = postprocessListMarkers(this.markdownArea.value, this._liveWysiwygListMarkerData);
-          if (md !== this.markdownArea.value) {
-            this.markdownArea.value = md;
-            if (this.options && this.options.onUpdate) this.options.onUpdate(this.getValue());
-          }
+          md = postprocessListMarkers(md, this._liveWysiwygListMarkerData);
+        }
+        if (this._liveWysiwygLinkData) {
+          md = dryDuplicateInlineLinks(md, this._liveWysiwygLinkData);
+        }
+        if (md !== this.markdownArea.value) {
+          this.markdownArea.value = md;
+          if (this.options && this.options.onUpdate) this.options.onUpdate(this.getValue());
         }
       }
       return result;
@@ -1230,10 +1239,18 @@
         onUpdate: function (markdownContent) {
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygLinkData) {
             markdownContent = postprocessMarkdownLinks(markdownContent, wysiwygEditor._liveWysiwygLinkData);
+          }
+          if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygListMarkerData) {
+            markdownContent = postprocessListMarkers(markdownContent, wysiwygEditor._liveWysiwygListMarkerData);
+          }
+          if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygLinkData) {
             markdownContent = dryDuplicateInlineLinks(markdownContent, wysiwygEditor._liveWysiwygLinkData);
           }
-          if (markdownContent && !markdownContent.endsWith('\n')) {
-            markdownContent = markdownContent + '\n';
+          if (markdownContent) {
+            markdownContent = markdownContent.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
+            if (!markdownContent.endsWith('\n')) {
+              markdownContent = markdownContent + '\n';
+            }
           }
           textarea.value = markdownContent;
         },

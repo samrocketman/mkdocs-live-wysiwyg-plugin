@@ -341,6 +341,9 @@
     proto.getValue = function () {
       var raw = origGetValue.call(this);
       var parsed = parseFrontmatter(raw);
+      if (parsed.frontmatter) {
+        this._liveWysiwygFrontmatter = parsed.frontmatter;
+      }
       var body = parsed.body;
       if (this._liveWysiwygListMarkerData) {
         body = postprocessListMarkers(body, this._liveWysiwygListMarkerData);
@@ -561,9 +564,10 @@
       var savedSelStart = this.markdownArea ? this.markdownArea.selectionStart : 0;
       var frontmatterLen = 0;
       if (mode === 'wysiwyg' && !isInitialSetup && this.markdownArea && this.markdownArea.value) {
+        var fullLen = this.markdownArea.value.length;
         var parsed = parseFrontmatter(this.markdownArea.value);
         this._liveWysiwygFrontmatter = parsed.frontmatter;
-        frontmatterLen = (parsed.frontmatter || '').length;
+        frontmatterLen = fullLen - (parsed.body || '').length;
         this.markdownArea.value = parsed.body;
         if (frontmatterLen > 0) {
           var adj = Math.max(0, Math.min(savedSelStart - frontmatterLen, parsed.body.length));
@@ -645,7 +649,7 @@
               editableArea.focus();
             } else if (offsets && offsets.start >= 0) {
               var hasSelection = offsets.end >= 0 && offsets.end > offsets.start;
-              var selStart = hasSelection ? Math.max(0, offsets.start - 1) : offsets.start;
+              var selStart = offsets.start;
               var selEnd = hasSelection
                 ? Math.max(selStart, offsets.end - 6)
                 : selStart;
@@ -827,12 +831,13 @@
     var cursorState = null;
     if (textarea && wysiwygEditor && !leavingEditMode) {
       var ed = wysiwygEditor;
-      var parsed = parseFrontmatter(textarea.value || '');
-      var frontmatterLen = (parsed.frontmatter || '').length;
       if (ed.currentMode === 'markdown') {
+        var mdContent = ed.markdownArea.value;
+        if (mdContent && !mdContent.endsWith('\n')) mdContent += '\n';
+        textarea.value = mdContent;
         cursorState = {
-          start: ed.markdownArea.selectionStart + frontmatterLen,
-          end: ed.markdownArea.selectionEnd + frontmatterLen,
+          start: ed.markdownArea.selectionStart,
+          end: ed.markdownArea.selectionEnd,
           scrollTop: ed.markdownArea ? ed.markdownArea.scrollTop : 0
         };
       } else {

@@ -7,9 +7,13 @@ A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](ht
 - :white_check_mark: MkDocs admonitions (`!!! note`, `!!! warning`, etc.)
 - :white_check_mark: YAML frontmatter preserved when editing and switching modes
 - :white_check_mark: Markdown link styles preserved (inline, reference, shortcut)
+- :white_check_mark: Cursor location memory: when switching between WYSIWYG or Markdown modes the cursor location and scroll area is preserved to reduce editing strain on the author
+- :white_check_mark: Editor preferences remembered across pages.  If the editor is disabled, then it will still be disabled when editing another document.  WYGSIWYG or Markdown mode is also remembered when the Editor is enabled.
 - :white_check_mark: No external JavaScript; all assets are bundled locally within the mkdocs plugin.
 
 When you click "Edit" in the live-edit plugin, this plugin replaces the plain textarea with a rich WYSIWYG editor.
+
+<img width="1538" height="1392" alt="image" src="https://github.com/user-attachments/assets/e53618b1-f465-4551-8e6f-f50c1ee1fd6f" />
 
 ## Attributions
 

@@ -349,6 +349,111 @@
     };
   })();
 
+  var CURSOR_MARKER = '\u200C\u200C\u200C\u200C\u200C\u200C';
+  var CURSOR_MARKER_RE = /\u200C\u200C\u200C\u200C\u200C\u200C/g;
+
+  function injectMarkerAtCaretInEditable(editable) {
+    var sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return false;
+    var range = sel.getRangeAt(0);
+    if (!editable.contains(range.commonAncestorContainer)) return false;
+    var textNode = document.createTextNode(CURSOR_MARKER);
+    range.collapse(true);
+    range.insertNode(textNode);
+    return true;
+  }
+
+  function getCaretOffsetInEditable(editable) {
+    var sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return 0;
+    var range = sel.getRangeAt(0);
+    if (!editable.contains(range.commonAncestorContainer)) return 0;
+    var preCaretRange = range.cloneRange();
+    preCaretRange.selectNodeContents(editable);
+    preCaretRange.setEnd(range.startContainer, range.startOffset);
+    return preCaretRange.toString().length;
+  }
+
+  function getTextOffsetOfMarkerInEditable(editable) {
+    var walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT, null, false);
+    var pos = 0;
+    var node;
+    while ((node = walker.nextNode())) {
+      var idx = node.textContent.indexOf(CURSOR_MARKER);
+      if (idx >= 0) return pos + idx;
+      pos += node.textContent.length;
+    }
+    return -1;
+  }
+
+  function setCaretInEditable(editable, offset) {
+    var sel = window.getSelection();
+    if (!sel) return;
+    var range = document.createRange();
+    var walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT, null, false);
+    var pos = 0;
+    var startNode, startOffset, endNode, endOffset;
+    var node;
+    while ((node = walker.nextNode())) {
+      var len = node.textContent.length;
+      if (pos + len >= offset) {
+        startNode = node;
+        startOffset = offset - pos;
+        endNode = node;
+        endOffset = startOffset;
+        break;
+      }
+      pos += len;
+    }
+    if (startNode) {
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }
+
+  function restoreScrollPosition(container, scrollTop) {
+    if (container && typeof scrollTop === 'number') {
+      container.scrollTop = Math.min(scrollTop, Math.max(0, container.scrollHeight - container.clientHeight));
+    }
+  }
+
+  function scrollToCenterCursor(container, isTextarea, selectionStart) {
+    if (!container) return;
+    var clientHeight = container.clientHeight;
+    var maxScroll = Math.max(0, container.scrollHeight - clientHeight);
+    if (maxScroll <= 0) return;
+    var cursorPixelPos;
+    if (isTextarea && typeof selectionStart === 'number') {
+      var mirror = document.createElement('div');
+      var style = window.getComputedStyle(container);
+      mirror.style.cssText = 'position:absolute;left:-9999px;visibility:hidden;white-space:pre-wrap;word-wrap:break-word;overflow:hidden;pointer-events:none;';
+      mirror.style.font = style.font;
+      mirror.style.fontSize = style.fontSize;
+      mirror.style.fontFamily = style.fontFamily;
+      mirror.style.lineHeight = style.lineHeight;
+      mirror.style.padding = style.padding;
+      mirror.style.width = container.clientWidth + 'px';
+      mirror.style.border = style.border;
+      mirror.style.boxSizing = style.boxSizing;
+      mirror.textContent = container.value.substring(0, selectionStart);
+      container.parentNode.appendChild(mirror);
+      cursorPixelPos = mirror.offsetHeight;
+      mirror.parentNode.removeChild(mirror);
+    } else {
+      var sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      var range = sel.getRangeAt(0);
+      if (!container.contains(range.commonAncestorContainer)) return;
+      var cursorRect = range.getBoundingClientRect();
+      var containerRect = container.getBoundingClientRect();
+      cursorPixelPos = container.scrollTop + (cursorRect.top - containerRect.top);
+    }
+    var targetScroll = cursorPixelPos - (clientHeight / 2);
+    container.scrollTop = Math.max(0, Math.min(targetScroll, maxScroll));
+  }
+
   (function patchSetValueAndGetValueForFrontmatter() {
     var proto = MarkdownWYSIWYG.prototype;
     var origSetValue = proto.setValue;
@@ -370,19 +475,96 @@
         this._liveWysiwygFrontmatter = parsed.frontmatter;
         this.markdownArea.value = parsed.body;
       }
+      var savedScroll = null;
+      var markdownMarkerInserted = false;
+      if (!isInitialSetup) {
+        savedScroll = this.currentMode === 'wysiwyg'
+          ? (this.editableArea ? this.editableArea.scrollTop : 0)
+          : (this.markdownArea ? this.markdownArea.scrollTop : 0);
+        if (this.currentMode === 'wysiwyg') {
+          injectMarkerAtCaretInEditable(this.editableArea);
+        } else {
+          var mdVal = this.markdownArea.value;
+          var insertAt = Math.min(this.markdownArea.selectionStart, mdVal.length);
+          var lineStart = mdVal.lastIndexOf('\n', insertAt - 1) + 1;
+          if (insertAt !== lineStart) {
+            this.markdownArea.value = mdVal.slice(0, insertAt) + CURSOR_MARKER + mdVal.slice(insertAt);
+            markdownMarkerInserted = true;
+          }
+        }
+      }
       var result = origSwitchToMode.call(this, mode, isInitialSetup);
       if (mode === 'markdown' && this._liveWysiwygFrontmatter) {
         this.markdownArea.value = serializeWithFrontmatter(this._liveWysiwygFrontmatter, this.markdownArea.value);
         if (this._updateMarkdownLineNumbers) this._updateMarkdownLineNumbers();
       }
+      if (!isInitialSetup && savedScroll !== null) {
+        if (mode === 'wysiwyg') {
+          var textOffset = getTextOffsetOfMarkerInEditable(this.editableArea);
+          if (textOffset >= 0) {
+            var html = this.editableArea.innerHTML;
+            this.editableArea.innerHTML = html.replace(CURSOR_MARKER_RE, '');
+            setCaretInEditable(this.editableArea, textOffset);
+          } else if (markdownMarkerInserted) {
+            this.markdownArea.value = this.markdownArea.value.replace(CURSOR_MARKER_RE, '');
+            this.editableArea.innerHTML = this.editableArea.innerHTML.replace(CURSOR_MARKER_RE, '');
+          }
+          var editableArea = this.editableArea;
+          requestAnimationFrame(function () { scrollToCenterCursor(editableArea, false); });
+        } else {
+          var mdVal = this.markdownArea.value;
+          var markerIdx = mdVal.indexOf(CURSOR_MARKER);
+          if (markerIdx >= 0) {
+            this.markdownArea.value = mdVal.replace(CURSOR_MARKER_RE, '');
+            this.markdownArea.setSelectionRange(markerIdx, markerIdx);
+            if (this._updateMarkdownLineNumbers) this._updateMarkdownLineNumbers();
+          }
+          scrollToCenterCursor(this.markdownArea, true, this.markdownArea.selectionStart);
+          if (this.markdownLineNumbersDiv) this.markdownLineNumbersDiv.scrollTop = this.markdownArea.scrollTop;
+        }
+      }
       return result;
     };
   })();
+
+  const COOKIE_NAME = 'liveWysiwygEditorEnabled';
+
+  function getEditorStateFromCookie() {
+    if (typeof document === 'undefined' || !document.cookie) return null;
+    var match = document.cookie.match(new RegExp('(?:^|;\\s*)' + COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+    if (!match) return null;
+    var val = match[1];
+    var parts = val.split(':');
+    var enabled = parts[0] === '1' || parts[0] === 'true';
+    var mode = (parts[1] === 'wysiwyg' || parts[1] === 'markdown') ? parts[1] : 'wysiwyg';
+    return { enabled: enabled, mode: mode };
+  }
+
+  function setEditorStateCookie(enabled, mode) {
+    if (typeof document === 'undefined') return;
+    var modeVal = (mode === 'markdown' || mode === 'wysiwyg') ? mode : 'wysiwyg';
+    var value = (enabled ? '1' : '0') + ':' + modeVal;
+    var maxAge = 365 * 24 * 60 * 60;
+    document.cookie = COOKIE_NAME + '=' + value + '; path=/; max-age=' + maxAge + '; SameSite=Lax';
+  }
+
+  function isEditorEnabledByCookie() {
+    var state = getEditorStateFromCookie();
+    if (state === null) return null;
+    return state.enabled;
+  }
+
+  function getEditorModeFromCookie() {
+    var state = getEditorStateFromCookie();
+    if (state === null) return 'wysiwyg';
+    return state.mode;
+  }
 
   let wysiwygEditor = null;
   let wysiwygContainer = null;
   let cancelObserver = null;
   let toggleButton = null;
+  let bodyObserver = null;
 
   function getControlsElement(textarea) {
     var controls = textarea ? textarea.closest('.live-edit-controls') : null;
@@ -427,9 +609,11 @@
     toggleButton.title = isWysiwygActive ? 'Switch to plain textarea' : 'Switch to WYSIWYG editor';
     toggleButton.addEventListener('click', function () {
       if (wysiwygEditor) {
+        setEditorStateCookie(false, wysiwygEditor.currentMode);
         destroyWysiwyg(textarea, false, true);
         updateToggleButton(false);
       } else {
+        setEditorStateCookie(true, getEditorModeFromCookie());
         replaceTextareaWithWysiwyg(textarea);
         updateToggleButton(true);
       }
@@ -444,11 +628,75 @@
     }
   }
 
+  function startBodyObserver() {
+    if (bodyObserver) return;
+    function checkAndHandle() {
+      if (observeForTextarea()) {
+        stopBodyObserver();
+      }
+    }
+    bodyObserver = new MutationObserver(function (mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var m = mutations[i];
+        if (m.type === 'childList' && m.addedNodes.length) {
+          checkAndHandle();
+          return;
+        }
+        if (m.type === 'attributes' && m.attributeName === 'class') {
+          var el = m.target;
+          if (el.classList && el.classList.contains('live-edit-source') && !el.classList.contains('live-edit-hidden')) {
+            checkAndHandle();
+            return;
+          }
+        }
+      }
+    });
+    bodyObserver.observe(document.body, { childList: true, subtree: true });
+    var hiddenTextarea = document.querySelector('.live-edit-source.live-edit-hidden');
+    if (hiddenTextarea) {
+      bodyObserver.observe(hiddenTextarea, { attributes: true, attributeFilter: ['class'] });
+    }
+    checkAndHandle();
+  }
+
+  function stopBodyObserver() {
+    if (bodyObserver) {
+      bodyObserver.disconnect();
+      bodyObserver = null;
+    }
+  }
+
   function destroyWysiwyg(textarea, leavingEditMode, userRequestedDisable) {
+    var cursorState = null;
+    if (textarea && wysiwygEditor && !leavingEditMode) {
+      var ed = wysiwygEditor;
+      var parsed = parseFrontmatter(textarea.value || '');
+      var frontmatterLen = (parsed.frontmatter || '').length;
+      if (ed.currentMode === 'markdown') {
+        cursorState = {
+          start: ed.markdownArea.selectionStart + frontmatterLen,
+          end: ed.markdownArea.selectionEnd + frontmatterLen,
+          scrollTop: ed.markdownArea ? ed.markdownArea.scrollTop : 0
+        };
+      } else {
+        injectMarkerAtCaretInEditable(ed.editableArea);
+        var md = ed.getValue();
+        var markerIdx = md.indexOf(CURSOR_MARKER);
+        if (markerIdx >= 0) {
+          cursorState = {
+            start: markerIdx,
+            end: markerIdx,
+            scrollTop: ed.editableArea ? ed.editableArea.scrollTop : 0
+          };
+          ed.editableArea.innerHTML = ed.editableArea.innerHTML.replace(CURSOR_MARKER_RE, '');
+        }
+      }
+    }
     if (cancelObserver) {
       cancelObserver.disconnect();
       cancelObserver = null;
     }
+    var lastMode = wysiwygEditor ? wysiwygEditor.currentMode : null;
     if (wysiwygEditor) {
       try {
         wysiwygEditor.destroy();
@@ -462,11 +710,20 @@
       wysiwygContainer = null;
     }
     if (leavingEditMode) {
+      if (lastMode) {
+        setEditorStateCookie(true, lastMode);
+      }
       removeToggleButton();
+      startBodyObserver();
     }
     if (textarea) {
       textarea.style.display = '';
       textarea.removeAttribute('data-live-wysiwyg-replaced');
+      if (cursorState) {
+        textarea.selectionStart = Math.min(cursorState.start, textarea.value.length);
+        textarea.selectionEnd = Math.min(cursorState.end, textarea.value.length);
+        scrollToCenterCursor(textarea, true, textarea.selectionStart);
+      }
       if (leavingEditMode) {
         return;
       }
@@ -507,6 +764,11 @@
     }
 
     const initialValue = textarea.value || '';
+    var savedCursor = {
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd,
+      scrollTop: textarea.scrollTop
+    };
 
     wysiwygContainer = document.createElement('div');
     wysiwygContainer.id = 'live-edit-wysiwyg-container';
@@ -516,10 +778,11 @@
     textarea.parentNode.insertBefore(wysiwygContainer, textarea);
     textarea.style.display = 'none';
 
+    var preferredMode = getEditorModeFromCookie();
     try {
       wysiwygEditor = new MarkdownWYSIWYG('live-edit-wysiwyg-container', {
         initialValue: initialValue,
-        initialMode: 'wysiwyg',
+        initialMode: preferredMode,
         showToolbar: true,
         onUpdate: function (markdownContent) {
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygLinkData) {
@@ -553,37 +816,55 @@
     observer.observe(textarea, { attributes: true, attributeFilter: ['class'] });
     ensureToggleButton(textarea, true);
     updateToggleButton(true);
+
+    (function patchEditorModeCookie() {
+      var orig = wysiwygEditor.switchToMode;
+      wysiwygEditor.switchToMode = function (mode, isInitialSetup) {
+        var result = orig.apply(this, arguments);
+        if (!isInitialSetup && wysiwygEditor) {
+          setEditorStateCookie(true, mode);
+        }
+        return result;
+      };
+    })();
+
+    if (savedCursor.start >= 0 && wysiwygEditor) {
+      var parsed = parseFrontmatter(initialValue);
+      var frontmatterLen = (parsed.frontmatter || '').length;
+      var bodyStart = Math.max(0, savedCursor.start - frontmatterLen);
+      var bodyEnd = Math.max(0, savedCursor.end - frontmatterLen);
+      wysiwygEditor.markdownArea.setSelectionRange(bodyStart, bodyEnd);
+      scrollToCenterCursor(wysiwygEditor.markdownArea, true, bodyStart);
+      if (wysiwygEditor.markdownLineNumbersDiv) {
+        wysiwygEditor.markdownLineNumbersDiv.scrollTop = wysiwygEditor.markdownArea.scrollTop;
+      }
+      wysiwygEditor.switchToMode(preferredMode, true);
+    }
   }
 
   function observeForTextarea() {
-    const textarea = document.querySelector('.live-edit-source');
-    if (textarea) {
-      if (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload) {
-        replaceTextareaWithWysiwyg(textarea);
-      } else {
-        ensureToggleButton(textarea, false);
-        updateToggleButton(false);
-      }
-      return true;
+    var textarea = document.querySelector('.live-edit-source');
+    if (!textarea || textarea.classList.contains('live-edit-hidden')) return false;
+    var cookieEnabled = isEditorEnabledByCookie();
+    var shouldAutoload = (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload) && (cookieEnabled !== false);
+    ensureToggleButton(textarea, false);
+    if (shouldAutoload) {
+      replaceTextareaWithWysiwyg(textarea);
+    } else {
+      updateToggleButton(false);
     }
-    return false;
+    return true;
   }
 
-  const observer = new MutationObserver(function () {
-    if (observeForTextarea()) {
-      observer.disconnect();
+  function init() {
+    if (!observeForTextarea()) {
+      startBodyObserver();
     }
-  });
+  }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () {
-      if (!observeForTextarea()) {
-        observer.observe(document.body, { childList: true, subtree: true });
-      }
-    });
+    document.addEventListener('DOMContentLoaded', init);
   } else {
-    if (!observeForTextarea()) {
-      observer.observe(document.body, { childList: true, subtree: true });
-    }
+    init();
   }
 })();

@@ -2481,11 +2481,22 @@ class MarkdownWYSIWYG {
                     return listMd;
                 }
                 if (node.nodeName === 'BLOCKQUOTE') {
-                    const quoteContentRaw = this._processInlineContainerRecursive(node, options);
+                    const blockParts = [];
+                    for (let ci = 0; ci < node.childNodes.length; ci++) {
+                        const child = node.childNodes[ci];
+                        if (child.nodeType === 3) {
+                            if (child.textContent.replace(/[\s\u00a0]/g, '')) {
+                                blockParts.push(child.textContent.replace(/[\s\u00a0]+$/g, ''));
+                            }
+                            continue;
+                        }
+                        blockParts.push(this._nodeToMarkdownRecursive(child, options));
+                    }
+                    const quoteContentRaw = blockParts.join('');
                     const isBlank = (s) => !s || !s.replace(/[\s\u00a0]/g, '');
                     let quoteLines = quoteContentRaw.split('\n').map(line => {
-                        const trimmed = line.replace(/[\s\u00a0]+$/g, '').replace(/^[\s\u00a0]+/g, '');
-                        return isBlank(trimmed) ? '' : trimmed;
+                        const rtrimmed = line.replace(/[\s\u00a0]+$/g, '');
+                        return isBlank(rtrimmed) ? '' : rtrimmed;
                     });
                     while (quoteLines.length > 0 && quoteLines[quoteLines.length - 1] === '') quoteLines.pop();
                     while (quoteLines.length > 0 && quoteLines[0] === '') quoteLines.shift();

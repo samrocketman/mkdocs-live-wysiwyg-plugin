@@ -11,8 +11,10 @@ Click **Edit** above to try the WYSIWYG editor.
 
 The WYSIWYG editor supports MkDocs admonitions. In Markdown mode, use:
 
-!!! note "Note"
+!!! note
     This is a note admonition.
+
+Another
 
 !!! warning "Custom Title"
     Admonitions with custom titles work too.

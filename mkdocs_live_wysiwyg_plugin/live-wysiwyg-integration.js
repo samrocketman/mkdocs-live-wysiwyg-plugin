@@ -193,6 +193,39 @@
     });
   }
 
+  function preprocessTableSeparators(markdown) {
+    if (!markdown || typeof markdown !== 'string') return { separators: [] };
+    var separators = [];
+    var lines = markdown.split('\n');
+    for (var i = 1; i < lines.length; i++) {
+      if (/^\|[\s:=-]+(\|[\s:=-]+)+\|?\s*$/.test(lines[i]) && /\|/.test(lines[i - 1])) {
+        separators.push({ header: lines[i - 1].replace(/\s+/g, ''), separator: lines[i] });
+      }
+    }
+    return { separators: separators };
+  }
+
+  function postprocessTableSeparators(markdown, tableData) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+    if (!tableData || !tableData.separators || !tableData.separators.length) return markdown;
+    var originals = tableData.separators;
+    var used = 0;
+    var lines = markdown.split('\n');
+    for (var i = 1; i < lines.length; i++) {
+      if (/^\|(\s*---\s*\|)+\s*$/.test(lines[i]) && /\|/.test(lines[i - 1])) {
+        var normHeader = lines[i - 1].replace(/\s+/g, '');
+        for (var j = used; j < originals.length; j++) {
+          if (originals[j].header === normHeader) {
+            lines[i] = originals[j].separator;
+            used = j + 1;
+            break;
+          }
+        }
+      }
+    }
+    return lines.join('\n');
+  }
+
   function normalizeUrl(url) {
     if (!url || typeof url !== 'string') return '';
     url = url.replace(/^<|>$/g, '').trim();
@@ -491,6 +524,7 @@
       if (markdown) {
         this._liveWysiwygLinkData = preprocessMarkdownLinks(markdown);
         this._liveWysiwygListMarkerData = preprocessListMarkers(markdown);
+        this._liveWysiwygTableSepData = preprocessTableSeparators(markdown);
       }
       return origSetValue.apply(this, arguments);
     };
@@ -499,6 +533,7 @@
         var body = parseFrontmatter(this.markdownArea.value).body;
         this._liveWysiwygLinkData = preprocessMarkdownLinks(body);
         this._liveWysiwygListMarkerData = preprocessListMarkers(body);
+        this._liveWysiwygTableSepData = preprocessTableSeparators(body);
       }
       var result = origSwitchToMode.apply(this, arguments);
       if (mode === 'markdown') {
@@ -508,6 +543,9 @@
         }
         if (this._liveWysiwygListMarkerData) {
           md = postprocessListMarkers(md, this._liveWysiwygListMarkerData);
+        }
+        if (this._liveWysiwygTableSepData) {
+          md = postprocessTableSeparators(md, this._liveWysiwygTableSepData);
         }
         if (this._liveWysiwygLinkData) {
           md = dryDuplicateInlineLinks(md, this._liveWysiwygLinkData);
@@ -534,6 +572,9 @@
       var body = parsed.body;
       if (this._liveWysiwygListMarkerData) {
         body = postprocessListMarkers(body, this._liveWysiwygListMarkerData);
+      }
+      if (this._liveWysiwygTableSepData) {
+        body = postprocessTableSeparators(body, this._liveWysiwygTableSepData);
       }
       return body;
     };
@@ -1242,6 +1283,9 @@
           }
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygListMarkerData) {
             markdownContent = postprocessListMarkers(markdownContent, wysiwygEditor._liveWysiwygListMarkerData);
+          }
+          if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygTableSepData) {
+            markdownContent = postprocessTableSeparators(markdownContent, wysiwygEditor._liveWysiwygTableSepData);
           }
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygLinkData) {
             markdownContent = dryDuplicateInlineLinks(markdownContent, wysiwygEditor._liveWysiwygLinkData);

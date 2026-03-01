@@ -561,9 +561,10 @@
       var savedSelStart = this.markdownArea ? this.markdownArea.selectionStart : 0;
       var frontmatterLen = 0;
       if (mode === 'wysiwyg' && !isInitialSetup && this.markdownArea && this.markdownArea.value) {
+        var fullLen = this.markdownArea.value.length;
         var parsed = parseFrontmatter(this.markdownArea.value);
         this._liveWysiwygFrontmatter = parsed.frontmatter;
-        frontmatterLen = (parsed.frontmatter || '').length;
+        frontmatterLen = fullLen - (parsed.body || '').length;
         this.markdownArea.value = parsed.body;
         if (frontmatterLen > 0) {
           var adj = Math.max(0, Math.min(savedSelStart - frontmatterLen, parsed.body.length));
@@ -645,7 +646,7 @@
               editableArea.focus();
             } else if (offsets && offsets.start >= 0) {
               var hasSelection = offsets.end >= 0 && offsets.end > offsets.start;
-              var selStart = hasSelection ? Math.max(0, offsets.start - 1) : offsets.start;
+              var selStart = offsets.start;
               var selEnd = hasSelection
                 ? Math.max(selStart, offsets.end - 6)
                 : selStart;

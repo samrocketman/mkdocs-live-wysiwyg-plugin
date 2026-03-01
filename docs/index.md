@@ -3,9 +3,6 @@ title: Example WYSIWYG site
 ---
 # Welcome
 
-!!! warning "Custom Title"
-    Admonitions with custom titles work too.
-
 This is a test page for the mkdocs-live-wysiwyg-plugin.
 
 Click **Edit** above to try the WYSIWYG editor.

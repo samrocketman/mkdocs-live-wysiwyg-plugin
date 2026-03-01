@@ -50,6 +50,56 @@
  vertical-align: middle;
 }
 
+.md-toolbar-heading-wrapper {
+ position: relative;
+ display: inline-flex;
+}
+
+.md-heading-dropdown {
+ position: absolute;
+ top: 100%;
+ left: 0;
+ z-index: 100;
+ background: #fff;
+ border: 1px solid #ccc;
+ border-radius: 4px;
+ box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+ min-width: 120px;
+ padding: 4px 0;
+ margin-top: 2px;
+}
+
+.md-heading-dropdown-item {
+ display: flex;
+ align-items: center;
+ width: 100%;
+ padding: 6px 12px;
+ border: none;
+ background: none;
+ cursor: pointer;
+ font-size: 14px;
+ text-align: left;
+ color: #333;
+ transition: background-color 0.15s ease;
+}
+
+.md-heading-dropdown-item:hover {
+ background-color: #e9e9e9;
+}
+
+.md-heading-dropdown-item.active {
+ background-color: #d0e4ff;
+ color: #0056b3;
+ font-weight: 600;
+}
+
+.md-heading-dropdown-item-h1 .md-heading-dropdown-label { font-size: 20px; font-weight: 700; }
+.md-heading-dropdown-item-h2 .md-heading-dropdown-label { font-size: 18px; font-weight: 700; }
+.md-heading-dropdown-item-h3 .md-heading-dropdown-label { font-size: 16px; font-weight: 600; }
+.md-heading-dropdown-item-h4 .md-heading-dropdown-label { font-size: 15px; font-weight: 600; }
+.md-heading-dropdown-item-h5 .md-heading-dropdown-label { font-size: 14px; font-weight: 500; }
+.md-heading-dropdown-item-h6 .md-heading-dropdown-label { font-size: 13px; font-weight: 500; }
+
 .md-editor-content-area {
  position: relative;
  display: flex;

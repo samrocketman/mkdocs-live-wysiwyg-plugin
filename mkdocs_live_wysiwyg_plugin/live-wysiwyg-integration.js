@@ -112,6 +112,28 @@
       });
       protected_ = protected_.replace(/\n\s*\n\s*\n+/g, '\n\n');
       protected_ = protected_.replace(/ +\n/g, '\n');
+      var cleanBlockquoteTrailing = function (s) {
+        var lines = s.split('\n');
+        var result = [];
+        var i = 0;
+        var isEmptyQuoteLine = function (l) { return /^>/.test(l) && !l.replace(/^>/, '').replace(/[\s\u00a0]/g, ''); };
+        while (i < lines.length) {
+          if (/^>/.test(lines[i])) {
+            var block = [];
+            while (i < lines.length && /^>/.test(lines[i])) {
+              block.push(lines[i]);
+              i++;
+            }
+            while (block.length > 0 && isEmptyQuoteLine(block[block.length - 1])) block.pop();
+            for (var bi = 0; bi < block.length; bi++) result.push(block[bi]);
+          } else {
+            result.push(lines[i]);
+            i++;
+          }
+        }
+        return result.join('\n');
+      };
+      protected_ = cleanBlockquoteTrailing(protected_);
       for (var j = 0; j < codeBlocks.length; j++) {
         protected_ = protected_.split(placeholderPrefix + j + placeholderSuffix).join(codeBlocks[j]);
       }
@@ -272,14 +294,28 @@
     var refDefinitions = linkData.refDefinitions || '';
     var inlineLinkRe = /\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
     var inlineImgRe = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
+    var spanCursorRe = new RegExp('<span\\s+' + CURSOR_SPAN_ATTR + '\\s*></span>', 'g');
+    var spanCursorEndRe = new RegExp('<span\\s+' + CURSOR_SPAN_ATTR_END + '\\s*></span>', 'g');
     var used = [];
+
+    function stripMarkers(s) {
+      return s.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '').replace(spanCursorRe, '').replace(spanCursorEndRe, '');
+    }
 
     function replaceMatch(match, text, url, isImage) {
       var cleanUrl = normalizeUrl(url);
+      var cleanText = stripMarkers(text);
       for (var i = 0; i < linkOriginals.length; i++) {
-        if (!used[i] && linkOriginals[i].url === cleanUrl && linkOriginals[i].text === text && !!linkOriginals[i].isImage === !!isImage) {
+        var origText = stripMarkers(linkOriginals[i].text);
+        if (!used[i] && linkOriginals[i].url === cleanUrl && origText === cleanText && !!linkOriginals[i].isImage === !!isImage) {
           used[i] = true;
-          return linkOriginals[i].original;
+          var orig = stripMarkers(linkOriginals[i].original);
+          if (cleanText !== text) {
+            var textStart = orig.indexOf('[') + 1;
+            var textEnd = orig.indexOf(']', textStart);
+            orig = orig.slice(0, textStart) + text + orig.slice(textEnd);
+          }
+          return orig;
         }
       }
       return match;
@@ -641,21 +677,44 @@
           if (!cursorAtDocStart) {
             var spanMarker = '<span ' + CURSOR_SPAN_ATTR + '></span>';
             var spanMarkerEnd = '<span ' + CURSOR_SPAN_ATTR_END + '></span>';
+            var spanMarkerRe = new RegExp('<span\\s+' + CURSOR_SPAN_ATTR.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + '\\s*>\\s*</span>', 'gi');
+            var spanMarkerEndRe = new RegExp('<span\\s+' + CURSOR_SPAN_ATTR_END.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + '\\s*>\\s*</span>', 'gi');
             var testMd;
             if (insertStart === insertEnd) {
               testMd = mdVal.slice(0, insertStart) + spanMarker + mdVal.slice(insertStart);
             } else {
               testMd = mdVal.slice(0, insertStart) + spanMarker + mdVal.slice(insertStart, insertEnd) + spanMarkerEnd + mdVal.slice(insertEnd);
             }
-            var testHtml = this._markdownToHtml(testMd);
-            var roundTrippedMd = this._htmlToMarkdown(testHtml);
-            roundTrippedMd = roundTrippedMd.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
-            var normMd = function (s) { return (s || '').replace(/\n\s*\n\s*\n+/g, '\n\n').replace(/ +\n/g, '\n').trim(); };
-            if (normMd(roundTrippedMd) === normMd(mdVal)) {
+            var stripAllMarkers = function (s) {
+              return (s || '').replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '').replace(spanMarkerRe, '').replace(spanMarkerEndRe, '');
+            };
+            var normHtml = function (s) { return stripAllMarkers(s).replace(/\s+/g, ' ').trim(); };
+            var cleanHtml = normHtml(this._markdownToHtml(mdVal));
+            var markerHtml = normHtml(this._markdownToHtml(testMd));
+            if (markerHtml === cleanHtml) {
               this.markdownArea.value = testMd;
               markdownMarkerInserted = true;
             } else {
-              cursorBlockFallback = getBlockIndexForLine(mdVal, mdVal.slice(0, selStart).split('\n').length - 1);
+              var lines = mdVal.split('\n');
+              var cursorLineIdx = mdVal.slice(0, selStart).split('\n').length - 1;
+              var cursorLine = lines[cursorLineIdx] || '';
+              if (/^\s*>\s*$/.test(cursorLine) && cursorLineIdx > 0) {
+                var prevIdx = cursorLineIdx - 1;
+                while (prevIdx > 0 && /^\s*>\s*$/.test(lines[prevIdx])) prevIdx--;
+                var prevLineEnd = 0;
+                for (var li = 0; li <= prevIdx; li++) prevLineEnd += lines[li].length + 1;
+                prevLineEnd -= 1;
+                var retryMd = mdVal.slice(0, prevLineEnd) + spanMarker + mdVal.slice(prevLineEnd);
+                var retryHtml = normHtml(this._markdownToHtml(retryMd));
+                if (retryHtml === cleanHtml) {
+                  this.markdownArea.value = retryMd;
+                  markdownMarkerInserted = true;
+                } else {
+                  cursorBlockFallback = getBlockIndexForLine(mdVal, cursorLineIdx);
+                }
+              } else {
+                cursorBlockFallback = getBlockIndexForLine(mdVal, cursorLineIdx);
+              }
             }
           }
         }
@@ -737,7 +796,19 @@
             if (markerEndIdx >= 0 && markerEndIdx > markerIdx) {
               selEnd = markerEndIdx;
             }
-            this.markdownArea.value = mdVal.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
+            var strippedMd = mdVal.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
+            var bqLines = strippedMd.split('\n');
+            var bqOut = [];
+            var bqi = 0;
+            while (bqi < bqLines.length) {
+              if (/^>/.test(bqLines[bqi])) {
+                var bqBlk = [];
+                while (bqi < bqLines.length && /^>/.test(bqLines[bqi])) { bqBlk.push(bqLines[bqi]); bqi++; }
+                while (bqBlk.length > 0 && /^>/.test(bqBlk[bqBlk.length - 1]) && !bqBlk[bqBlk.length - 1].replace(/^>/, '').replace(/[\s\u00a0]/g, '')) bqBlk.pop();
+                for (var bk = 0; bk < bqBlk.length; bk++) bqOut.push(bqBlk[bk]);
+              } else { bqOut.push(bqLines[bqi]); bqi++; }
+            }
+            this.markdownArea.value = bqOut.join('\n');
             var len = this.markdownArea.value.length;
             if (markerEndIdx >= 0 && markerEndIdx > markerIdx) {
               selEnd = markerEndIdx - 6;
@@ -1047,6 +1118,26 @@
       }
     })();
 
+    (function () {
+      var ea = wysiwygEditor.editableArea;
+      if (ea && !ea.dataset.liveWysiwygPasteAttached) {
+        ea.dataset.liveWysiwygPasteAttached = '1';
+        var urlRe = /^https?:\/\/\S+$/;
+        ea.addEventListener('paste', function (e) {
+          var sel = window.getSelection();
+          if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+          var pasted = (e.clipboardData || window.clipboardData).getData('text');
+          if (!pasted || !urlRe.test(pasted.trim())) return;
+          e.preventDefault();
+          var url = pasted.trim();
+          document.execCommand('createLink', false, url);
+          if (wysiwygEditor._finalizeUpdate) {
+            wysiwygEditor._finalizeUpdate(ea.innerHTML);
+          }
+        });
+      }
+    })();
+
     const observer = new MutationObserver(function () {
       if (!textarea.parentNode) return;
       if (textarea.classList.contains('live-edit-hidden')) {
@@ -1069,17 +1160,25 @@
       };
     })();
 
-    if (savedCursor.start >= 0 && wysiwygEditor) {
-      var parsed = parseFrontmatter(initialValue);
-      var frontmatterLen = (parsed.frontmatter || '').length;
-      var bodyStart = Math.max(0, savedCursor.start - frontmatterLen);
-      var bodyEnd = Math.max(0, savedCursor.end - frontmatterLen);
-      wysiwygEditor.markdownArea.setSelectionRange(bodyStart, bodyEnd);
-      scrollToCenterCursor(wysiwygEditor.markdownArea, true, bodyStart);
-      if (wysiwygEditor.markdownLineNumbersDiv) {
-        wysiwygEditor.markdownLineNumbersDiv.scrollTop = wysiwygEditor.markdownArea.scrollTop;
-      }
+    if (wysiwygEditor) {
       wysiwygEditor.switchToMode(preferredMode, true);
+      if (preferredMode === 'markdown') {
+        wysiwygEditor.markdownArea.setSelectionRange(0, 0);
+        wysiwygEditor.markdownArea.scrollTop = 0;
+        if (wysiwygEditor.markdownLineNumbersDiv) {
+          wysiwygEditor.markdownLineNumbersDiv.scrollTop = 0;
+        }
+      } else {
+        var ea = wysiwygEditor.editableArea;
+        if (ea) {
+          ea.scrollTop = 0;
+          var range = document.createRange();
+          range.selectNodeContents(ea);
+          range.collapse(true);
+          var sel = window.getSelection();
+          if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+        }
+      }
     }
   }
 

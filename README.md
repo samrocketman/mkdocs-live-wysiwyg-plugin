@@ -4,6 +4,18 @@ A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](ht
 
 When you click "Edit" in the live-edit plugin, this plugin replaces the plain textarea with a rich WYSIWYG editor that supports dual-mode editing (visual and Markdown), toolbar formatting, and smart conversion.
 
+## Attributions
+
+This plugin incorporates or depends on the following works:
+
+| Component | Author | License | Link |
+|-----------|--------|---------|------|
+| **@celsowm/markdown-wysiwyg** (WYSIWYG editor) | Celso Fontes | MIT | [GitHub](https://github.com/celsowm/markdown-wysiwyg) · [npm](https://www.npmjs.com/package/@celsowm/markdown-wysiwyg) |
+| **marked** (Markdown parser) | Christopher Jeffrey, MarkedJS | MIT | [GitHub](https://github.com/markedjs/marked) · [marked.js.org](https://marked.js.org) |
+| **mkdocs-live-edit-plugin** (required dependency) | Eddy Luten | MIT | [GitHub](https://github.com/eddyluten/mkdocs-live-edit-plugin) |
+
+All listed components are distributed under the MIT License. See each project's repository for full license text.
+
 ## MkDocs Admonitions
 
 The WYSIWYG editor supports MkDocs admonition syntax (`!!! note`, `!!! warning`, etc.) in both modes:

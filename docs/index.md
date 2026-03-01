@@ -1,3 +1,6 @@
+---
+title: Example WYSIWYG site
+---
 # Welcome
 
 This is a test page for the mkdocs-live-wysiwyg-plugin.

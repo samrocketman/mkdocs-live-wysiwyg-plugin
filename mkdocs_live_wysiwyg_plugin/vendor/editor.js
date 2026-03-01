@@ -22,29 +22,36 @@ class MarkdownWYSIWYG {
     constructor(elementId, options = {}) {
         this.hostElement = document.getElementById(elementId);
         if (!this.hostElement) {
-            throw new Error(`Elemento com ID '${elementId}' não encontrado.`);
+            throw new Error(`Element with ID '${elementId}' not found.`);
         }
         this.options = {
             initialValue: '',
             showToolbar: true,
             buttons: [
-                { id: 'h1', label: ICON_HEADING, title: 'Cabeçalho 1', type: 'block', mdPrefix: '# ', execCommand: 'formatBlock', value: 'H1' },
-                { id: 'h2', label: ICON_HEADING, title: 'Cabeçalho 2', type: 'block', mdPrefix: '## ', execCommand: 'formatBlock', value: 'H2' },
-                { id: 'h3', label: ICON_HEADING, title: 'Cabeçalho 3', type: 'block', mdPrefix: '### ', execCommand: 'formatBlock', value: 'H3' },
-                { id: 'bold', label: ICON_BOLD, title: 'Negrito', execCommand: 'bold', type: 'inline', mdPrefix: '**', mdSuffix: '**' },
-                { id: 'italic', label: ICON_ITALIC, title: 'Itálico', execCommand: 'italic', type: 'inline', mdPrefix: '*', mdSuffix: '*' },
-                { id: 'strikethrough', label: ICON_STRIKETHROUGH, title: 'Riscado', execCommand: 'strikeThrough', type: 'inline', mdPrefix: '~~', mdSuffix: '~~' },
+                { id: 'heading', label: ICON_HEADING, title: 'Heading', type: 'heading-dropdown',
+                  subButtons: [
+                    { id: 'h1', label: 'H1', title: 'Heading 1', type: 'block', mdPrefix: '# ', execCommand: 'formatBlock', value: 'H1' },
+                    { id: 'h2', label: 'H2', title: 'Heading 2', type: 'block', mdPrefix: '## ', execCommand: 'formatBlock', value: 'H2' },
+                    { id: 'h3', label: 'H3', title: 'Heading 3', type: 'block', mdPrefix: '### ', execCommand: 'formatBlock', value: 'H3' },
+                    { id: 'h4', label: 'H4', title: 'Heading 4', type: 'block', mdPrefix: '#### ', execCommand: 'formatBlock', value: 'H4' },
+                    { id: 'h5', label: 'H5', title: 'Heading 5', type: 'block', mdPrefix: '##### ', execCommand: 'formatBlock', value: 'H5' },
+                    { id: 'h6', label: 'H6', title: 'Heading 6', type: 'block', mdPrefix: '###### ', execCommand: 'formatBlock', value: 'H6' }
+                  ]
+                },
+                { id: 'bold', label: ICON_BOLD, title: 'Bold', execCommand: 'bold', type: 'inline', mdPrefix: '**', mdSuffix: '**' },
+                { id: 'italic', label: ICON_ITALIC, title: 'Italic', execCommand: 'italic', type: 'inline', mdPrefix: '*', mdSuffix: '*' },
+                { id: 'strikethrough', label: ICON_STRIKETHROUGH, title: 'Strikethrough', execCommand: 'strikeThrough', type: 'inline', mdPrefix: '~~', mdSuffix: '~~' },
                 { id: 'link', label: ICON_LINK, title: 'Link', action: '_insertLink', type: 'inline' },
-                { id: 'ul', label: ICON_UL, title: 'Lista não ordenada', execCommand: 'insertUnorderedList', type: 'block', mdPrefix: '- ' },
-                { id: 'ol', label: ICON_OL, title: 'Lista ordenada', execCommand: 'insertOrderedList', type: 'block', mdPrefix: '1. ' },
-                { id: 'outdent', label: ICON_OUTDENT, title: 'Diminuir Recuo', action: '_handleOutdent', type: 'list-format' },
-                { id: 'indent', label: ICON_INDENT, title: 'Aumentar Recuo', action: '_handleIndent', type: 'list-format' },
-                { id: 'blockquote', label: ICON_BLOCKQUOTE, title: 'Citação', execCommand: 'formatBlock', value: 'BLOCKQUOTE', type: 'block', mdPrefix: '> ' },
-                { id: 'hr', label: ICON_HR, title: 'Linha Horizontal', action: '_insertHorizontalRuleAction', type: 'block-insert' },
-                { id: 'image', label: ICON_IMAGE, title: 'Inserir Imagem', action: '_insertImageAction', type: 'block-insert' },
-                { id: 'table', label: ICON_TABLE, title: 'Inserir Tabela', action: '_insertTableAction', type: 'block-insert' },
-                { id: 'codeblock', label: ICON_CODEBLOCK, title: 'Bloco de Código', action: '_insertCodeBlock', type: 'block-wrap', mdPrefix: '```\n', mdSuffix: '\n```' },
-                { id: 'inlinecode', label: ICON_INLINECODE, title: 'Código em Linha', action: '_insertInlineCode', type: 'inline', mdPrefix: '`', mdSuffix: '`' }
+                { id: 'ul', label: ICON_UL, title: 'Unordered List', execCommand: 'insertUnorderedList', type: 'block', mdPrefix: '- ' },
+                { id: 'ol', label: ICON_OL, title: 'Ordered List', execCommand: 'insertOrderedList', type: 'block', mdPrefix: '1. ' },
+                { id: 'outdent', label: ICON_OUTDENT, title: 'Decrease Indent', action: '_handleOutdent', type: 'list-format' },
+                { id: 'indent', label: ICON_INDENT, title: 'Increase Indent', action: '_handleIndent', type: 'list-format' },
+                { id: 'blockquote', label: ICON_BLOCKQUOTE, title: 'Blockquote', execCommand: 'formatBlock', value: 'BLOCKQUOTE', type: 'block', mdPrefix: '> ' },
+                { id: 'hr', label: ICON_HR, title: 'Horizontal Rule', action: '_insertHorizontalRuleAction', type: 'block-insert' },
+                { id: 'image', label: ICON_IMAGE, title: 'Insert Image', action: '_insertImageAction', type: 'block-insert' },
+                { id: 'table', label: ICON_TABLE, title: 'Insert Table', action: '_insertTableAction', type: 'block-insert' },
+                { id: 'codeblock', label: ICON_CODEBLOCK, title: 'Code Block', action: '_insertCodeBlock', type: 'block-wrap', mdPrefix: '```\n', mdSuffix: '\n```' },
+                { id: 'inlinecode', label: ICON_INLINECODE, title: 'Inline Code', action: '_insertInlineCode', type: 'inline', mdPrefix: '`', mdSuffix: '`' }
             ],
             onUpdate: null,
             initialMode: 'wysiwyg',
@@ -67,6 +74,9 @@ class MarkdownWYSIWYG {
         this.imageDialog = null;
         this.imageUrlInput = null;
         this.imageAltInput = null;
+
+        this.headingDropdown = null;
+        this.headingButton = null;
 
         this._init();
     }
@@ -130,13 +140,13 @@ class MarkdownWYSIWYG {
         });
 
         const heading = document.createElement('h3');
-        heading.textContent = 'Inserir Imagem';
+        heading.textContent = 'Insert Image';
         heading.classList.add('md-image-dialog-heading');
         form.appendChild(heading);
 
         const urlLabel = document.createElement('label');
         urlLabel.htmlFor = 'md-image-url-input-' + this.editorWrapper.id; // Unique ID if multiple editors
-        urlLabel.textContent = 'URL da Imagem:';
+        urlLabel.textContent = 'Image URL:';
         urlLabel.classList.add('md-image-dialog-label');
         form.appendChild(urlLabel);
 
@@ -149,7 +159,7 @@ class MarkdownWYSIWYG {
 
         const altLabel = document.createElement('label');
         altLabel.htmlFor = 'md-image-alt-input-' + this.editorWrapper.id;
-        altLabel.textContent = 'Texto Alternativo (Alt):';
+        altLabel.textContent = 'Alt Text:';
         altLabel.classList.add('md-image-dialog-label');
         form.appendChild(altLabel);
 
@@ -164,7 +174,7 @@ class MarkdownWYSIWYG {
 
         const cancelButton = document.createElement('button');
         cancelButton.type = 'button';
-        cancelButton.textContent = 'Cancelar';
+        cancelButton.textContent = 'Cancel';
         cancelButton.classList.add('md-image-dialog-button');
         cancelButton.addEventListener('click', () => {
             this.imageDialog.close();
@@ -173,7 +183,7 @@ class MarkdownWYSIWYG {
 
         const insertButton = document.createElement('button');
         insertButton.type = 'submit';
-        insertButton.textContent = 'Inserir';
+        insertButton.textContent = 'Insert';
         insertButton.classList.add('md-image-dialog-button', 'md-image-dialog-button-primary');
         footer.appendChild(insertButton);
 
@@ -327,10 +337,10 @@ class MarkdownWYSIWYG {
         this.contextualTableToolbar.classList.add('md-contextual-table-toolbar');
 
         const buttons = [
-            { id: 'insertRowAbove', label: ICON_TABLE_INSERT_ROW_ABOVE, title: 'Inserir Linha Acima', action: () => this._insertRowWysiwyg(true) },
-            { id: 'insertRowBelow', label: ICON_TABLE_INSERT_ROW_BELOW, title: 'Inserir Linha Abaixo', action: () => this._insertRowWysiwyg(false) },
-            { id: 'insertColLeft', label: ICON_TABLE_INSERT_COL_LEFT, title: 'Inserir Coluna à Esquerda', action: () => this._insertColumnWysiwyg(true) },
-            { id: 'insertColRight', label: ICON_TABLE_INSERT_COL_RIGHT, title: 'Inserir Coluna à Direita', action: () => this._insertColumnWysiwyg(false) },
+            { id: 'insertRowAbove', label: ICON_TABLE_INSERT_ROW_ABOVE, title: 'Insert Row Above', action: () => this._insertRowWysiwyg(true) },
+            { id: 'insertRowBelow', label: ICON_TABLE_INSERT_ROW_BELOW, title: 'Insert Row Below', action: () => this._insertRowWysiwyg(false) },
+            { id: 'insertColLeft', label: ICON_TABLE_INSERT_COL_LEFT, title: 'Insert Column Left', action: () => this._insertColumnWysiwyg(true) },
+            { id: 'insertColRight', label: ICON_TABLE_INSERT_COL_RIGHT, title: 'Insert Column Right', action: () => this._insertColumnWysiwyg(false) },
         ];
 
         buttons.forEach(btnConfig => {
@@ -639,6 +649,61 @@ class MarkdownWYSIWYG {
         }
     }
 
+    _toggleHeadingDropdown() {
+        if (!this.headingDropdown) return;
+        if (this.headingDropdown.style.display === 'none') {
+            this._showHeadingDropdown();
+        } else {
+            this._hideHeadingDropdown();
+        }
+    }
+
+    _showHeadingDropdown() {
+        if (!this.headingDropdown) return;
+        if (this.currentMode === 'wysiwyg') {
+            const selection = window.getSelection();
+            if (selection && selection.rangeCount > 0) {
+                const currentRange = selection.getRangeAt(0);
+                if (this.editableArea.contains(currentRange.commonAncestorContainer)) {
+                    this.savedRangeInfo = currentRange.cloneRange();
+                } else {
+                    const range = document.createRange();
+                    range.selectNodeContents(this.editableArea);
+                    range.collapse(false);
+                    this.savedRangeInfo = range;
+                }
+            }
+        } else {
+            this.savedRangeInfo = {
+                start: this.markdownArea.selectionStart,
+                end: this.markdownArea.selectionEnd
+            };
+        }
+        this.headingDropdown.style.display = 'block';
+        this._boundListeners.closeHeadingDropdownOnClickOutside = (e) => {
+            if (this.headingDropdown && !this.headingDropdown.contains(e.target) &&
+                this.headingButton && !this.headingButton.contains(e.target)) {
+                this._hideHeadingDropdown();
+            }
+        };
+        this._boundListeners.closeHeadingDropdownOnEsc = (e) => {
+            if (e.key === 'Escape') this._hideHeadingDropdown();
+        };
+        document.addEventListener('click', this._boundListeners.closeHeadingDropdownOnClickOutside, true);
+        document.addEventListener('keydown', this._boundListeners.closeHeadingDropdownOnEsc, true);
+    }
+
+    _hideHeadingDropdown() {
+        if (!this.headingDropdown) return;
+        this.headingDropdown.style.display = 'none';
+        if (this._boundListeners.closeHeadingDropdownOnClickOutside) {
+            document.removeEventListener('click', this._boundListeners.closeHeadingDropdownOnClickOutside, true);
+        }
+        if (this._boundListeners.closeHeadingDropdownOnEsc) {
+            document.removeEventListener('keydown', this._boundListeners.closeHeadingDropdownOnEsc, true);
+        }
+    }
+
     _handleTableGridCellMouseover(event) {
         const targetCell = event.target.closest('.md-table-grid-cell');
         if (!targetCell) return;
@@ -705,16 +770,62 @@ class MarkdownWYSIWYG {
         this.toolbar = document.createElement('div');
         this.toolbar.classList.add('md-toolbar');
         this.options.buttons.forEach(buttonConfig => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.classList.add('md-toolbar-button', `md-toolbar-button-${buttonConfig.id}`);
-            button.innerHTML = buttonConfig.label;
-            button.title = buttonConfig.title;
-            button.dataset.buttonId = buttonConfig.id;
-            const listener = () => this._handleToolbarClick(buttonConfig, button);
-            button.addEventListener('click', listener);
-            this.toolbarButtonListeners.push({ button, listener });
-            this.toolbar.appendChild(button);
+            if (buttonConfig.type === 'heading-dropdown') {
+                const wrapper = document.createElement('div');
+                wrapper.classList.add('md-toolbar-heading-wrapper');
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.classList.add('md-toolbar-button', `md-toolbar-button-${buttonConfig.id}`);
+                button.innerHTML = buttonConfig.label;
+                button.title = buttonConfig.title;
+                button.dataset.buttonId = buttonConfig.id;
+                const dropdown = document.createElement('div');
+                dropdown.classList.add('md-heading-dropdown');
+                dropdown.style.display = 'none';
+                buttonConfig.subButtons.forEach(sub => {
+                    const item = document.createElement('button');
+                    item.type = 'button';
+                    item.classList.add('md-heading-dropdown-item', `md-heading-dropdown-item-${sub.id}`);
+                    item.innerHTML = `<span class="md-heading-dropdown-label">${sub.label}</span>`;
+                    item.title = sub.title;
+                    item.dataset.buttonId = sub.id;
+                    const subListener = (e) => {
+                        e.stopPropagation();
+                        this._hideHeadingDropdown();
+                        if (this.currentMode === 'wysiwyg' && this.savedRangeInfo instanceof Range) {
+                            this.editableArea.focus();
+                            const sel = window.getSelection();
+                            if (sel) { sel.removeAllRanges(); sel.addRange(this.savedRangeInfo); }
+                        } else if (this.currentMode === 'markdown' && this.savedRangeInfo && typeof this.savedRangeInfo.start === 'number') {
+                            this.markdownArea.focus();
+                            this.markdownArea.setSelectionRange(this.savedRangeInfo.start, this.savedRangeInfo.end);
+                        }
+                        this._handleToolbarClick(sub, button);
+                    };
+                    item.addEventListener('click', subListener);
+                    this.toolbarButtonListeners.push({ button: item, listener: subListener });
+                    dropdown.appendChild(item);
+                });
+                wrapper.appendChild(button);
+                wrapper.appendChild(dropdown);
+                this.headingDropdown = dropdown;
+                this.headingButton = button;
+                const toggleListener = () => this._toggleHeadingDropdown();
+                button.addEventListener('click', toggleListener);
+                this.toolbarButtonListeners.push({ button, listener: toggleListener });
+                this.toolbar.appendChild(wrapper);
+            } else {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.classList.add('md-toolbar-button', `md-toolbar-button-${buttonConfig.id}`);
+                button.innerHTML = buttonConfig.label;
+                button.title = buttonConfig.title;
+                button.dataset.buttonId = buttonConfig.id;
+                const listener = () => this._handleToolbarClick(buttonConfig, button);
+                button.addEventListener('click', listener);
+                this.toolbarButtonListeners.push({ button, listener });
+                this.toolbar.appendChild(button);
+            }
         });
         this.editorWrapper.appendChild(this.toolbar);
     }
@@ -836,8 +947,19 @@ class MarkdownWYSIWYG {
 
     _clearToolbarActiveStates() {
         this.options.buttons.forEach(btnConfig => {
-            const buttonEl = this.toolbar.querySelector(`.md-toolbar-button-${btnConfig.id}`);
-            if (buttonEl) buttonEl.classList.remove('active');
+            if (btnConfig.type === 'heading-dropdown') {
+                const buttonEl = this.toolbar.querySelector(`.md-toolbar-button-${btnConfig.id}`);
+                if (buttonEl) buttonEl.classList.remove('active');
+                if (btnConfig.subButtons) {
+                    btnConfig.subButtons.forEach(sub => {
+                        const subEl = this.toolbar.querySelector(`.md-heading-dropdown-item-${sub.id}`);
+                        if (subEl) subEl.classList.remove('active');
+                    });
+                }
+            } else {
+                const buttonEl = this.toolbar.querySelector(`.md-toolbar-button-${btnConfig.id}`);
+                if (buttonEl) buttonEl.classList.remove('active');
+            }
         });
     }
 
@@ -861,8 +983,32 @@ class MarkdownWYSIWYG {
         if (outdentButton) outdentButton.disabled = true;
 
         this.options.buttons.forEach(btnConfig => {
+            if (btnConfig.type === 'heading-dropdown') {
+                const headingBtnEl = this.toolbar.querySelector(`.md-toolbar-button-${btnConfig.id}`);
+                let anyHeadingActive = false;
+                (btnConfig.subButtons || []).forEach(sub => {
+                    let isSubActive = false;
+                    let blockElement = selection.getRangeAt(0).commonAncestorContainer;
+                    if (blockElement.nodeType === Node.TEXT_NODE) blockElement = blockElement.parentNode;
+                    while (blockElement && blockElement !== this.editableArea) {
+                        if (blockElement.nodeName === sub.value.toUpperCase()) { isSubActive = true; break; }
+                        blockElement = blockElement.parentNode;
+                    }
+                    const subEl = this.toolbar.querySelector(`.md-heading-dropdown-item-${sub.id}`);
+                    if (subEl) {
+                        if (isSubActive) subEl.classList.add('active');
+                        else subEl.classList.remove('active');
+                    }
+                    if (isSubActive) anyHeadingActive = true;
+                });
+                if (headingBtnEl) {
+                    if (anyHeadingActive) headingBtnEl.classList.add('active');
+                    else headingBtnEl.classList.remove('active');
+                }
+                return;
+            }
             const buttonEl = this.toolbar.querySelector(`.md-toolbar-button-${btnConfig.id}`);
-            if (!buttonEl || btnConfig.id === 'table' || btnConfig.id === 'image') return; // Exclude table & image from active state check for now
+            if (!buttonEl || btnConfig.id === 'table' || btnConfig.id === 'image') return;
 
             let isActive = false;
 
@@ -953,7 +1099,30 @@ class MarkdownWYSIWYG {
         if (outdentButton) outdentButton.disabled = true;
 
         this.options.buttons.forEach(btnConfig => {
-            if (btnConfig.id === 'table' || btnConfig.id === 'image') return; // Exclude table & image from active state check
+            if (btnConfig.id === 'table' || btnConfig.id === 'image') return;
+
+            if (btnConfig.type === 'heading-dropdown') {
+                const headingBtnEl = this.toolbar.querySelector(`.md-toolbar-button-${btnConfig.id}`);
+                let anyHeadingActive = false;
+                let lineStart = textValue.lastIndexOf('\n', selStart - 1) + 1;
+                if (selStart === 0 && lineStart > 0 && textValue.charAt(0) !== '\n') lineStart = 0;
+                const currentLineEnd = textValue.indexOf('\n', lineStart);
+                const currentLine = textValue.substring(lineStart, currentLineEnd === -1 ? textValue.length : currentLineEnd);
+                (btnConfig.subButtons || []).forEach(sub => {
+                    const isSubActive = currentLine.startsWith(sub.mdPrefix);
+                    const subEl = this.toolbar.querySelector(`.md-heading-dropdown-item-${sub.id}`);
+                    if (subEl) {
+                        if (isSubActive) subEl.classList.add('active');
+                        else subEl.classList.remove('active');
+                    }
+                    if (isSubActive) anyHeadingActive = true;
+                });
+                if (headingBtnEl) {
+                    if (anyHeadingActive) headingBtnEl.classList.add('active');
+                    else headingBtnEl.classList.remove('active');
+                }
+                return;
+            }
 
             const buttonEl = this.toolbar.querySelector(`.md-toolbar-button-${btnConfig.id}`);
             if (!buttonEl) return;
@@ -1238,6 +1407,65 @@ class MarkdownWYSIWYG {
         }
     }
 
+    _wrapSelectionInBlockquote() {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return;
+        const range = sel.getRangeAt(0);
+
+        const topBlockFor = (node) => {
+            let cur = node;
+            if (cur.nodeType === Node.TEXT_NODE) cur = cur.parentNode;
+            while (cur && cur.parentNode !== this.editableArea) cur = cur.parentNode;
+            return cur;
+        };
+
+        let startBlock = topBlockFor(range.startContainer);
+        let endBlock = topBlockFor(range.endContainer);
+        if (!startBlock) startBlock = this.editableArea.firstElementChild;
+        if (!endBlock) endBlock = startBlock;
+
+        const blocks = [];
+        let cur = startBlock;
+        while (cur) {
+            blocks.push(cur);
+            if (cur === endBlock) break;
+            cur = cur.nextSibling;
+        }
+        if (blocks.length === 0) return;
+
+        const isEmptyNode = (n) => {
+            if (n.nodeType === Node.TEXT_NODE) return !n.textContent.replace(/[\s\u00a0]/g, '');
+            if (n.nodeName === 'BR') return true;
+            const text = n.textContent.replace(/[\s\u00a0]/g, '');
+            if (!text && !n.querySelector('img, table, hr')) return true;
+            return false;
+        };
+
+        const filtered = blocks.filter(b => !isEmptyNode(b));
+        if (filtered.length === 0) return;
+
+        const bq = document.createElement('blockquote');
+        filtered[0].parentNode.insertBefore(bq, filtered[0]);
+        blocks.forEach(block => {
+            if (filtered.indexOf(block) === -1) {
+                if (block.parentNode) block.parentNode.removeChild(block);
+                return;
+            }
+            if (this._isBlockElement(block)) {
+                bq.appendChild(block);
+            } else {
+                const p = document.createElement('p');
+                p.appendChild(block);
+                bq.appendChild(p);
+            }
+        });
+
+        sel.removeAllRanges();
+        const newRange = document.createRange();
+        newRange.selectNodeContents(bq);
+        sel.addRange(newRange);
+    }
+
     _findParentElement(node, tagNameOrNames) {
         if (!node) return null;
         const tagNames = Array.isArray(tagNameOrNames) ? tagNameOrNames.map(n => n.toUpperCase()) : [tagNameOrNames.toUpperCase()];
@@ -1327,6 +1555,27 @@ class MarkdownWYSIWYG {
             this.editableArea.focus();
             if (buttonConfig.action && typeof this[buttonConfig.action] === 'function') {
                 this[buttonConfig.action]();
+            } else if (buttonConfig.id === 'blockquote') {
+                const sel = window.getSelection();
+                const bq = sel && sel.rangeCount > 0 ? this._findParentElement(sel.getRangeAt(0).commonAncestorContainer, 'BLOCKQUOTE') : null;
+                if (bq && this.editableArea.contains(bq)) {
+                    const range = sel.getRangeAt(0).cloneRange();
+                    const parent = bq.parentNode;
+                    const hasBlockChildren = Array.from(bq.childNodes).some(c => this._isBlockElement(c));
+                    if (hasBlockChildren) {
+                        while (bq.firstChild) parent.insertBefore(bq.firstChild, bq);
+                    } else {
+                        const p = document.createElement('p');
+                        while (bq.firstChild) p.appendChild(bq.firstChild);
+                        parent.insertBefore(p, bq);
+                    }
+                    parent.removeChild(bq);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                } else {
+                    this._wrapSelectionInBlockquote();
+                }
+                this._finalizeUpdate(this.editableArea.innerHTML);
             } else if (buttonConfig.execCommand) {
                 document.execCommand(buttonConfig.execCommand, false, buttonConfig.value || null);
                 this._finalizeUpdate(this.editableArea.innerHTML);
@@ -1393,7 +1642,7 @@ class MarkdownWYSIWYG {
             const hr = document.createElement('tr');
             for (let j = 0; j < cols; j++) {
                 const th = document.createElement('th');
-                th.innerHTML = `Cabeçalho ${j + 1}`;
+                th.innerHTML = `Header ${j + 1}`;
                 hr.appendChild(th);
             }
             thead.appendChild(hr);
@@ -1462,7 +1711,7 @@ class MarkdownWYSIWYG {
         if (rows >= 1) {
             mdTable += "|";
             for (let j = 0; j < cols; j++) {
-                const placeholder = ` Cabeçalho ${j + 1} `;
+                const placeholder = ` Header ${j + 1} `;
                 headerPlaceholders.push(placeholder.trim());
                 mdTable += placeholder + "|";
             }
@@ -1474,7 +1723,7 @@ class MarkdownWYSIWYG {
 
         for (let i = 1; i < rows; i++) {
             mdTable += "|";
-            for (let j = 0; j < cols; j++) mdTable += " Célula |";
+            for (let j = 0; j < cols; j++) mdTable += " Cell |";
             mdTable += "\n";
         }
 
@@ -1616,7 +1865,8 @@ class MarkdownWYSIWYG {
         let start = textarea.selectionStart;
         let end = textarea.selectionEnd;
         let selectedText = textarea.value.substring(start, end);
-        const buttonEl = this.toolbar.querySelector(`.md-toolbar-button-${buttonConfig.id}`);
+        let buttonEl = this.toolbar.querySelector(`.md-toolbar-button-${buttonConfig.id}`);
+        if (!buttonEl) buttonEl = this.toolbar.querySelector(`.md-heading-dropdown-item-${buttonConfig.id}`);
         const isCurrentlyActive = buttonEl ? buttonEl.classList.contains('active') : false;
         let prefix = buttonConfig.mdPrefix || '';
         let suffix = buttonConfig.mdSuffix || '';
@@ -1651,13 +1901,35 @@ class MarkdownWYSIWYG {
                 }
             }
         } else if (isCurrentlyActive && buttonConfig.type === 'block' && buttonConfig.mdPrefix) {
-            let lineStartIndex = textarea.value.lastIndexOf('\n', start - 1) + 1;
-            if (start === 0 && textarea.value.charAt(0) !== '\n') lineStartIndex = 0;
-            if (textarea.value.substring(lineStartIndex, lineStartIndex + prefix.length) === prefix) {
-                textarea.value = textarea.value.substring(0, lineStartIndex) +
-                    textarea.value.substring(lineStartIndex + prefix.length);
-                newStart = Math.max(lineStartIndex, start - prefix.length);
-                newEnd = Math.max(newStart, end - prefix.length);
+            let firstLineStart = textarea.value.lastIndexOf('\n', start - 1) + 1;
+            if (start === 0 && textarea.value.charAt(0) !== '\n') firstLineStart = 0;
+            let lastLineEnd = textarea.value.indexOf('\n', end);
+            if (lastLineEnd === -1) lastLineEnd = textarea.value.length;
+            const regionText = textarea.value.substring(firstLineStart, lastLineEnd);
+            const lines = regionText.split('\n');
+            let totalRemoved = 0;
+            let removedBeforeStart = 0;
+            let removedBeforeEnd = 0;
+            let pos = firstLineStart;
+            const newLines = lines.map(line => {
+                const lineEnd = pos + line.length;
+                if (line.startsWith(prefix)) {
+                    const stripped = line.substring(prefix.length);
+                    if (pos + prefix.length <= start) removedBeforeStart += prefix.length;
+                    if (pos + prefix.length <= end) removedBeforeEnd += prefix.length;
+                    totalRemoved += prefix.length;
+                    pos = lineEnd + 1;
+                    return stripped;
+                }
+                pos = lineEnd + 1;
+                return line;
+            });
+            if (totalRemoved > 0) {
+                textarea.value = textarea.value.substring(0, firstLineStart) +
+                    newLines.join('\n') +
+                    textarea.value.substring(lastLineEnd);
+                newStart = Math.max(firstLineStart, start - removedBeforeStart);
+                newEnd = Math.max(newStart, end - removedBeforeEnd);
             } else {
                 return this._wrapMarkdownFormatting(buttonConfig, selectedText, start, end);
             }
@@ -1679,21 +1951,24 @@ class MarkdownWYSIWYG {
         let cursorOffsetStart = prefix.length;
         let cursorOffsetEnd = prefix.length + (selectedText.length > 0 ? selectedText.length : 0);
         switch (buttonConfig.id) {
-            case 'h1': placeholder = 'Cabeçalho 1'; break;
-            case 'h2': placeholder = 'Cabeçalho 2'; break;
-            case 'h3': placeholder = 'Cabeçalho 3'; break;
-            case 'bold': placeholder = 'negrito'; break;
-            case 'italic': placeholder = 'itálico'; break;
-            case 'strikethrough': placeholder = 'riscado'; break;
+            case 'h1': placeholder = 'Heading 1'; break;
+            case 'h2': placeholder = 'Heading 2'; break;
+            case 'h3': placeholder = 'Heading 3'; break;
+            case 'h4': placeholder = 'Heading 4'; break;
+            case 'h5': placeholder = 'Heading 5'; break;
+            case 'h6': placeholder = 'Heading 6'; break;
+            case 'bold': placeholder = 'bold'; break;
+            case 'italic': placeholder = 'italic'; break;
+            case 'strikethrough': placeholder = 'strikethrough'; break;
             case 'link':
-                const url = prompt("Insira a URL do link:", "https://");
+                const url = prompt("Enter a URL to link:", "https://");
                 if (!url) return;
-                prefix = '['; suffix = `](${url})`; placeholder = 'texto do link';
+                prefix = '['; suffix = `](${url})`; placeholder = 'link text';
                 cursorOffsetStart = 1;
                 break;
             case 'ul':
             case 'ol':
-                placeholder = 'Item de lista';
+                placeholder = 'List item';
                 if (selectedText.includes('\n')) {
                     let count = 1;
                     replacementText = selectedText.split('\n').map(line => {
@@ -1714,7 +1989,7 @@ class MarkdownWYSIWYG {
                 }
                 break;
             case 'blockquote':
-                placeholder = 'Citação';
+                placeholder = 'quote';
                 if (selectedText.includes('\n')) {
                     replacementText = selectedText.split('\n').map(line => `> ${line}`).join('\n');
                     cursorOffsetStart = 0;
@@ -1733,13 +2008,13 @@ class MarkdownWYSIWYG {
             case 'codeblock':
                 prefix = '```\n';
                 suffix = '\n```';
-                placeholder = 'código';
+                placeholder = 'code';
                 if (start > 0 && textarea.value[start - 1] !== '\n') prefix = '\n' + prefix;
                 if (end < textarea.value.length && textarea.value[end] !== '\n' && (selectedText || placeholder).slice(-1) !== '\n') suffix = suffix + '\n';
                 else if ((selectedText || placeholder).slice(-1) === '\n' && textarea.value[end] !== '\n') suffix = suffix.substring(1) + '\n';
                 cursorOffsetStart = prefix.length;
                 break;
-            case 'inlinecode': placeholder = 'código'; break;
+            case 'inlinecode': placeholder = 'code'; break;
             default: return;
         }
         if (!replacementText) {
@@ -1766,11 +2041,11 @@ class MarkdownWYSIWYG {
             this.editableArea.focus();
             const selection = window.getSelection();
             const currentText = selection.toString();
-            const url = prompt("Insira a URL do link:", "https://");
+            const url = prompt("Enter a URL to link:", "https://");
             if (url) {
                 if (!currentText && selection.rangeCount > 0) {
                     const range = selection.getRangeAt(0);
-                    const linkTextNode = document.createTextNode("texto do link");
+                    const linkTextNode = document.createTextNode("link text");
                     range.deleteContents();
                     range.insertNode(linkTextNode);
                     range.selectNodeContents(linkTextNode);
@@ -1849,7 +2124,7 @@ class MarkdownWYSIWYG {
             const initialSelectedText = selection.toString();
             const pre = document.createElement('pre');
             const code = document.createElement('code');
-            code.textContent = initialSelectedText || "código";
+            code.textContent = initialSelectedText || "code";
             pre.appendChild(code);
             if (selection && selection.rangeCount > 0) {
                 const range = selection.getRangeAt(0);
@@ -1887,7 +2162,7 @@ class MarkdownWYSIWYG {
             const selection = window.getSelection();
             const initialSelectedText = selection.toString().trim();
             const code = document.createElement('code');
-            code.textContent = initialSelectedText || "código";
+            code.textContent = initialSelectedText || "code";
             if (selection && selection.rangeCount > 0) {
                 const range = selection.getRangeAt(0);
                 range.deleteContents();
@@ -2178,7 +2453,7 @@ class MarkdownWYSIWYG {
             case 'UL': case 'OL':
             case 'BLOCKQUOTE':
             case 'PRE':
-            case 'H1': case 'H2': case 'H3':
+            case 'H1': case 'H2': case 'H3': case 'H4': case 'H5': case 'H6':
             case 'HR':
             case 'DIV': // Generic block container
                 if (options && options.inTableCell) {
@@ -2189,15 +2464,11 @@ class MarkdownWYSIWYG {
                 // Standard block element handling
                 if (node.nodeName === 'P') {
                     const pParent = node.parentNode;
-                    // Check if P is directly inside LI or BLOCKQUOTE for different newline handling
-                    const isInsideListItemOrBlockquote = pParent && (pParent.nodeName === 'LI' || pParent.nodeName === 'BLOCKQUOTE');
                     let pContent = this._processInlineContainerRecursive(node, options).trim();
 
-                    if (isInsideListItemOrBlockquote) {
-                        // Less aggressive newlines if P is part of a list item or blockquote content
+                    if (pParent && pParent.nodeName === 'LI') {
                         return pContent.replace(/\n\s*\n/g, '\n').trim() + (pContent ? '\n' : '');
                     }
-                    // Standard paragraph, ensure double newline after if content exists
                     return pContent ? `${pContent}\n\n` : '';
                 }
                 if (node.nodeName === 'UL' || node.nodeName === 'OL') {
@@ -2211,9 +2482,19 @@ class MarkdownWYSIWYG {
                 }
                 if (node.nodeName === 'BLOCKQUOTE') {
                     const quoteContentRaw = this._processInlineContainerRecursive(node, options);
-                    const quoteLines = quoteContentRaw.split('\n').map(line => line.trim()); // Trim each line
-                    const nonEmptyLines = quoteLines.filter(line => line.length > 0); // Remove empty lines
-                    return nonEmptyLines.map(line => `> ${line}`).join('\n') + '\n\n'; // Add prefix and double newline
+                    const isBlank = (s) => !s || !s.replace(/[\s\u00a0]/g, '');
+                    let quoteLines = quoteContentRaw.split('\n').map(line => {
+                        const trimmed = line.replace(/[\s\u00a0]+$/g, '').replace(/^[\s\u00a0]+/g, '');
+                        return isBlank(trimmed) ? '' : trimmed;
+                    });
+                    while (quoteLines.length > 0 && quoteLines[quoteLines.length - 1] === '') quoteLines.pop();
+                    while (quoteLines.length > 0 && quoteLines[0] === '') quoteLines.shift();
+                    quoteLines = quoteLines.reduce((acc, line) => {
+                        if (line === '' && acc.length > 0 && acc[acc.length - 1] === '') return acc;
+                        acc.push(line);
+                        return acc;
+                    }, []);
+                    return quoteLines.map(line => line ? `> ${line}` : '>').join('\n') + '\n\n';
                 }
                 if (node.nodeName === 'PRE') {
                     if (node.firstChild && node.firstChild.nodeName === 'CODE') {
@@ -2229,7 +2510,7 @@ class MarkdownWYSIWYG {
                     if (preTextContent.length > 0 && !preTextContent.endsWith('\n')) preTextContent += '\n';
                     return `\`\`\`\n${preTextContent}\`\`\`\n\n`;
                 }
-                if (node.nodeName.match(/^H[1-3]$/)) {
+                if (node.nodeName.match(/^H[1-6]$/)) {
                     return `${'#'.repeat(parseInt(node.nodeName[1]))} ${this._processInlineContainerRecursive(node, options).trim()}\n\n`;
                 }
                 if (node.nodeName === 'HR') {
@@ -2378,6 +2659,9 @@ class MarkdownWYSIWYG {
     }
 
     destroy() {
+        this._hideHeadingDropdown();
+        this.headingDropdown = null;
+        this.headingButton = null;
         this._hideTableGridSelector();
         if (this.tableGridSelector && this.tableGridSelector.parentNode) {
             this.tableGridSelector.parentNode.removeChild(this.tableGridSelector);

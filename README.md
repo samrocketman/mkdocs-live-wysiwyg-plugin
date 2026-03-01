@@ -7,6 +7,7 @@ A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](ht
   - :white_check_mark: Cursor location memory: when switching between WYSIWYG or Markdown modes the cursor location and scroll area is preserved to reduce editing strain on the author.
   - :white_check_mark: Selected text is preserved when the author switches modes (to/from wysiwyg or markdown).
   - :white_check_mark: Editor preferences remembered across pages.  If the editor is disabled, then it will still be disabled when editing another document.  WYGSIWYG or Markdown mode is also remembered when the Editor is enabled.
+  - :white_check_mark: A URL pasted onto selected text creates a markdown link.
 - :muscle: Mkdocs rendering features
   - :white_check_mark: Dual-mode editing (WYSIWYG and Markdown) with toolbar formatting.  The editor can also be disabled.
   - :white_check_mark: YAML frontmatter preserved when editing and switching modes.

@@ -19,12 +19,10 @@ jobs:
 
       - name: Install uv from .github/download-utilities.yml
         run: |
-          RELEASE_TAG=$(curl -sL https://api.github.com/repos/samrocketman/yml-install-files/releases/latest | jq -r '.tag_name')
-          curl -fsSL -o release.tar.gz "https://github.com/samrocketman/yml-install-files/archive/refs/tags/${RELEASE_TAG}.tar.gz"
-          tar -xzf release.tar.gz
-          INSTALL_DIR=$(ls -d yml-install-files-* | head -1)
-          chmod +x "$INSTALL_DIR/download-utilities.sh"
-          ./"$INSTALL_DIR/download-utilities.sh" .github/download-utilities.yml uv
+          YML_INSTALL_FILES_VERSION="v3.8"
+          curl -fsSL -o download-utilities.sh "https://raw.githubusercontent.com/samrocketman/yml-install-files/${YML_INSTALL_FILES_VERSION}/download-utilities.sh"
+          chmod +x download-utilities.sh
+          ./download-utilities.sh .github/download-utilities.yml uv
           echo "/usr/local/bin" >> $GITHUB_PATH
 
       - name: Set up Python

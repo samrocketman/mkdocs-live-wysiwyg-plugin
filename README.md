@@ -4,9 +4,7 @@ A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](ht
 
 - :rainbow::sparkles: Author quality of life features
   - :white_check_mark: Non-destructive WYSIWYG editing is a top priority.  `git diff` will show changes the author intended.  No extra mess typically associated with WYSIWYG editors.
-  - :white_check_mark: Cursor location memory: when switching between WYSIWYG or Markdown modes the cursor location and scroll area is preserved to reduce editing strain on the author.
   - :white_check_mark: Selected text to edit is the fastest flow.  A small context menu pops up around selected text which enables the author to fix the issue right away.
-  - :white_check_mark: Selected text is preserved when the author switches modes (to/from wysiwyg or markdown).
   - :white_check_mark: Editor preferences remembered across pages.  If the editor is disabled, then it will still be disabled when editing another document.  WYGSIWYG or Markdown mode is also remembered when the Editor is enabled.
   - :white_check_mark: A URL pasted onto selected text creates a markdown link.
 - :muscle: Mkdocs rendering features
@@ -17,7 +15,10 @@ A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](ht
   - :white_check_mark: Markdown link styles preserved (inline, reference, shortcut)
   - :white_check_mark: Code blocks with WYSIWYG editable titles.
   - :white_check_mark: Checklists with WYSIWYG editable state.  A UI button for toggling an unordered list and checklist.
-- :white_check_mark: No external JavaScript; all assets are bundled locally within the mkdocs plugin.
+- :information_source: Other noteworthy features
+  - :white_check_mark: Cursor location memory: when switching between WYSIWYG or Markdown modes the cursor location and scroll area is preserved to reduce editing strain on the author.
+  - :white_check_mark: Selected text is preserved when the author switches modes (to/from wysiwyg or markdown).
+  - :white_check_mark: No external JavaScript; all assets are bundled locally within the mkdocs plugin.
 
 When you click "Edit" in the live-edit plugin, this plugin replaces the plain textarea with a rich WYSIWYG editor.
 

@@ -18,6 +18,7 @@ A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](ht
 - :information_source: Other noteworthy features
   - :white_check_mark: Cursor location memory: when switching between WYSIWYG or Markdown modes the cursor location and scroll area is preserved to reduce editing strain on the author.
   - :white_check_mark: Selected text is preserved when the author switches modes (to/from wysiwyg or markdown).
+  - :white_check_mark: Typing in with backticks inline will automatically convert text to inline code blocks.
   - :white_check_mark: No external JavaScript; all assets are bundled locally within the mkdocs plugin.
 
 When you click "Edit" in the live-edit plugin, this plugin replaces the plain textarea with a rich WYSIWYG editor.

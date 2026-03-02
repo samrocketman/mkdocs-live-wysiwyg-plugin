@@ -105,11 +105,25 @@
       checkbox.addEventListener('mousedown', onCheckboxMouseDown, true);
       checkbox.addEventListener('click', onCheckboxClick, true);
     })(cb);
+    var savedNode = range.startContainer;
+    var savedOffset = range.startOffset;
+
     var space = document.createTextNode('\u00a0');
     li.insertBefore(space, li.firstChild);
     li.insertBefore(cb, space);
+
+    var cursorBeforeCb = (savedNode === li && savedOffset <= 2) ||
+        savedNode === cb || savedNode === space;
     var newRange = document.createRange();
-    newRange.setStartAfter(space);
+    try {
+      if (cursorBeforeCb) {
+        newRange.setStartAfter(space);
+      } else {
+        newRange.setStart(savedNode, savedOffset);
+      }
+    } catch (ex) {
+      newRange.setStartAfter(space);
+    }
     newRange.collapse(true);
     sel.removeAllRanges();
     sel.addRange(newRange);
@@ -388,6 +402,22 @@
               var lis = ul.children;
               for (var i = 0; i < lis.length; i++) {
                 if (lis[i].nodeName === 'LI') addCheckboxToLi(lis[i]);
+              }
+              var firstLi = ul.querySelector('li');
+              if (firstLi) {
+                var cb = firstLi.querySelector('input[type="checkbox"]');
+                if (cb) {
+                  var target = cb.nextSibling;
+                  var range = document.createRange();
+                  if (target && target.nodeType === 3) {
+                    range.setStart(target, target.textContent.length);
+                  } else {
+                    range.setStartAfter(cb);
+                  }
+                  range.collapse(true);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                }
               }
             }
           }
@@ -2910,6 +2940,49 @@
 
     (function () {
       var ea = wysiwygEditor.editableArea;
+      if (ea && !ea.dataset.liveWysiwygChecklistBackspaceAttached) {
+        ea.dataset.liveWysiwygChecklistBackspaceAttached = '1';
+        ea.addEventListener('keydown', function (e) {
+          if (e.key !== 'Backspace') return;
+          var sel = window.getSelection();
+          if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
+          var range = sel.getRangeAt(0);
+          var node = range.startContainer;
+          var offset = range.startOffset;
+
+          var li = node;
+          while (li && li !== ea) {
+            if (li.nodeName === 'LI') break;
+            li = li.parentNode;
+          }
+          if (!li || li.nodeName !== 'LI') return;
+          var cb = li.querySelector('input[type="checkbox"]');
+          if (!cb) return;
+
+          var atStart = false;
+          if (node === li && offset <= 2) {
+            atStart = true;
+          } else if (node.nodeType === 3) {
+            var spacer = cb.nextSibling;
+            if (node === spacer && offset === 0) {
+              atStart = true;
+            } else if (spacer && node === spacer.nextSibling && offset === 0) {
+              atStart = true;
+            }
+          }
+          if (!atStart) return;
+
+          e.preventDefault();
+          removeCheckboxFromLi(li);
+          if (wysiwygEditor._finalizeUpdate) {
+            wysiwygEditor._finalizeUpdate(ea.innerHTML);
+          }
+        });
+      }
+    })();
+
+    (function () {
+      var ea = wysiwygEditor.editableArea;
       if (ea && !ea.dataset.liveWysiwygPasteAttached) {
         ea.dataset.liveWysiwygPasteAttached = '1';
         var urlRe = /^https?:\/\/\S+$/;
@@ -2924,6 +2997,100 @@
           if (wysiwygEditor._finalizeUpdate) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);
           }
+        });
+      }
+    })();
+
+    (function () {
+      var ea = wysiwygEditor.editableArea;
+      if (ea && !ea.dataset.liveWysiwygInlineCodeAttached) {
+        ea.dataset.liveWysiwygInlineCodeAttached = '1';
+        var pendingBacktick = null;
+
+        function clearPending() { pendingBacktick = null; }
+
+        ea.addEventListener('blur', clearPending);
+        ea.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' || e.key === 'Enter' ||
+              e.key.indexOf('Arrow') === 0 ||
+              e.key === 'Home' || e.key === 'End' ||
+              e.key === 'PageUp' || e.key === 'PageDown') {
+            clearPending();
+          }
+        });
+
+        function doConvert(anchorNode, openingIdx, closingIdx, sel) {
+          var text = anchorNode.textContent;
+          var inner = text.substring(openingIdx + 1, closingIdx);
+          if (inner.length === 0) return false;
+          if (inner.charAt(0) === ' ' || inner.charAt(inner.length - 1) === ' ') return false;
+
+          var before = text.substring(0, openingIdx);
+          var after = text.substring(closingIdx + 1);
+
+          var codeEl = document.createElement('code');
+          codeEl.textContent = inner;
+
+          var parentNode = anchorNode.parentNode;
+          var afterNode = document.createTextNode('\u200B' + after);
+
+          if (before) {
+            anchorNode.textContent = before;
+            parentNode.insertBefore(codeEl, anchorNode.nextSibling);
+            parentNode.insertBefore(afterNode, codeEl.nextSibling);
+          } else {
+            parentNode.insertBefore(codeEl, anchorNode);
+            parentNode.insertBefore(afterNode, codeEl.nextSibling);
+            parentNode.removeChild(anchorNode);
+          }
+
+          var range = document.createRange();
+          range.setStart(afterNode, 1);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+
+          if (wysiwygEditor._finalizeUpdate) {
+            wysiwygEditor._finalizeUpdate(ea.innerHTML);
+          }
+          return true;
+        }
+
+        ea.addEventListener('input', function (e) {
+          if (wysiwygEditor.currentMode !== 'wysiwyg') return;
+          if (e.inputType !== 'insertText' || e.data !== '`') return;
+
+          var sel = window.getSelection();
+          if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
+          var anchorNode = sel.anchorNode;
+          var anchorOffset = sel.anchorOffset;
+          if (!anchorNode || anchorNode.nodeType !== 3) return;
+
+          var anc = anchorNode.parentNode;
+          while (anc && anc !== ea) {
+            var tag = anc.nodeName;
+            if (tag === 'PRE' || tag === 'CODE') return;
+            anc = anc.parentNode;
+          }
+
+          var text = anchorNode.textContent;
+          var closingIdx = anchorOffset - 1;
+          if (closingIdx < 0 || text.charAt(closingIdx) !== '`') return;
+          if (closingIdx > 0 && text.charAt(closingIdx - 1) === '`') {
+            clearPending();
+            return;
+          }
+
+          if (pendingBacktick && pendingBacktick.node === anchorNode) {
+            var pIdx = pendingBacktick.offset;
+            if (pIdx >= 0 && pIdx < closingIdx && text.charAt(pIdx) === '`') {
+              clearPending();
+              if (doConvert(anchorNode, pIdx, closingIdx, sel)) return;
+              return;
+            }
+          }
+
+          pendingBacktick = { node: anchorNode, offset: closingIdx };
         });
       }
     })();

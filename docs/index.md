@@ -15,6 +15,16 @@ preview: techdocs-preview.sh # (2)
 
 Click **Edit** above to try the WYSIWYG editor.
 
+## Checklist Support
+
+The WYSIWYG editor supports markdown checklists (task lists). In Markdown mode, use:
+
+- [ ] Unchecked item
+- [x] Checked item
+- [ ] Another unchecked item
+
+In WYSIWYG mode, click a checkbox to toggle it. Press Enter in a checklist item to create a new empty checklist item (`- [ ]`).
+
 ## Admonition Support
 
 The WYSIWYG editor supports MkDocs admonitions. In Markdown mode, use:

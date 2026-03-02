@@ -12,6 +12,7 @@ const ICON_HR = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 const ICON_TABLE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>`;
 const ICON_CODEBLOCK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16,18 22,12 16,6"/><polyline points="8,6 2,12 8,18"/></svg>`;
 const ICON_INLINECODE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.75 4.75L9 19.25"/><path d="M15.25 4.75L13.5 19.25"/><path d="M19.25 7.5L22 10.5L19.25 13.5"/><path d="M4.75 7.5L2 10.5L4.75 13.5"/></svg>`;
+const ICON_CHECKLIST = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 7h-9v2h9V7zm0 8h-9v2h9v-2zM5.54 11L2 7.46l1.41-1.41 2.12 2.12 4.24-4.24 1.41 1.41L5.54 11zm0 8L2 15.46l1.41-1.41 2.12 2.12 4.24-4.24 1.41 1.41L5.54 19z"/></svg>`;
 const ICON_IMAGE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
 const ICON_TABLE_INSERT_ROW_ABOVE = `<svg viewBox="0 0 24 24" fill="none"><g fill="#4a90e2"><rect x="3" y="10" width="5" height="3" rx=".5"/><rect x="9" y="10" width="5" height="3" rx=".5"/><rect x="15" y="10" width="5" height="3" rx=".5"/></g><g fill="#999"><rect x="3" y="15" width="5" height="3" rx=".5"/><rect x="9" y="15" width="5" height="3" rx=".5"/><rect x="15" y="15" width="5" height="3" rx=".5"/></g><path stroke="#4a90e2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 8V4M10 5l2-2 2 2"/></svg>`;
 const ICON_TABLE_INSERT_ROW_BELOW = `<svg viewBox="0 0 24 24" fill="none"><g fill="#999"><rect x="3" y="6" width="5" height="3" rx=".5"/><rect x="9" y="6" width="5" height="3" rx=".5"/><rect x="15" y="6" width="5" height="3" rx=".5"/></g><g fill="#4a90e2"><rect x="3" y="11" width="5" height="3" rx=".5"/><rect x="9" y="11" width="5" height="3" rx=".5"/><rect x="15" y="11" width="5" height="3" rx=".5"/></g><path stroke="#4a90e2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 16v4M10 19l2 2 2-2"/></svg>`;
@@ -43,6 +44,7 @@ class MarkdownWYSIWYG {
                 { id: 'strikethrough', label: ICON_STRIKETHROUGH, title: 'Strikethrough', execCommand: 'strikeThrough', type: 'inline', mdPrefix: '~~', mdSuffix: '~~' },
                 { id: 'link', label: ICON_LINK, title: 'Link', action: '_insertLink', type: 'inline' },
                 { id: 'ul', label: ICON_UL, title: 'Unordered List', execCommand: 'insertUnorderedList', type: 'block', mdPrefix: '- ' },
+                { id: 'checklist', label: ICON_CHECKLIST, title: 'Checklist', action: '_toggleChecklist', type: 'checklist' },
                 { id: 'ol', label: ICON_OL, title: 'Ordered List', execCommand: 'insertOrderedList', type: 'block', mdPrefix: '1. ' },
                 { id: 'outdent', label: ICON_OUTDENT, title: 'Decrease Indent', action: '_handleOutdent', type: 'list-format' },
                 { id: 'indent', label: ICON_INDENT, title: 'Increase Indent', action: '_handleIndent', type: 'list-format' },
@@ -2305,6 +2307,7 @@ class MarkdownWYSIWYG {
                 let listItemContent = '';
                 let hasNestedList = false;
 
+                const contIndent = ' '.repeat(itemMarker.length);
                 Array.from(li.childNodes).forEach(childNode => {
                     if (childNode.nodeName === 'UL' || childNode.nodeName === 'OL') {
                         hasNestedList = true;
@@ -2312,7 +2315,7 @@ class MarkdownWYSIWYG {
                         if (listItemContent.trim().length > 0 && !listItemContent.endsWith('\n')) {
                             listItemContent += '\n';
                         }
-                        listItemContent += this._listToMarkdownRecursive(childNode, indent + '  ', childNode.nodeName, 1, options);
+                        listItemContent += this._listToMarkdownRecursive(childNode, indent + contIndent, childNode.nodeName, 1, options);
                     } else {
                         listItemContent += this._nodeToMarkdownRecursive(childNode, options);
                     }
@@ -2327,9 +2330,9 @@ class MarkdownWYSIWYG {
                 if (lines.length > 0) {
                     lines.forEach(line => {
                         if (line.trim().length > 0) { // Only add non-empty lines
-                            processedContent += '\n' + indent + '  ' + line.trimStart(); // Indent subsequent lines
+                            processedContent += '\n' + indent + contIndent + line.trimStart(); // Indent subsequent lines
                         } else if (processedContent.length > 0 || hasNestedList) { // Add empty line if needed for structure
-                            processedContent += '\n' + indent + '  ';
+                            processedContent += '\n' + indent + contIndent;
                         }
                     });
                 }

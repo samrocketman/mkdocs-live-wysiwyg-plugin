@@ -13,6 +13,7 @@ const ICON_TABLE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 const ICON_CODEBLOCK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16,18 22,12 16,6"/><polyline points="8,6 2,12 8,18"/></svg>`;
 const ICON_INLINECODE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.75 4.75L9 19.25"/><path d="M15.25 4.75L13.5 19.25"/><path d="M19.25 7.5L22 10.5L19.25 13.5"/><path d="M4.75 7.5L2 10.5L4.75 13.5"/></svg>`;
 const ICON_CHECKLIST = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 7h-9v2h9V7zm0 8h-9v2h9v-2zM5.54 11L2 7.46l1.41-1.41 2.12 2.12 4.24-4.24 1.41 1.41L5.54 11zm0 8L2 15.46l1.41-1.41 2.12 2.12 4.24-4.24 1.41 1.41L5.54 19z"/></svg>`;
+const ICON_ADMONITION = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="3" width="16" height="18" rx="2"/><line x1="3" y1="5" x2="3" y2="19" stroke-width="3"/><line x1="10" y1="8" x2="17" y2="8"/><line x1="10" y1="12" x2="17" y2="12"/><line x1="10" y1="16" x2="14" y2="16"/></svg>`;
 const ICON_IMAGE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
 const ICON_TABLE_INSERT_ROW_ABOVE = `<svg viewBox="0 0 24 24" fill="none"><g fill="#4a90e2"><rect x="3" y="10" width="5" height="3" rx=".5"/><rect x="9" y="10" width="5" height="3" rx=".5"/><rect x="15" y="10" width="5" height="3" rx=".5"/></g><g fill="#999"><rect x="3" y="15" width="5" height="3" rx=".5"/><rect x="9" y="15" width="5" height="3" rx=".5"/><rect x="15" y="15" width="5" height="3" rx=".5"/></g><path stroke="#4a90e2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 8V4M10 5l2-2 2 2"/></svg>`;
 const ICON_TABLE_INSERT_ROW_BELOW = `<svg viewBox="0 0 24 24" fill="none"><g fill="#999"><rect x="3" y="6" width="5" height="3" rx=".5"/><rect x="9" y="6" width="5" height="3" rx=".5"/><rect x="15" y="6" width="5" height="3" rx=".5"/></g><g fill="#4a90e2"><rect x="3" y="11" width="5" height="3" rx=".5"/><rect x="9" y="11" width="5" height="3" rx=".5"/><rect x="15" y="11" width="5" height="3" rx=".5"/></g><path stroke="#4a90e2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 16v4M10 19l2 2 2-2"/></svg>`;
@@ -49,6 +50,7 @@ class MarkdownWYSIWYG {
                 { id: 'outdent', label: ICON_OUTDENT, title: 'Decrease Indent', action: '_handleOutdent', type: 'list-format' },
                 { id: 'indent', label: ICON_INDENT, title: 'Increase Indent', action: '_handleIndent', type: 'list-format' },
                 { id: 'blockquote', label: ICON_BLOCKQUOTE, title: 'Blockquote', execCommand: 'formatBlock', value: 'BLOCKQUOTE', type: 'block', mdPrefix: '> ' },
+                { id: 'admonition', label: ICON_ADMONITION, title: 'Admonition', action: '_insertAdmonition', type: 'block-insert' },
                 { id: 'hr', label: ICON_HR, title: 'Horizontal Rule', action: '_insertHorizontalRuleAction', type: 'block-insert' },
                 { id: 'image', label: ICON_IMAGE, title: 'Insert Image', action: '_insertImageAction', type: 'block-insert' },
                 { id: 'table', label: ICON_TABLE, title: 'Insert Table', action: '_insertTableAction', type: 'block-insert' },
@@ -1544,7 +1546,7 @@ class MarkdownWYSIWYG {
     }
 
     _handleToolbarClick(buttonConfig, buttonElement) {
-        if (buttonConfig.id === 'table' || buttonConfig.id === 'image') { // Added 'image'
+        if (buttonConfig.id === 'table' || buttonConfig.id === 'image' || buttonConfig.id === 'admonition') {
             if (typeof this[buttonConfig.action] === 'function') {
                 // Focus is handled inside the action (_insertImageAction, _insertTableAction)
                 // before showing the popup/grid, to save the correct range.

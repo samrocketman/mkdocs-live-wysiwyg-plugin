@@ -482,6 +482,164 @@
     }
   })();
 
+  var ADMONITION_ICON_PENCIL = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M20.71 7.04c.39-.39.39-1.04 0-1.41l-2.34-2.34c-.37-.39-1.02-.39-1.41 0l-1.84 1.83 3.75 3.75M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>';
+  var ADMONITION_ICON_FLAME = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M13.5.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"/></svg>';
+  var ADMONITION_ICON_ALERT = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>';
+  var ADMONITION_ICON_ZAP = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>';
+
+  var ADMONITION_TYPES = [
+    { id: 'note',      label: 'Note',      color: '#448aff', icon: ADMONITION_ICON_PENCIL },
+    { id: 'tip',       label: 'Tip',       color: '#00c853', icon: ADMONITION_ICON_FLAME },
+    { id: 'hint',      label: 'Hint',      color: '#00b0ff', icon: ADMONITION_ICON_FLAME },
+    { id: 'important', label: 'Important', color: '#ff6d00', icon: ADMONITION_ICON_FLAME },
+    { id: 'warning',   label: 'Warning',   color: '#ff9100', icon: ADMONITION_ICON_ALERT },
+    { id: 'caution',   label: 'Caution',   color: '#ffc400', icon: ADMONITION_ICON_ALERT },
+    { id: 'attention', label: 'Attention', color: '#ffab00', icon: ADMONITION_ICON_ALERT },
+    { id: 'danger',    label: 'Danger',    color: '#ff1744', icon: ADMONITION_ICON_ZAP },
+    { id: 'error',     label: 'Error',     color: '#ff5252', icon: ADMONITION_ICON_ZAP }
+  ];
+
+  (function patchInsertAdmonition() {
+    var proto = MarkdownWYSIWYG.prototype;
+    var dropdown = null;
+    var activeEditor = null;
+
+    function getOrCreateDropdown(editor) {
+      if (dropdown) return dropdown;
+      dropdown = document.createElement('div');
+      dropdown.className = 'md-admonition-dropdown';
+      dropdown.style.cssText = 'display:none;position:absolute;z-index:100;background:#fff;border:1px solid #ccc;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.15);min-width:160px;padding:4px 0;margin-top:2px;';
+      for (var i = 0; i < ADMONITION_TYPES.length; i++) {
+        (function (t) {
+          var item = document.createElement('button');
+          item.type = 'button';
+          item.className = 'md-admonition-dropdown-item';
+          item.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;padding:6px 12px;border:none;background:transparent;cursor:pointer;font-size:13px;color:#333;text-align:left;transition:background-color 0.15s;';
+          var iconSpan = document.createElement('span');
+          iconSpan.style.cssText = 'display:inline-flex;align-items:center;flex-shrink:0;color:' + t.color + ';';
+          iconSpan.innerHTML = t.icon;
+          var label = document.createElement('span');
+          label.textContent = t.label;
+          item.appendChild(iconSpan);
+          item.appendChild(label);
+          item.addEventListener('mouseenter', function () { item.style.backgroundColor = '#e9e9e9'; });
+          item.addEventListener('mouseleave', function () { item.style.backgroundColor = 'transparent'; });
+          item.addEventListener('click', function (e) {
+            e.stopPropagation();
+            hideDropdown();
+            if (activeEditor) insertAdmonition(activeEditor, t.id);
+          });
+          dropdown.appendChild(item);
+        })(ADMONITION_TYPES[i]);
+      }
+      document.body.appendChild(dropdown);
+      return dropdown;
+    }
+
+    function showDropdown(editor, buttonEl) {
+      activeEditor = editor;
+      var dd = getOrCreateDropdown(editor);
+      if (editor.currentMode === 'wysiwyg') {
+        var sel = window.getSelection();
+        if (sel && sel.rangeCount > 0 && editor.editableArea.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+          editor.savedRangeInfo = sel.getRangeAt(0).cloneRange();
+        }
+      } else {
+        editor.savedRangeInfo = { start: editor.markdownArea.selectionStart, end: editor.markdownArea.selectionEnd };
+      }
+      var rect = buttonEl.getBoundingClientRect();
+      dd.style.display = 'block';
+      dd.style.top = (rect.bottom + window.scrollY + 2) + 'px';
+      dd.style.left = (rect.left + window.scrollX) + 'px';
+      setTimeout(function () {
+        document.addEventListener('click', onDocClick, true);
+        document.addEventListener('keydown', onDocEsc, true);
+      }, 0);
+    }
+
+    function hideDropdown() {
+      if (dropdown) dropdown.style.display = 'none';
+      document.removeEventListener('click', onDocClick, true);
+      document.removeEventListener('keydown', onDocEsc, true);
+    }
+
+    function onDocClick(e) {
+      if (dropdown && !dropdown.contains(e.target)) hideDropdown();
+    }
+    function onDocEsc(e) {
+      if (e.key === 'Escape') hideDropdown();
+    }
+
+    function insertAdmonition(editor, type) {
+      var title = type.charAt(0).toUpperCase() + type.slice(1);
+      if (editor.currentMode === 'wysiwyg') {
+        editor.editableArea.focus();
+        var sel = window.getSelection();
+        if (editor.savedRangeInfo instanceof Range && editor.editableArea.contains(editor.savedRangeInfo.commonAncestorContainer)) {
+          sel.removeAllRanges();
+          sel.addRange(editor.savedRangeInfo);
+        }
+        var adDiv = document.createElement('div');
+        adDiv.className = 'admonition ' + type;
+        adDiv.setAttribute('contenteditable', 'true');
+        var titleP = document.createElement('p');
+        titleP.className = 'admonition-title';
+        titleP.textContent = title;
+        var bodyP = document.createElement('p');
+        bodyP.textContent = 'Content here.';
+        adDiv.appendChild(titleP);
+        adDiv.appendChild(bodyP);
+        var range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+        if (range) {
+          range.collapse(false);
+          range.insertNode(adDiv);
+          var trailing = document.createElement('p');
+          trailing.innerHTML = '<br>';
+          adDiv.parentNode.insertBefore(trailing, adDiv.nextSibling);
+          var newRange = document.createRange();
+          newRange.selectNodeContents(bodyP);
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+        } else {
+          editor.editableArea.appendChild(adDiv);
+        }
+        editor.savedRangeInfo = null;
+        editor._finalizeUpdate(editor.editableArea.innerHTML);
+      } else {
+        var textarea = editor.markdownArea;
+        var start, end;
+        if (editor.savedRangeInfo && typeof editor.savedRangeInfo.start === 'number') {
+          start = editor.savedRangeInfo.start;
+          end = editor.savedRangeInfo.end;
+        } else {
+          start = textarea.selectionStart;
+          end = textarea.selectionEnd;
+        }
+        var text = textarea.value;
+        var before = text.substring(0, start);
+        var after = text.substring(end);
+        var prefix = (before.length > 0 && !before.endsWith('\n')) ? '\n' : '';
+        var suffix = (after.length > 0 && !after.startsWith('\n')) ? '\n' : '';
+        var snippet = prefix + '!!! ' + type + '\n    Content here.\n' + suffix;
+        textarea.value = before + snippet + after;
+        var cursorStart = before.length + prefix.length + ('!!! ' + type + '\n    ').length;
+        textarea.focus();
+        textarea.setSelectionRange(cursorStart, cursorStart + 'Content here.'.length);
+        editor.savedRangeInfo = null;
+        editor._finalizeUpdate(textarea.value);
+      }
+    }
+
+    proto._insertAdmonition = function (buttonEl) {
+      if (dropdown && dropdown.style.display !== 'none') {
+        hideDropdown();
+        return;
+      }
+      var btn = buttonEl || (this.toolbar && this.toolbar.querySelector('.md-toolbar-button-admonition'));
+      if (btn) showDropdown(this, btn);
+    };
+  })();
+
   (function patchAdmonitionHtmlToMarkdown() {
     var proto = MarkdownWYSIWYG.prototype;
     var orig = proto._nodeToMarkdownRecursive;

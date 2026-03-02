@@ -13,9 +13,10 @@ A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](ht
   - :white_check_mark: Markdown checklists (task lists): `- [ ]` and `- [x]` render as clickable checkboxes in WYSIWYG. Toggle by clicking; new list items in a checklist create `- [ ]` automatically.
   - :white_check_mark: Dual-mode editing (WYSIWYG and Markdown) with toolbar formatting.  The editor can also be disabled.
   - :white_check_mark: YAML frontmatter preserved when editing and switching modes.
-  - :white_check_mark: MkDocs admonitions (`!!! note`, `!!! warning`, etc.)
+  - :white_check_mark: MkDocs admonitions (`!!! note`, `!!! warning`, etc.).  A UI button for inserting new admonitions.
   - :white_check_mark: Markdown link styles preserved (inline, reference, shortcut)
   - :white_check_mark: Code blocks with WYSIWYG editable titles.
+  - :white_check_mark: Checklists with WYSIWYG editable state.  A UI button for toggling an unordered list and checklist.
 - :white_check_mark: No external JavaScript; all assets are bundled locally within the mkdocs plugin.
 
 When you click "Edit" in the live-edit plugin, this plugin replaces the plain textarea with a rich WYSIWYG editor.

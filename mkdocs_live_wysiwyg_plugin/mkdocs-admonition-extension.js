@@ -28,7 +28,7 @@
         return idx >= 0 ? idx : undefined;
       },
       tokenizer: function (src) {
-        var match = src.match(/^!!!\s+(\w+)(?:\s+"([^"]*)")?\s*\n((?:    .*\n?)*)/);
+        var match = src.match(/^!!!\s+(\w+)(?:\s+"([^"]*)")?\s*\n((?:(?:    .*|[ \t]*)(?:\n|$))*)/);
         if (!match) return;
         var type = match[1].toLowerCase();
         var title = match[2];

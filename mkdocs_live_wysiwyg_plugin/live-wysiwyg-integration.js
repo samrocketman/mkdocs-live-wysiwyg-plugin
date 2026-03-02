@@ -737,7 +737,7 @@
             contentParts.push(orig.call(this, c, options || {}));
           }
           var body = contentParts.join('').trim();
-          var bodyIndented = body ? body.split('\n').map(function (l) { return '    ' + l; }).join('\n') : '';
+          var bodyIndented = body ? body.split('\n').map(function (l) { return l ? '    ' + l : ''; }).join('\n') : '';
           var out = '!!! ' + type;
           var defaultTitle = type.charAt(0).toUpperCase() + type.slice(1);
           if (title && title !== defaultTitle) out += ' "' + title.replace(/"/g, '\\"') + '"';

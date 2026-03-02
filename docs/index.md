@@ -13,6 +13,11 @@ preview: techdocs-preview.sh # (2)
 1. Build the `site`.
 2. Launch a server on `http://127.0.0.1:8000/`.
 
+This code block is 4-space indented.
+
+    ls -a
+    echo hello
+
 Click **Edit** above to try the WYSIWYG editor.
 
 ## Checklist Support
@@ -32,6 +37,9 @@ The WYSIWYG editor supports MkDocs admonitions. In Markdown mode, use:
 !!! note
     This is a note admonition.
 
+    - [x] Item 1
+    - [x] Item 2
+
 Another
 
 !!! warning "Custom Title"
@@ -41,5 +49,5 @@ This shows you what it's like to be awesome!
 
 # Test
 
-!!! danger "Danger"
+!!! danger
     This is a note common in mkdocs.

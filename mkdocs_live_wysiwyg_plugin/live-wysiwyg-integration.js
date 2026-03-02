@@ -1262,6 +1262,133 @@
     }
   }
 
+  function findSelectedTextInContent(content, selectedText, contextBefore, contextAfter) {
+    if (!content || !selectedText) return null;
+    var matchLen = selectedText.length;
+    var norm = selectedText.replace(/\s+/g, ' ').trim();
+    var searchTexts = norm && norm !== selectedText ? [selectedText, norm] : [selectedText];
+
+    function tryContextMatch(ctxBefore, ctxAfter) {
+      if (!ctxBefore && !ctxAfter) return null;
+      var needle = (ctxBefore || '') + selectedText + (ctxAfter || '');
+      var idx = content.indexOf(needle);
+      if (idx >= 0) return { start: idx + (ctxBefore || '').length, end: idx + (ctxBefore || '').length + matchLen };
+      if (norm && norm !== selectedText) {
+        needle = (ctxBefore || '') + norm + (ctxAfter || '');
+        idx = content.indexOf(needle);
+        if (idx >= 0) return { start: idx + (ctxBefore || '').length, end: idx + (ctxBefore || '').length + norm.length };
+      }
+      return null;
+    }
+
+    if (contextBefore || contextAfter) {
+      var pos = tryContextMatch(contextBefore, contextAfter);
+      if (pos) return pos;
+      pos = tryContextMatch(contextBefore, null);
+      if (pos) return pos;
+      pos = tryContextMatch(null, contextAfter);
+      if (pos) return pos;
+      if (contextBefore && contextBefore.length > 20) {
+        pos = tryContextMatch(contextBefore.slice(-20), null);
+        if (pos) return pos;
+      }
+      if (contextAfter && contextAfter.length > 20) {
+        pos = tryContextMatch(null, contextAfter.slice(0, 20));
+        if (pos) return pos;
+      }
+    }
+
+    var allMatches = [];
+    var idx = -1;
+    while ((idx = content.indexOf(selectedText, idx + 1)) >= 0) allMatches.push({ idx: idx, len: selectedText.length });
+    if (norm && norm !== selectedText) {
+      idx = -1;
+      while ((idx = content.indexOf(norm, idx + 1)) >= 0) allMatches.push({ idx: idx, len: norm.length });
+    }
+    if (allMatches.length === 0) return null;
+    if (allMatches.length === 1) {
+      var m = allMatches[0];
+      return { start: m.idx, end: m.idx + m.len };
+    }
+
+    var best = null;
+    var bestScore = -1;
+    for (var i = 0; i < allMatches.length; i++) {
+      var start = allMatches[i].idx;
+      var len = allMatches[i].len;
+      var before = content.substring(Math.max(0, start - CONTEXT_LEN), start);
+      var after = content.substring(start + len, Math.min(content.length, start + len + CONTEXT_LEN));
+      var score = 0;
+      if (contextBefore && before) {
+        var overlap = Math.min(contextBefore.length, before.length);
+        for (var j = 1; j <= overlap; j++) {
+          if (contextBefore.slice(-j) === before.slice(-j)) score += j;
+        }
+      }
+      if (contextAfter && after) {
+        overlap = Math.min(contextAfter.length, after.length);
+        for (var k = 1; k <= overlap; k++) {
+          if (contextAfter.slice(0, k) === after.slice(0, k)) score += k;
+        }
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = { start: start, end: start + len };
+      }
+    }
+    return best || { start: allMatches[0].idx, end: allMatches[0].idx + allMatches[0].len };
+  }
+
+  function findSelectedTextInMarkdown(markdown, selectedText, contextBefore, contextAfter) {
+    return findSelectedTextInContent(markdown, selectedText, contextBefore, contextAfter);
+  }
+
+  function applyPendingReadModeSelection(editor) {
+    if (!pendingReadModeSelection || !pendingReadModeSelection.selectedText) return false;
+    var selectedText = pendingReadModeSelection.selectedText;
+    var contextBefore = pendingReadModeSelection.contextBefore || '';
+    var contextAfter = pendingReadModeSelection.contextAfter || '';
+    pendingReadModeSelection = null;
+    var md = editor.currentMode === 'markdown'
+      ? editor.markdownArea.value
+      : (editor.getValue ? editor.getValue() : '');
+    var parsed = parseFrontmatter(md || '');
+    var body = parsed.body || '';
+    var frontmatterLen = (md || '').length - body.length;
+    var pos = findSelectedTextInMarkdown(body, selectedText, contextBefore, contextAfter);
+    if (!pos) return false;
+    if (editor.currentMode === 'markdown') {
+      var ma = editor.markdownArea;
+      if (!ma) return false;
+      var selStart = pos.start + frontmatterLen;
+      var selEnd = pos.end + frontmatterLen;
+      var fullLen = ma.value.length;
+      selStart = Math.min(selStart, fullLen);
+      selEnd = Math.min(selEnd, fullLen);
+      ma.focus();
+      ma.setSelectionRange(selStart, selEnd);
+      scrollToCenterCursor(ma, true, selStart);
+      if (editor.markdownLineNumbersDiv) {
+        editor.markdownLineNumbersDiv.scrollTop = ma.scrollTop;
+      }
+      return true;
+    }
+    var ea = editor.editableArea;
+    if (!ea) return false;
+    var fullText = '';
+    var walker = document.createTreeWalker(ea, NodeFilter.SHOW_TEXT, null, false);
+    var node;
+    while ((node = walker.nextNode())) fullText += node.textContent;
+    var pos = findSelectedTextInContent(fullText, selectedText, contextBefore, contextAfter);
+    if (pos) {
+      setSelectionInEditable(ea, pos.start, pos.end);
+      ea.focus();
+      requestAnimationFrame(function () { scrollToCenterCursor(ea, false); });
+      return true;
+    }
+    return false;
+  }
+
   function scrollToCenterCursor(container, isTextarea, selectionStart) {
     if (!container) return;
     var clientHeight = container.clientHeight;
@@ -1620,6 +1747,13 @@
             }
             selStart = Math.min(selStart, len);
             selEnd = Math.min(Math.max(selEnd, selStart), len);
+            var selText = this.markdownArea.value.substring(selStart, selEnd);
+            var headingMatch = selText.match(/^(\s*#{1,6}\s+)/);
+            if (headingMatch) {
+              selStart += headingMatch[1].length;
+            }
+            selStart = Math.min(selStart, len);
+            selEnd = Math.min(Math.max(selEnd, selStart), len);
             this.markdownArea.setSelectionRange(selStart, selEnd);
             if (this._updateMarkdownLineNumbers) this._updateMarkdownLineNumbers();
           }
@@ -1672,6 +1806,170 @@
   let toggleButton = null;
   let bodyObserver = null;
   var capturedMarkdownSelection = null;
+  var pendingReadModeSelection = null;
+
+  function isInReadMode() {
+    if (wysiwygEditor) return false;
+    var textarea = document.querySelector('.live-edit-source');
+    if (!textarea) return true;
+    return textarea.classList.contains('live-edit-hidden') || textarea.offsetParent === null;
+  }
+
+  function isSelectionInEditForm(sel) {
+    if (!sel || sel.rangeCount === 0) return false;
+    var range = sel.getRangeAt(0);
+    var container = range.commonAncestorContainer;
+    var node = container.nodeType === 3 ? container.parentNode : container;
+    if (!node) return false;
+    return !!(node.closest && (
+      node.closest('.live-edit-wysiwyg-wrapper') ||
+      node.closest('.live-edit-source') ||
+      node.closest('.live-edit-controls')
+    ));
+  }
+
+  var CONTEXT_LEN = 60;
+
+  function getSelectionContext(range) {
+    var root = range.commonAncestorContainer;
+    if (root.nodeType === 3) root = root.parentNode;
+    while (root && root !== document.body) {
+      var r = root.getAttribute && root.getAttribute('role');
+      if (r === 'main' || root.tagName === 'ARTICLE' || (root.classList && root.classList.contains('md-content'))) break;
+      root = root.parentNode;
+    }
+    if (!root) root = range.commonAncestorContainer.nodeType === 3 ? range.commonAncestorContainer.parentNode : range.commonAncestorContainer;
+    var fullText = root.textContent || '';
+    var preRange = document.createRange();
+    preRange.selectNodeContents(root);
+    preRange.setEnd(range.startContainer, range.startOffset);
+    var startOffset = preRange.toString().length;
+    var postRange = document.createRange();
+    postRange.selectNodeContents(root);
+    postRange.setStart(range.endContainer, range.endOffset);
+    var endOffset = fullText.length - postRange.toString().length;
+    var contextBefore = fullText.substring(Math.max(0, startOffset - CONTEXT_LEN), startOffset);
+    var contextAfter = fullText.substring(endOffset, Math.min(fullText.length, endOffset + CONTEXT_LEN));
+    return { contextBefore: contextBefore, contextAfter: contextAfter };
+  }
+
+  function storeSelectionIfReadMode(sel) {
+    if (!isInReadMode()) return;
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+    if (isSelectionInEditForm(sel)) return;
+    var range = sel.getRangeAt(0);
+    var selectedText = range.toString();
+    if (!selectedText || selectedText.length === 0) return;
+    var ctx = getSelectionContext(range);
+    pendingReadModeSelection = {
+      selectedText: selectedText,
+      contextBefore: ctx.contextBefore,
+      contextAfter: ctx.contextAfter
+    };
+  }
+
+  var selectionEditPopup = null;
+  var selectionEditPopupHideTimer = null;
+
+  function findEditModeTrigger() {
+    var candidates = document.querySelectorAll('.live-edit-controls button, .live-edit-controls a, a, button');
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      if (el.closest && el.closest('.live-edit-wysiwyg-wrapper')) continue;
+      var text = (el.textContent || '').trim();
+      if (text.indexOf('Editor') >= 0) continue;
+      if (text.indexOf('Edit') >= 0) return el;
+      if (el.getAttribute && (el.getAttribute('title') || '').indexOf('Edit') >= 0) return el;
+    }
+    return null;
+  }
+
+  function ensureSelectionEditPopup() {
+    if (selectionEditPopup) return;
+    selectionEditPopup = document.createElement('div');
+    selectionEditPopup.className = 'live-wysiwyg-selection-edit-popup';
+    selectionEditPopup.innerHTML = '<button type="button" class="live-wysiwyg-selection-edit-btn" title="Edit selection">Edit</button>';
+    selectionEditPopup.style.cssText = 'position:fixed;z-index:9999;padding:4px 8px;background:#333;color:#fff;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-size:12px;font-family:inherit;opacity:0;transition:opacity 0.15s;pointer-events:none;visibility:hidden;';
+    var btn = selectionEditPopup.querySelector('button');
+    btn.style.cssText = 'background:transparent;border:none;color:inherit;cursor:pointer;padding:0 4px;font-size:inherit;';
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      storeSelectionIfReadMode(window.getSelection());
+      var trigger = findEditModeTrigger();
+      if (trigger) trigger.click();
+      hideSelectionEditPopup();
+    });
+    document.body.appendChild(selectionEditPopup);
+  }
+
+  function showSelectionEditPopup(rect) {
+    ensureSelectionEditPopup();
+    if (selectionEditPopupHideTimer) {
+      clearTimeout(selectionEditPopupHideTimer);
+      selectionEditPopupHideTimer = null;
+    }
+    var popup = selectionEditPopup;
+    var popupRect = popup.getBoundingClientRect();
+    var top = rect.top - popupRect.height - 6;
+    if (top < 8) top = rect.bottom + 6;
+    var left = rect.left + (rect.width / 2) - (popup.offsetWidth / 2);
+    if (left < 8) left = 8;
+    if (left + popup.offsetWidth > window.innerWidth - 8) left = window.innerWidth - popup.offsetWidth - 8;
+    popup.style.left = left + 'px';
+    popup.style.top = top + 'px';
+    popup.style.opacity = '1';
+    popup.style.pointerEvents = 'auto';
+    popup.style.visibility = 'visible';
+  }
+
+  function hideSelectionEditPopup() {
+    if (!selectionEditPopup) return;
+    selectionEditPopup.style.opacity = '0';
+    selectionEditPopup.style.pointerEvents = 'none';
+    if (selectionEditPopupHideTimer) clearTimeout(selectionEditPopupHideTimer);
+    selectionEditPopupHideTimer = setTimeout(function () {
+      if (selectionEditPopup) selectionEditPopup.style.visibility = 'hidden';
+      selectionEditPopupHideTimer = null;
+    }, 150);
+  }
+
+  function updateSelectionEditPopup() {
+    if (!isInReadMode()) {
+      hideSelectionEditPopup();
+      return;
+    }
+    var sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+      hideSelectionEditPopup();
+      return;
+    }
+    if (isSelectionInEditForm(sel)) {
+      hideSelectionEditPopup();
+      return;
+    }
+    var range = sel.getRangeAt(0);
+    var rect = range.getBoundingClientRect();
+    if (rect.width < 1 && rect.height < 1) {
+      hideSelectionEditPopup();
+      return;
+    }
+    showSelectionEditPopup(rect);
+  }
+
+  function captureReadModeSelectionOnChange() {
+    document.addEventListener('selectionchange', function () {
+      storeSelectionIfReadMode(window.getSelection());
+      updateSelectionEditPopup();
+    });
+    document.addEventListener('mousedown', function (e) {
+      storeSelectionIfReadMode(window.getSelection());
+      if (selectionEditPopup && selectionEditPopup.contains(e.target)) return;
+      hideSelectionEditPopup();
+    }, true);
+    document.addEventListener('scroll', hideSelectionEditPopup, true);
+  }
+  captureReadModeSelectionOnChange();
 
   function getControlsElement(textarea) {
     var controls = textarea ? textarea.closest('.live-edit-controls') : null;
@@ -1817,6 +2115,7 @@
       if (lastMode) {
         setEditorStateCookie(true, lastMode);
       }
+      pendingReadModeSelection = null;
       removeToggleButton();
       startBodyObserver();
     }
@@ -1984,24 +2283,27 @@
 
     if (wysiwygEditor) {
       wysiwygEditor.switchToMode(preferredMode, true);
-      if (preferredMode === 'markdown') {
-        wysiwygEditor.markdownArea.setSelectionRange(0, 0);
-        wysiwygEditor.markdownArea.scrollTop = 0;
-        if (wysiwygEditor.markdownLineNumbersDiv) {
-          wysiwygEditor.markdownLineNumbersDiv.scrollTop = 0;
-        }
-      } else {
-        var ea = wysiwygEditor.editableArea;
-        if (ea) {
-          ea.scrollTop = 0;
-          if (lastWysiwygSemanticSelection && restoreSelectionFromSemantic(ea, lastWysiwygSemanticSelection)) {
-            installSemanticClearListeners(ea);
-          } else {
-            var range = document.createRange();
-            range.selectNodeContents(ea);
-            range.collapse(true);
-            var sel = window.getSelection();
-            if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+      var appliedReadModeSelection = applyPendingReadModeSelection(wysiwygEditor);
+      if (!appliedReadModeSelection) {
+        if (preferredMode === 'markdown') {
+          wysiwygEditor.markdownArea.setSelectionRange(0, 0);
+          wysiwygEditor.markdownArea.scrollTop = 0;
+          if (wysiwygEditor.markdownLineNumbersDiv) {
+            wysiwygEditor.markdownLineNumbersDiv.scrollTop = 0;
+          }
+        } else {
+          var ea = wysiwygEditor.editableArea;
+          if (ea) {
+            ea.scrollTop = 0;
+            if (lastWysiwygSemanticSelection && restoreSelectionFromSemantic(ea, lastWysiwygSemanticSelection)) {
+              installSemanticClearListeners(ea);
+            } else {
+              var range = document.createRange();
+              range.selectNodeContents(ea);
+              range.collapse(true);
+              var sel = window.getSelection();
+              if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+            }
           }
         }
       }

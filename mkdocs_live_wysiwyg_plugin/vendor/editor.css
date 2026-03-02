@@ -482,3 +482,102 @@
  background-color: #0056b3;
  border-color: #0056b3;
 }
+
+/* Material-style code blocks */
+.md-editable-area .md-code-block {
+ border-radius: 4px;
+ overflow: hidden;
+ margin-bottom: 1em;
+ background-color: #272822;
+ color: #f8f8f2;
+}
+
+.md-editable-area .md-code-block pre {
+ background-color: transparent;
+ color: inherit;
+ margin-bottom: 0;
+ border-radius: 0;
+ position: relative;
+}
+
+.md-editable-area .md-code-title {
+ background-color: #1e1e1e;
+ color: #fff;
+ font-size: 0.8em;
+ font-family: 'Menlo', 'Consolas', monospace;
+ padding: 6px 12px;
+ border-bottom: 1px solid #3d3d3d;
+ outline: none;
+ cursor: text;
+ min-height: 1.2em;
+}
+
+.md-editable-area .md-code-title:focus {
+ border-bottom-color: #007bff;
+}
+
+.md-editable-area .md-code-title:empty[data-placeholder]::before {
+ content: attr(data-placeholder);
+ color: #666;
+ font-style: italic;
+}
+
+.md-editable-area .md-code-lang {
+ background-color: #1e1e1e;
+ color: #888;
+ font-size: 0.7em;
+ font-family: 'Menlo', 'Consolas', monospace;
+ padding: 4px 12px;
+ border-bottom: 1px solid #3d3d3d;
+ user-select: none;
+ -webkit-user-select: none;
+ text-transform: uppercase;
+ letter-spacing: 0.5px;
+ cursor: pointer;
+}
+
+.md-editable-area .md-code-lang:hover {
+ color: #bbb;
+}
+
+.md-editable-area .md-code-line-numbers {
+ position: absolute;
+ left: 0;
+ top: 0;
+ bottom: 0;
+ display: flex;
+ flex-direction: column;
+ padding: 10px 0;
+ text-align: right;
+ user-select: none;
+ -webkit-user-select: none;
+ color: #6e7681;
+ font-size: 0.85em;
+ font-family: 'Menlo', 'Consolas', monospace;
+ border-right: 1px solid #3d3d3d;
+ background-color: rgba(0,0,0,0.15);
+}
+
+.md-editable-area .md-code-line-numbers span {
+ display: block;
+ padding: 0 10px 0 8px;
+ line-height: 1.45;
+ cursor: pointer;
+ min-width: 2.5em;
+}
+
+.md-editable-area .md-code-line-numbers span:hover {
+ color: #f8f8f2;
+ background-color: rgba(255,255,255,0.08);
+}
+
+.md-editable-area .md-code-block pre[data-linenums] code {
+ padding-left: 3.5em;
+}
+
+.md-editable-area .md-code-block pre code {
+ background-color: transparent;
+ color: inherit;
+ display: block;
+ line-height: 1.45;
+}

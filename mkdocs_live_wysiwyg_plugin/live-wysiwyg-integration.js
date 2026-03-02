@@ -18,6 +18,186 @@
     return;
   }
 
+  (function registerCodeBlockRenderer() {
+    if (typeof marked === 'undefined') return;
+    function parseInfoString(info) {
+      var result = { lang: '', attrs: {} };
+      if (!info) return result;
+      info = info.trim();
+      var langMatch = info.match(/^(\S+)/);
+      if (langMatch) result.lang = langMatch[1];
+      var attrRe = /(\w+)="([^"]*)"/g;
+      var m;
+      while ((m = attrRe.exec(info)) !== null) {
+        result.attrs[m[1]] = m[2];
+      }
+      if (result.lang && result.lang.indexOf('=') !== -1) result.lang = '';
+      return result;
+    }
+    marked.use({
+      renderer: {
+        code: function (token) {
+          var info = parseInfoString(token.lang);
+          var lang = info.lang;
+          var escaped = (token.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+          var attrs = '';
+          if (lang) attrs += ' data-lang="' + lang + '"';
+          if (info.attrs.title) attrs += ' data-title="' + info.attrs.title.replace(/"/g, '&quot;') + '"';
+          if (info.attrs.linenums) attrs += ' data-linenums="' + info.attrs.linenums + '"';
+          if (info.attrs.hl_lines) attrs += ' data-hl-lines="' + info.attrs.hl_lines + '"';
+          var codeClass = lang ? ' class="language-' + lang + '"' : '';
+          return '<pre' + attrs + '><code' + codeClass + '>' + escaped + '</code></pre>\n';
+        }
+      }
+    });
+  })();
+
+  function enhanceCodeBlocks(editableArea) {
+    if (!editableArea) return;
+    var pres = editableArea.querySelectorAll('pre[data-title], pre[data-linenums], pre[data-lang]');
+    for (var i = 0; i < pres.length; i++) {
+      var pre = pres[i];
+      if (pre.parentNode && pre.parentNode.classList && pre.parentNode.classList.contains('md-code-block')) continue;
+      var wrapper = document.createElement('div');
+      wrapper.className = 'md-code-block';
+      var title = pre.getAttribute('data-title');
+      var lang = pre.getAttribute('data-lang') || '';
+      var headerBar = document.createElement('div');
+      wrapper.appendChild(headerBar);
+      (function (bar, preEl, langName) {
+        function setupAsTitle(text) {
+          bar.className = 'md-code-title';
+          bar.setAttribute('contenteditable', 'true');
+          bar.removeAttribute('data-placeholder');
+          bar.textContent = text;
+          preEl.setAttribute('data-title', text);
+        }
+        function setupAsLang() {
+          bar.className = 'md-code-lang';
+          bar.setAttribute('contenteditable', 'false');
+          bar.removeAttribute('data-placeholder');
+          bar.textContent = langName;
+          preEl.removeAttribute('data-title');
+        }
+        var outsideClickHandler = null;
+        function revertIfEmpty() {
+          if (bar.classList.contains('md-code-title') && !bar.textContent.trim()) {
+            if (langName) {
+              setupAsLang();
+            } else {
+              bar.setAttribute('data-placeholder', 'Enter title...');
+              preEl.removeAttribute('data-title');
+            }
+          }
+          removeOutsideClickHandler();
+        }
+        function removeOutsideClickHandler() {
+          if (outsideClickHandler) {
+            document.removeEventListener('mousedown', outsideClickHandler, true);
+            outsideClickHandler = null;
+          }
+        }
+        function installOutsideClickHandler() {
+          removeOutsideClickHandler();
+          outsideClickHandler = function (e) {
+            if (!bar.contains(e.target)) {
+              revertIfEmpty();
+            }
+          };
+          document.addEventListener('mousedown', outsideClickHandler, true);
+        }
+        function setupAsTitleEditing() {
+          bar.className = 'md-code-title';
+          bar.setAttribute('contenteditable', 'true');
+          bar.setAttribute('data-placeholder', 'Enter title...');
+          bar.textContent = '';
+          preEl.removeAttribute('data-title');
+          installOutsideClickHandler();
+          requestAnimationFrame(function () {
+            bar.focus();
+            var sel = window.getSelection();
+            if (sel) {
+              var range = document.createRange();
+              range.selectNodeContents(bar);
+              range.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }
+          });
+        }
+        function onInput() {
+          preEl.setAttribute('data-title', bar.textContent.trim());
+        }
+        function onKeydown(e) {
+          if (e.key === 'Enter') e.preventDefault();
+        }
+        function onClick() {
+          if (bar.classList.contains('md-code-lang')) {
+            setupAsTitleEditing();
+          }
+        }
+        function onBlur() {
+          revertIfEmpty();
+        }
+        bar.addEventListener('input', onInput);
+        bar.addEventListener('keydown', onKeydown);
+        bar.addEventListener('click', onClick);
+        bar.addEventListener('blur', onBlur);
+        if (title) {
+          setupAsTitle(title);
+        } else if (langName) {
+          setupAsLang();
+        }
+      })(headerBar, pre, lang);
+      pre.parentNode.insertBefore(wrapper, pre);
+      wrapper.appendChild(pre);
+      var linenums = pre.getAttribute('data-linenums');
+      if (linenums) {
+        var codeEl = pre.querySelector('code');
+        var text = codeEl ? codeEl.textContent : pre.textContent;
+        var lineCount = text.split('\n').length;
+        if (text.endsWith('\n')) lineCount--;
+        var startNum = parseInt(linenums, 10) || 1;
+        var gutter = document.createElement('div');
+        gutter.className = 'md-code-line-numbers';
+        gutter.setAttribute('contenteditable', 'false');
+        for (var n = 0; n < lineCount; n++) {
+          var span = document.createElement('span');
+          span.textContent = String(startNum + n);
+          span.setAttribute('data-line', String(startNum + n));
+          gutter.appendChild(span);
+        }
+        pre.insertBefore(gutter, pre.firstChild);
+        (function (gutterEl, codeElement) {
+          gutterEl.addEventListener('click', function (e) {
+            var target = e.target;
+            if (target.tagName !== 'SPAN' || !target.hasAttribute('data-line')) return;
+            if (!codeElement) return;
+            var lineIdx = Array.prototype.indexOf.call(gutterEl.children, target);
+            if (lineIdx < 0) return;
+            var textNode = codeElement.firstChild;
+            if (!textNode || textNode.nodeType !== 3) return;
+            var text = textNode.textContent;
+            var offset = 0;
+            for (var li = 0; li < lineIdx; li++) {
+              var nl = text.indexOf('\n', offset);
+              if (nl === -1) break;
+              offset = nl + 1;
+            }
+            var range = document.createRange();
+            range.setStart(textNode, offset);
+            range.collapse(true);
+            var sel = window.getSelection();
+            if (sel) {
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }
+          });
+        })(gutter, codeEl);
+      }
+    }
+  }
+
   (function patchAdmonitionHtmlToMarkdown() {
     var proto = MarkdownWYSIWYG.prototype;
     var orig = proto._nodeToMarkdownRecursive;
@@ -36,21 +216,61 @@
       }
       // PRE: robust handling when contenteditable splits code blocks (e.g. DIV children, multiple PRE)
       if (node.nodeName === 'PRE' && !(options && options.inTableCell)) {
-        var hasSingleCodeChild = node.firstChild && node.firstChild.nodeName === 'CODE' && node.childNodes.length === 1;
-        if (!hasSingleCodeChild) {
-          var parts = [];
-          for (var k = 0; k < node.childNodes.length; k++) {
-            var ch = node.childNodes[k];
-            if (ch.nodeType === 3) parts.push(ch.textContent);
-            else if (ch.nodeType === 1) parts.push(ch.textContent);
-          }
-          var preContent = parts.join('\n');
-          if (preContent.length > 0 && !preContent.endsWith('\n')) preContent += '\n';
-          var codeEl = node.querySelector && node.querySelector('code');
-          var langMatch = codeEl && codeEl.className && codeEl.className.match(/language-(\S+)/);
-          var lang = langMatch ? langMatch[1] : '';
-          return '```' + lang + '\n' + preContent + '```\n\n';
+        var effectiveChildren = 0;
+        var codeChild = null;
+        for (var ci = 0; ci < node.childNodes.length; ci++) {
+          var cn = node.childNodes[ci];
+          if (cn.nodeType === 1 && cn.classList && cn.classList.contains('md-code-line-numbers')) continue;
+          if (cn.nodeType === 1 && cn.nodeName === 'CODE') { codeChild = cn; effectiveChildren++; }
+          else effectiveChildren++;
         }
+        var dataLang = (node.getAttribute && node.getAttribute('data-lang')) || '';
+        var dataTitle = (node.getAttribute && node.getAttribute('data-title')) || '';
+        var dataLinenums = (node.getAttribute && node.getAttribute('data-linenums')) || '';
+        var dataHlLines = (node.getAttribute && node.getAttribute('data-hl-lines')) || '';
+        function buildFenceInfo(lang) {
+          var info = lang;
+          if (dataTitle) info += ' title="' + dataTitle + '"';
+          if (dataLinenums) info += ' linenums="' + dataLinenums + '"';
+          if (dataHlLines) info += ' hl_lines="' + dataHlLines + '"';
+          return info;
+        }
+        if (effectiveChildren === 1 && codeChild) {
+          var langMatch = codeChild.className && codeChild.className.match(/language-(\S+)/);
+          var lang = dataLang || (langMatch ? langMatch[1] : '');
+          var preContent = codeChild.textContent;
+          if (preContent.length > 0 && !preContent.endsWith('\n')) preContent += '\n';
+          return '```' + buildFenceInfo(lang) + '\n' + preContent + '```\n\n';
+        }
+        var parts = [];
+        for (var k = 0; k < node.childNodes.length; k++) {
+          var ch = node.childNodes[k];
+          if (ch.nodeType === 1 && ch.classList && ch.classList.contains('md-code-line-numbers')) continue;
+          if (ch.nodeType === 3) parts.push(ch.textContent);
+          else if (ch.nodeType === 1) parts.push(ch.textContent);
+        }
+        var preContent2 = parts.join('\n');
+        if (preContent2.length > 0 && !preContent2.endsWith('\n')) preContent2 += '\n';
+        var codeEl = node.querySelector && node.querySelector('code');
+        var langMatch2 = codeEl && codeEl.className && codeEl.className.match(/language-(\S+)/);
+        var lang2 = dataLang || (langMatch2 ? langMatch2[1] : '');
+        return '```' + buildFenceInfo(lang2) + '\n' + preContent2 + '```\n\n';
+      }
+      if (node.nodeName === 'DIV' && node.classList && node.classList.contains('md-code-block')) {
+        var preChild = node.querySelector('pre');
+        if (preChild) {
+          var titleDiv = node.querySelector('.md-code-title');
+          if (titleDiv) {
+            var editedTitle = titleDiv.textContent.trim();
+            preChild.setAttribute('data-title', editedTitle);
+          }
+          return this._nodeToMarkdownRecursive(preChild, options);
+        }
+        return '';
+      }
+      if (node.nodeName === 'DIV' && node.classList &&
+          (node.classList.contains('md-code-title') || node.classList.contains('md-code-lang') || node.classList.contains('md-code-line-numbers'))) {
+        return '';
       }
       if (node.nodeName === 'DIV' && node.classList && node.classList.contains('admonition')) {
         var type = null;
@@ -191,6 +411,107 @@
       }
       return match;
     });
+  }
+
+  function preprocessCodeBlocks(markdown) {
+    if (!markdown || typeof markdown !== 'string') return { blocks: [] };
+    var blocks = [];
+    var lines = markdown.split('\n');
+    var i = 0;
+    while (i < lines.length) {
+      var fenceMatch = lines[i].match(/^(`{3,}|~{3,})(.*)/);
+      if (fenceMatch) {
+        var openFence = lines[i];
+        var fence = fenceMatch[1];
+        var contentLines = [];
+        i++;
+        while (i < lines.length && !lines[i].match(new RegExp('^' + fence.charAt(0) + '{' + fence.length + ',}\\s*$'))) {
+          contentLines.push(lines[i]);
+          i++;
+        }
+        var closeFence = i < lines.length ? lines[i] : fence;
+        blocks.push({ type: 'fenced', openFence: openFence, closeFence: closeFence, content: contentLines.join('\n') });
+        i++;
+        continue;
+      }
+      if (/^(    |\t)/.test(lines[i]) && (i === 0 || /^\s*$/.test(lines[i - 1]))) {
+        var indentLines = [];
+        while (i < lines.length && (/^(    |\t)/.test(lines[i]) || /^\s*$/.test(lines[i]))) {
+          if (/^\s*$/.test(lines[i]) && (i + 1 >= lines.length || !/^(    |\t)/.test(lines[i + 1]))) break;
+          indentLines.push(lines[i]);
+          i++;
+        }
+        var content = indentLines.map(function (l) { return l.replace(/^    |\t/, ''); }).join('\n');
+        blocks.push({ type: 'indented', content: content });
+        continue;
+      }
+      i++;
+    }
+    return { blocks: blocks };
+  }
+
+  function postprocessCodeBlocks(markdown, codeData) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+    if (!codeData || !codeData.blocks || !codeData.blocks.length) return markdown;
+    var originals = codeData.blocks;
+    var used = 0;
+    var lines = markdown.split('\n');
+    var result = [];
+    var i = 0;
+    while (i < lines.length) {
+      var fenceMatch = lines[i].match(/^(`{3,}|~{3,})(.*)/);
+      if (fenceMatch) {
+        var fence = fenceMatch[1];
+        var contentLines = [];
+        var openIdx = i;
+        i++;
+        while (i < lines.length && !lines[i].match(new RegExp('^' + fence.charAt(0) + '{' + fence.length + ',}\\s*$'))) {
+          contentLines.push(lines[i]);
+          i++;
+        }
+        var closeIdx = i;
+        var currentContent = contentLines.join('\n');
+        var matched = false;
+        for (var j = used; j < originals.length; j++) {
+          if (originals[j].content.replace(/\s+$/g, '') === currentContent.replace(/\s+$/g, '')) {
+            used = j + 1;
+            matched = true;
+            if (originals[j].type === 'indented') {
+              var indentedLines = originals[j].content.split('\n');
+              for (var k = 0; k < indentedLines.length; k++) {
+                result.push('    ' + indentedLines[k]);
+              }
+            } else {
+              var restoredFence = originals[j].openFence;
+              var currentFenceLine = lines[openIdx];
+              var currentTitleMatch = currentFenceLine.match(/title="([^"]*)"/);
+              var origTitleMatch = restoredFence.match(/title="([^"]*)"/);
+              if (currentTitleMatch && origTitleMatch && currentTitleMatch[1] !== origTitleMatch[1]) {
+                restoredFence = restoredFence.replace(/title="[^"]*"/, 'title="' + currentTitleMatch[1] + '"');
+              } else if (currentTitleMatch && !origTitleMatch) {
+                restoredFence = restoredFence.replace(/(\S)(\s*)$/, '$1 title="' + currentTitleMatch[1] + '"$2');
+              } else if (!currentTitleMatch && origTitleMatch) {
+                restoredFence = restoredFence.replace(/\s*title="[^"]*"/, '');
+              }
+              result.push(restoredFence);
+              for (var k = 0; k < contentLines.length; k++) result.push(contentLines[k]);
+              result.push(originals[j].closeFence);
+            }
+            break;
+          }
+        }
+        if (!matched) {
+          result.push(lines[openIdx]);
+          for (var k = 0; k < contentLines.length; k++) result.push(contentLines[k]);
+          if (closeIdx < lines.length) result.push(lines[closeIdx]);
+        }
+        i++;
+        continue;
+      }
+      result.push(lines[i]);
+      i++;
+    }
+    return result.join('\n');
   }
 
   function preprocessTableSeparators(markdown) {
@@ -525,6 +846,7 @@
         this._liveWysiwygLinkData = preprocessMarkdownLinks(markdown);
         this._liveWysiwygListMarkerData = preprocessListMarkers(markdown);
         this._liveWysiwygTableSepData = preprocessTableSeparators(markdown);
+        this._liveWysiwygCodeBlockData = preprocessCodeBlocks(markdown);
       }
       return origSetValue.apply(this, arguments);
     };
@@ -534,6 +856,7 @@
         this._liveWysiwygLinkData = preprocessMarkdownLinks(body);
         this._liveWysiwygListMarkerData = preprocessListMarkers(body);
         this._liveWysiwygTableSepData = preprocessTableSeparators(body);
+        this._liveWysiwygCodeBlockData = preprocessCodeBlocks(body);
       }
       var result = origSwitchToMode.apply(this, arguments);
       if (mode === 'markdown') {
@@ -546,6 +869,9 @@
         }
         if (this._liveWysiwygTableSepData) {
           md = postprocessTableSeparators(md, this._liveWysiwygTableSepData);
+        }
+        if (this._liveWysiwygCodeBlockData) {
+          md = postprocessCodeBlocks(md, this._liveWysiwygCodeBlockData);
         }
         if (this._liveWysiwygLinkData) {
           md = dryDuplicateInlineLinks(md, this._liveWysiwygLinkData);
@@ -576,6 +902,9 @@
       if (this._liveWysiwygTableSepData) {
         body = postprocessTableSeparators(body, this._liveWysiwygTableSepData);
       }
+      if (this._liveWysiwygCodeBlockData) {
+        body = postprocessCodeBlocks(body, this._liveWysiwygCodeBlockData);
+      }
       return body;
     };
   })();
@@ -588,6 +917,7 @@
   var CURSOR_SPAN_ATTR_END = 'data-live-wysiwyg-cursor-end';
   var CURSOR_PLACEHOLDER = 'LIVEWYSIWYG_CURSOR_9X7K2';
   var CURSOR_PLACEHOLDER_END = 'LIVEWYSIWYG_CURSOR_END_9X7K2';
+  var lastWysiwygSemanticSelection = null;
 
   (function patchMarkdownToHtmlForCursorMarker() {
     var proto = MarkdownWYSIWYG.prototype;
@@ -617,6 +947,22 @@
     if (!sel || sel.rangeCount === 0) return false;
     var range = sel.getRangeAt(0);
     if (!editable.contains(range.commonAncestorContainer)) return false;
+    if (lastWysiwygSemanticSelection) {
+      var startParent = range.startContainer;
+      if (startParent.nodeType === 3) startParent = startParent.parentNode;
+      var currentPrimary = startParent && startParent.className ? startParent.className.split(/\s+/)[0] : '';
+      var expectedPrimary = lastWysiwygSemanticSelection.start.parentClass ? lastWysiwygSemanticSelection.start.parentClass.split(/\s+/)[0] : '';
+      if (currentPrimary !== expectedPrimary && expectedPrimary) {
+        var restored = restoreSelectionFromSemantic(editable, lastWysiwygSemanticSelection);
+        if (restored) {
+          sel = window.getSelection();
+          if (sel && sel.rangeCount > 0) {
+            range = sel.getRangeAt(0);
+          }
+        }
+      }
+      lastWysiwygSemanticSelection = null;
+    }
     var collapsed = range.collapsed;
     try {
       if (collapsed) {
@@ -665,6 +1011,30 @@
       pos += node.textContent.length;
     }
     return -1;
+  }
+
+  function stripCursorMarkersFromDOM(element) {
+    var walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+    var node;
+    var toUpdate = [];
+    while ((node = walker.nextNode())) {
+      if (node.nodeValue.indexOf(CURSOR_MARKER) >= 0 || node.nodeValue.indexOf(CURSOR_MARKER_END) >= 0) {
+        toUpdate.push(node);
+      }
+    }
+    for (var i = 0; i < toUpdate.length; i++) {
+      toUpdate[i].nodeValue = toUpdate[i].nodeValue.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
+    }
+    var pres = element.querySelectorAll('pre[data-title], pre[data-lang]');
+    for (var j = 0; j < pres.length; j++) {
+      var attrNames = ['data-title', 'data-lang'];
+      for (var k = 0; k < attrNames.length; k++) {
+        var val = pres[j].getAttribute(attrNames[k]);
+        if (val && (val.indexOf(CURSOR_MARKER) >= 0 || val.indexOf(CURSOR_MARKER_END) >= 0)) {
+          pres[j].setAttribute(attrNames[k], val.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, ''));
+        }
+      }
+    }
   }
 
   function getTextOffsetsOfMarkersInEditable(editable) {
@@ -747,6 +1117,145 @@
     }
   }
 
+  function captureSemanticSelection(editable) {
+    var sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    var range = sel.getRangeAt(0);
+    if (!editable.contains(range.commonAncestorContainer)) return null;
+    function describeEndpoint(container, offset) {
+      var parent = container.nodeType === 3 ? container.parentNode : container;
+      var cls = (parent && parent.className) ? String(parent.className) : '';
+      var tag = parent ? parent.nodeName : '';
+      var parentText = parent ? parent.textContent : '';
+      var localOffset = offset;
+      if (container.nodeType === 3 && parent && parent !== container) {
+        var w = document.createTreeWalker(parent, NodeFilter.SHOW_TEXT, null, false);
+        var n, pos = 0;
+        while ((n = w.nextNode())) {
+          if (n === container) { localOffset = pos + offset; break; }
+          pos += n.textContent.length;
+        }
+      }
+      var nthOfClass = 0;
+      if (cls && parent.parentNode) {
+        var sibs = parent.parentNode.children;
+        for (var i = 0; i < sibs.length; i++) {
+          if (sibs[i] === parent) break;
+          if (sibs[i].className === cls) nthOfClass++;
+        }
+      }
+      var nested = false;
+      var anc = parent;
+      while (anc && anc !== editable) {
+        if (anc.getAttribute && anc.getAttribute('contenteditable') === 'true') {
+          nested = true;
+          break;
+        }
+        anc = anc.parentNode;
+      }
+      return {
+        parentClass: cls, parentTag: tag, parentText: parentText,
+        localOffset: localOffset, nthOfClass: nthOfClass, nestedEditable: nested
+      };
+    }
+    var startD = describeEndpoint(range.startContainer, range.startOffset);
+    var endD = range.collapsed ? startD : describeEndpoint(range.endContainer, range.endOffset);
+    return { selectedText: range.toString(), collapsed: range.collapsed, start: startD, end: endD };
+  }
+
+  function restoreSelectionFromSemantic(editable, sem) {
+    if (!sem || !sem.start) return false;
+    function findEl(desc) {
+      if (!desc.parentClass) return null;
+      var primary = desc.parentClass.split(/\s+/)[0];
+      if (!primary) return null;
+      var elems = editable.getElementsByClassName(primary);
+      for (var i = 0; i < elems.length; i++) {
+        if (elems[i].textContent === desc.parentText) return elems[i];
+      }
+      if (elems.length > desc.nthOfClass) return elems[desc.nthOfClass];
+      return elems.length > 0 ? elems[0] : null;
+    }
+    function findTextAt(parent, targetOffset) {
+      var w = document.createTreeWalker(parent, NodeFilter.SHOW_TEXT, null, false);
+      var n, pos = 0, last = null;
+      while ((n = w.nextNode())) {
+        last = n;
+        var len = n.textContent.length;
+        if (pos + len >= targetOffset) return { node: n, offset: Math.min(targetOffset - pos, len) };
+        pos += len;
+      }
+      if (last) return { node: last, offset: last.textContent.length };
+      return null;
+    }
+    var startEl = findEl(sem.start);
+    if (!startEl) return false;
+    var endEl = sem.collapsed ? startEl : (findEl(sem.end) || startEl);
+    var si = findTextAt(startEl, sem.start.localOffset);
+    if (!si) return false;
+    var ei = sem.collapsed ? si : (findTextAt(endEl, sem.end.localOffset) || si);
+    try {
+      var range = document.createRange();
+      range.setStart(si.node, si.offset);
+      range.setEnd(ei.node, ei.offset);
+      var sel = window.getSelection();
+      if (!sel) return false;
+      sel.removeAllRanges();
+      sel.addRange(range);
+      if (sem.start.nestedEditable) {
+        var anc = si.node.parentNode;
+        while (anc && anc !== editable) {
+          if (anc.getAttribute && anc.getAttribute('contenteditable') === 'true') {
+            anc.focus();
+            sel = window.getSelection();
+            if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+            break;
+          }
+          anc = anc.parentNode;
+        }
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function findTextNodeAtOffset(editable, targetOffset) {
+    var walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT, null, false);
+    var pos = 0;
+    var node;
+    while ((node = walker.nextNode())) {
+      var len = node.textContent.length;
+      if (pos + len >= targetOffset) {
+        return { node: node, offset: Math.min(targetOffset - pos, len) };
+      }
+      pos += len;
+    }
+    if (node) return { node: node, offset: node.textContent.length };
+    return null;
+  }
+
+  function findNestedContenteditable(node, boundary) {
+    var anc = node.nodeType === 3 ? node.parentNode : node;
+    while (anc && anc !== boundary) {
+      if (anc.getAttribute && anc.getAttribute('contenteditable') === 'true') {
+        return anc;
+      }
+      anc = anc.parentNode;
+    }
+    return null;
+  }
+
+  function installSemanticClearListeners(editable) {
+    if (editable._semanticClearInstalled) return;
+    editable._semanticClearInstalled = true;
+    var handler = function () {
+      lastWysiwygSemanticSelection = null;
+    };
+    editable.addEventListener('mousedown', handler);
+    editable.addEventListener('keydown', handler);
+  }
+
   function restoreScrollPosition(container, scrollTop) {
     if (container && typeof scrollTop === 'number') {
       container.scrollTop = Math.min(scrollTop, Math.max(0, container.scrollHeight - container.clientHeight));
@@ -797,13 +1306,31 @@
     proto.setValue = function (markdown, isInitialSetup) {
       var parsed = parseFrontmatter(markdown || '');
       this._liveWysiwygFrontmatter = parsed.frontmatter;
-      return origSetValue.call(this, parsed.body, isInitialSetup);
+      var ret = origSetValue.call(this, parsed.body, isInitialSetup);
+      if (this.editableArea) {
+        enhanceCodeBlocks(this.editableArea);
+        if (lastWysiwygSemanticSelection && this.currentMode === 'wysiwyg' && !isInitialSetup) {
+          restoreSelectionFromSemantic(this.editableArea, lastWysiwygSemanticSelection);
+        }
+      }
+      return ret;
     };
     proto.getValue = function () {
       var body = origGetValue.call(this);
       return serializeWithFrontmatter(this._liveWysiwygFrontmatter, body);
     };
     proto.switchToMode = function (mode, isInitialSetup) {
+      if (this.currentMode === mode && !isInitialSetup) {
+        if (mode === 'markdown' && this.markdownArea) {
+          var ss = this.markdownArea.selectionStart;
+          var se = this.markdownArea.selectionEnd;
+          var ta = this.markdownArea;
+          requestAnimationFrame(function () { ta.focus(); ta.setSelectionRange(ss, se); });
+        } else if (mode === 'wysiwyg' && this.editableArea) {
+          this.editableArea.focus();
+        }
+        return;
+      }
       var savedSelStart = this.markdownArea ? this.markdownArea.selectionStart : 0;
       var frontmatterLen = 0;
       if (mode === 'wysiwyg' && !isInitialSetup && this.markdownArea && this.markdownArea.value) {
@@ -824,6 +1351,7 @@
       }
       var cursorAtDocStart = false;
       var cursorBlockFallback = -1;
+      var codeTitleSelection = null;
       var savedScroll = null;
       var markdownMarkerInserted = false;
       if (!isInitialSetup) {
@@ -866,6 +1394,40 @@
             }
           }
           if (!cursorAtDocStart) {
+            var lines = mdVal.split('\n');
+            var cursorLineIdx = mdVal.slice(0, selStart).split('\n').length - 1;
+            var cursorLine = lines[cursorLineIdx] || '';
+            if (/^(`{3,}|~{3,})/.test(cursorLine)) {
+              var fenceTitleMatch = cursorLine.match(/title="([^"]*)"/);
+              if (fenceTitleMatch) {
+                var titleAttrStart = cursorLine.indexOf(fenceTitleMatch[0]) + 'title="'.length;
+                var titleAttrEnd = titleAttrStart + fenceTitleMatch[1].length;
+                var lineStartOffset = 0;
+                for (var lk = 0; lk < cursorLineIdx; lk++) lineStartOffset += lines[lk].length + 1;
+                var selStartInLine = selStart - lineStartOffset;
+                var selEndInLine = selEnd - lineStartOffset;
+                if (selStartInLine >= titleAttrStart && selEndInLine <= titleAttrEnd) {
+                  var fenceCount = 0;
+                  for (var fi = 0; fi < lines.length; fi++) {
+                    if (fi === cursorLineIdx) break;
+                    if (/^(`{3,}|~{3,})/.test(lines[fi])) {
+                      var fch = lines[fi].match(/^(`{3,}|~{3,})/)[1];
+                      fi++;
+                      while (fi < lines.length && !lines[fi].match(new RegExp('^' + fch[0] + '{' + fch.length + ',}\\s*$'))) fi++;
+                      fenceCount++;
+                    }
+                  }
+                  codeTitleSelection = {
+                    codeBlockIndex: fenceCount,
+                    selStart: selStartInLine - titleAttrStart,
+                    selEnd: selEndInLine - titleAttrStart,
+                    titleText: fenceTitleMatch[1]
+                  };
+                }
+              }
+            }
+          }
+          if (!cursorAtDocStart && !codeTitleSelection) {
             var spanMarker = '<span ' + CURSOR_SPAN_ATTR + '></span>';
             var spanMarkerEnd = '<span ' + CURSOR_SPAN_ATTR_END + '></span>';
             var spanMarkerRe = new RegExp('<span\\s+' + CURSOR_SPAN_ATTR.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + '\\s*>\\s*</span>', 'gi');
@@ -886,14 +1448,14 @@
               this.markdownArea.value = testMd;
               markdownMarkerInserted = true;
             } else {
-              var lines = mdVal.split('\n');
-              var cursorLineIdx = mdVal.slice(0, selStart).split('\n').length - 1;
-              var cursorLine = lines[cursorLineIdx] || '';
-              if (/^\s*>\s*$/.test(cursorLine) && cursorLineIdx > 0) {
-                var prevIdx = cursorLineIdx - 1;
-                while (prevIdx > 0 && /^\s*>\s*$/.test(lines[prevIdx])) prevIdx--;
+              var lines2 = mdVal.split('\n');
+              var cursorLineIdx2 = mdVal.slice(0, selStart).split('\n').length - 1;
+              var cursorLine2 = lines2[cursorLineIdx2] || '';
+              if (/^\s*>\s*$/.test(cursorLine2) && cursorLineIdx2 > 0) {
+                var prevIdx = cursorLineIdx2 - 1;
+                while (prevIdx > 0 && /^\s*>\s*$/.test(lines2[prevIdx])) prevIdx--;
                 var prevLineEnd = 0;
-                for (var li = 0; li <= prevIdx; li++) prevLineEnd += lines[li].length + 1;
+                for (var li = 0; li <= prevIdx; li++) prevLineEnd += lines2[li].length + 1;
                 prevLineEnd -= 1;
                 var retryMd = mdVal.slice(0, prevLineEnd) + spanMarker + mdVal.slice(prevLineEnd);
                 var retryHtml = normHtml(this._markdownToHtml(retryMd));
@@ -901,10 +1463,12 @@
                   this.markdownArea.value = retryMd;
                   markdownMarkerInserted = true;
                 } else {
-                  cursorBlockFallback = getBlockIndexForLine(mdVal, cursorLineIdx);
+                  cursorBlockFallback = getBlockIndexForLine(mdVal, cursorLineIdx2);
                 }
+              } else if (/^(`{3,}|~{3,})/.test(cursorLine2)) {
+                cursorBlockFallback = getBlockIndexForLine(mdVal, cursorLineIdx2);
               } else {
-                cursorBlockFallback = getBlockIndexForLine(mdVal, cursorLineIdx);
+                cursorBlockFallback = getBlockIndexForLine(mdVal, cursorLineIdx2);
               }
             }
           }
@@ -921,11 +1485,42 @@
       if (!isInitialSetup && savedScroll !== null) {
         if (mode === 'wysiwyg') {
           var editableArea = this.editableArea;
+          enhanceCodeBlocks(editableArea);
           if (cursorInFrontmatter || cursorAtDocStart) {
             requestAnimationFrame(function () {
               editableArea.focus();
               setSelectionInEditable(editableArea, 0, 0);
               editableArea.scrollTop = 0;
+            });
+          } else if (codeTitleSelection) {
+            var ctSel = codeTitleSelection;
+            requestAnimationFrame(function () {
+              var codeBlocks = editableArea.querySelectorAll('.md-code-block');
+              var block = codeBlocks[ctSel.codeBlockIndex];
+              var titleEl = block ? block.querySelector('.md-code-title') : null;
+              if (!titleEl) {
+                for (var ti = 0; ti < codeBlocks.length; ti++) {
+                  var t = codeBlocks[ti].querySelector('.md-code-title');
+                  if (t && t.textContent === ctSel.titleText) { titleEl = t; break; }
+                }
+              }
+              if (titleEl) {
+                titleEl.focus();
+                var si = findTextNodeAtOffset(titleEl, ctSel.selStart);
+                var ei = (ctSel.selStart === ctSel.selEnd) ? si : findTextNodeAtOffset(titleEl, ctSel.selEnd);
+                if (si && ei) {
+                  var range = document.createRange();
+                  range.setStart(si.node, si.offset);
+                  range.setEnd(ei.node, ei.offset);
+                  var sel = window.getSelection();
+                  if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+                }
+              } else {
+                editableArea.focus();
+              }
+              lastWysiwygSemanticSelection = captureSemanticSelection(editableArea);
+              installSemanticClearListeners(editableArea);
+              scrollToCenterCursor(editableArea, false);
             });
           } else if (cursorBlockFallback >= 0) {
             var blockIdx = cursorBlockFallback;
@@ -954,8 +1549,7 @@
             if (!cursorSet) {
               offsets = getTextOffsetsOfMarkersInEditable(editableArea);
               if (offsets.start >= 0) {
-                var html = editableArea.innerHTML;
-                editableArea.innerHTML = html.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
+                stripCursorMarkersFromDOM(editableArea);
               } else if (markdownMarkerInserted) {
                 var leftover = editableArea.querySelectorAll('[' + CURSOR_SPAN_ATTR + '], [' + CURSOR_SPAN_ATTR_END + ']');
                 for (var i = 0; i < leftover.length; i++) leftover[i].parentNode.removeChild(leftover[i]);
@@ -970,11 +1564,31 @@
                 var selEnd = hasSelection
                   ? Math.max(selStart, offsets.end - 6)
                   : selStart;
-                editableArea.focus();
-                setSelectionInEditable(editableArea, selStart, selEnd);
+                var si = findTextNodeAtOffset(editableArea, selStart);
+                var ei = (selStart === selEnd) ? si : findTextNodeAtOffset(editableArea, selEnd);
+                if (si && ei) {
+                  var nested = findNestedContenteditable(si.node, editableArea);
+                  if (nested) {
+                    nested.focus();
+                  } else {
+                    editableArea.focus();
+                  }
+                  var range = document.createRange();
+                  range.setStart(si.node, si.offset);
+                  range.setEnd(ei.node, ei.offset);
+                  var sel = window.getSelection();
+                  if (sel) {
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                  }
+                } else {
+                  editableArea.focus();
+                  setSelectionInEditable(editableArea, selStart, selEnd);
+                }
               }
+              lastWysiwygSemanticSelection = captureSemanticSelection(editableArea);
+              installSemanticClearListeners(editableArea);
               scrollToCenterCursor(editableArea, false);
-              editableArea.focus();
             });
           }
         } else {
@@ -1012,6 +1626,8 @@
           scrollToCenterCursor(this.markdownArea, true, this.markdownArea.selectionStart);
           if (this.markdownLineNumbersDiv) this.markdownLineNumbersDiv.scrollTop = this.markdownArea.scrollTop;
         }
+      } else if (mode === 'wysiwyg' && this.editableArea) {
+        enhanceCodeBlocks(this.editableArea);
       }
       return result;
     };
@@ -1287,6 +1903,9 @@
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygTableSepData) {
             markdownContent = postprocessTableSeparators(markdownContent, wysiwygEditor._liveWysiwygTableSepData);
           }
+          if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygCodeBlockData) {
+            markdownContent = postprocessCodeBlocks(markdownContent, wysiwygEditor._liveWysiwygCodeBlockData);
+          }
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygLinkData) {
             markdownContent = dryDuplicateInlineLinks(markdownContent, wysiwygEditor._liveWysiwygLinkData);
           }
@@ -1375,11 +1994,15 @@
         var ea = wysiwygEditor.editableArea;
         if (ea) {
           ea.scrollTop = 0;
-          var range = document.createRange();
-          range.selectNodeContents(ea);
-          range.collapse(true);
-          var sel = window.getSelection();
-          if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+          if (lastWysiwygSemanticSelection && restoreSelectionFromSemantic(ea, lastWysiwygSemanticSelection)) {
+            installSemanticClearListeners(ea);
+          } else {
+            var range = document.createRange();
+            range.selectNodeContents(ea);
+            range.collapse(true);
+            var sel = window.getSelection();
+            if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+          }
         }
       }
     }

@@ -52,6 +52,106 @@
     });
   })();
 
+  /**
+   * Ensure new list items in a checklist get a checkbox. When user presses Enter in a
+   * checklist item, the browser creates a new LI without a checkbox. This adds one.
+   */
+  function ensureChecklistNewItems(editableArea) {
+    if (!editableArea) return;
+    var sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    var range = sel.getRangeAt(0);
+    var node = range.startContainer;
+    if (node.nodeType === 3) node = node.parentNode;
+    var li = node;
+    while (li && li !== editableArea) {
+      if (li.nodeName === 'LI') break;
+      li = li.parentNode;
+    }
+    if (!li || li.parentNode.nodeName !== 'UL') return;
+    var ul = li.parentNode;
+    var hasCheckbox = ul.querySelector('li input[type="checkbox"]');
+    if (!hasCheckbox) return;
+    var firstChild = li.firstChild;
+    while (firstChild && firstChild.nodeType === 3 && !firstChild.textContent.trim()) firstChild = firstChild.nextSibling;
+    if (firstChild && firstChild.nodeName === 'INPUT' && firstChild.type === 'checkbox') return;
+    var prevLi = li.previousElementSibling;
+    var prevChecked = false;
+    if (prevLi && prevLi.nodeName === 'LI') {
+      var prevCb = prevLi.querySelector('input[type="checkbox"]');
+      if (prevCb) prevChecked = prevCb.checked;
+    }
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = prevChecked;
+    cb.setAttribute('data-live-wysiwyg-checklist', '1');
+    cb.setAttribute('contenteditable', 'false');
+    (function (checkbox) {
+      function onCheckboxMouseDown(e) {
+        if (e.target !== checkbox) return;
+        e.preventDefault();
+        e.stopPropagation();
+        checkbox.checked = !checkbox.checked;
+        var editable = checkbox.closest && checkbox.closest('[contenteditable="true"]');
+        if (editable && editable.dispatchEvent) {
+          editable.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }
+      function onCheckboxClick(e) {
+        if (e.target !== checkbox) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      checkbox.addEventListener('mousedown', onCheckboxMouseDown, true);
+      checkbox.addEventListener('click', onCheckboxClick, true);
+    })(cb);
+    var space = document.createTextNode('\u00a0');
+    li.insertBefore(space, li.firstChild);
+    li.insertBefore(cb, space);
+    var newRange = document.createRange();
+    newRange.setStartAfter(space);
+    newRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+  }
+
+  /**
+   * Enhance checklist items: make checkboxes clickable and toggle on click.
+   * Checkboxes are rendered by marked (GFM task lists) as disabled; we remove disabled
+   * and add a handler to toggle checked state. Uses mousedown in capture phase so we
+   * intercept before contenteditable handles the event (which can block checkbox toggling).
+   */
+  function enhanceChecklists(editableArea) {
+    if (!editableArea) return;
+    var checkboxes = editableArea.querySelectorAll('li input[type="checkbox"]');
+    for (var i = 0; i < checkboxes.length; i++) {
+      var cb = checkboxes[i];
+      if (cb.getAttribute('data-live-wysiwyg-checklist') === '1') continue;
+      cb.setAttribute('data-live-wysiwyg-checklist', '1');
+      cb.removeAttribute('disabled');
+      cb.setAttribute('contenteditable', 'false');
+      (function (checkbox) {
+        function onCheckboxMouseDown(e) {
+          if (e.target !== checkbox) return;
+          e.preventDefault();
+          e.stopPropagation();
+          checkbox.checked = !checkbox.checked;
+          var editable = checkbox.closest && checkbox.closest('[contenteditable="true"]');
+          if (editable && editable.dispatchEvent) {
+            editable.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }
+        function onCheckboxClick(e) {
+          if (e.target !== checkbox) return;
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        checkbox.addEventListener('mousedown', onCheckboxMouseDown, true);
+        checkbox.addEventListener('click', onCheckboxClick, true);
+      })(cb);
+    }
+  }
+
   function enhanceCodeBlocks(editableArea) {
     if (!editableArea) return;
     var pres = editableArea.querySelectorAll('pre[data-title], pre[data-linenums], pre[data-lang]');
@@ -198,14 +298,202 @@
     }
   }
 
+  function createInteractiveCheckbox(checked) {
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!checked;
+    cb.setAttribute('data-live-wysiwyg-checklist', '1');
+    cb.setAttribute('contenteditable', 'false');
+    (function (checkbox) {
+      function onCheckboxMouseDown(e) {
+        if (e.target !== checkbox) return;
+        e.preventDefault();
+        e.stopPropagation();
+        checkbox.checked = !checkbox.checked;
+        var editable = checkbox.closest && checkbox.closest('[contenteditable="true"]');
+        if (editable && editable.dispatchEvent) {
+          editable.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }
+      function onCheckboxClick(e) {
+        if (e.target !== checkbox) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      checkbox.addEventListener('mousedown', onCheckboxMouseDown, true);
+      checkbox.addEventListener('click', onCheckboxClick, true);
+    })(cb);
+    return cb;
+  }
+
+  function addCheckboxToLi(li) {
+    if (li.querySelector('input[type="checkbox"]')) return;
+    var cb = createInteractiveCheckbox(false);
+    var space = document.createTextNode('\u00a0');
+    li.insertBefore(space, li.firstChild);
+    li.insertBefore(cb, space);
+  }
+
+  function removeCheckboxFromLi(li) {
+    var cb = li.querySelector('input[type="checkbox"]');
+    if (!cb) return;
+    var next = cb.nextSibling;
+    if (next && next.nodeType === 3 && /^[\s\u00a0]/.test(next.textContent)) {
+      next.textContent = next.textContent.replace(/^[\s\u00a0]/, '');
+      if (!next.textContent) next.parentNode.removeChild(next);
+    }
+    cb.parentNode.removeChild(cb);
+  }
+
+  (function patchToggleChecklist() {
+    var proto = MarkdownWYSIWYG.prototype;
+
+    proto._toggleChecklist = function () {
+      if (this.currentMode === 'wysiwyg') {
+        this.editableArea.focus();
+        var sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return;
+        var node = sel.getRangeAt(0).commonAncestorContainer;
+        if (node.nodeType === 3) node = node.parentNode;
+        var ul = node;
+        while (ul && ul !== this.editableArea) {
+          if (ul.nodeName === 'UL') break;
+          ul = ul.parentNode;
+        }
+        if (ul && ul.nodeName === 'UL') {
+          var hasCheckbox = ul.querySelector('li > input[type="checkbox"]');
+          if (hasCheckbox) {
+            var lis = ul.children;
+            for (var i = 0; i < lis.length; i++) {
+              if (lis[i].nodeName === 'LI') removeCheckboxFromLi(lis[i]);
+            }
+          } else {
+            var lis = ul.children;
+            for (var i = 0; i < lis.length; i++) {
+              if (lis[i].nodeName === 'LI') addCheckboxToLi(lis[i]);
+            }
+          }
+        } else {
+          document.execCommand('insertUnorderedList', false, null);
+          sel = window.getSelection();
+          if (sel && sel.rangeCount > 0) {
+            node = sel.getRangeAt(0).commonAncestorContainer;
+            if (node.nodeType === 3) node = node.parentNode;
+            ul = node;
+            while (ul && ul !== this.editableArea) {
+              if (ul.nodeName === 'UL') break;
+              ul = ul.parentNode;
+            }
+            if (ul && ul.nodeName === 'UL') {
+              var lis = ul.children;
+              for (var i = 0; i < lis.length; i++) {
+                if (lis[i].nodeName === 'LI') addCheckboxToLi(lis[i]);
+              }
+            }
+          }
+        }
+        this._finalizeUpdate(this.editableArea.innerHTML);
+      } else {
+        var textarea = this.markdownArea;
+        var text = textarea.value;
+        var start = textarea.selectionStart;
+        var end = textarea.selectionEnd;
+        var firstLineStart = text.lastIndexOf('\n', start - 1) + 1;
+        if (start === 0 && text.charAt(0) !== '\n') firstLineStart = 0;
+        var lastLineEnd = text.indexOf('\n', end);
+        if (lastLineEnd === -1) lastLineEnd = text.length;
+        var regionText = text.substring(firstLineStart, lastLineEnd);
+        var lines = regionText.split('\n');
+        var checklistRe = /^(\s*)([-*+])\s+\[[ xX]\]\s/;
+        var listRe = /^(\s*)([-*+])\s/;
+        var hasContent = false;
+        var allChecklist = true;
+        var allList = true;
+        for (var i = 0; i < lines.length; i++) {
+          if (!lines[i].trim()) continue;
+          hasContent = true;
+          if (!checklistRe.test(lines[i])) allChecklist = false;
+          if (!listRe.test(lines[i])) allList = false;
+        }
+        if (!hasContent) { allChecklist = false; allList = false; }
+        var newLines;
+        if (allChecklist) {
+          newLines = lines.map(function (line) {
+            return line.replace(/^(\s*)([-*+])\s+\[[ xX]\]\s/, '$1$2 ');
+          });
+        } else if (allList) {
+          newLines = lines.map(function (line) {
+            if (!line.trim()) return line;
+            return line.replace(/^(\s*)([-*+])\s/, '$1$2 [ ] ');
+          });
+        } else {
+          newLines = lines.map(function (line) {
+            if (!line.trim()) return line;
+            return '- [ ] ' + line;
+          });
+        }
+        var newText = newLines.join('\n');
+        textarea.value = text.substring(0, firstLineStart) + newText + text.substring(lastLineEnd);
+        textarea.focus();
+        textarea.setSelectionRange(firstLineStart, firstLineStart + newText.length);
+        this._finalizeUpdate(textarea.value);
+      }
+    };
+
+    var origWysiwygActive = proto._updateWysiwygToolbarActiveStates;
+    if (origWysiwygActive) {
+      proto._updateWysiwygToolbarActiveStates = function () {
+        origWysiwygActive.apply(this, arguments);
+        var btn = this.toolbar && this.toolbar.querySelector('.md-toolbar-button-checklist');
+        if (!btn) return;
+        btn.classList.remove('active');
+        var sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return;
+        var node = sel.getRangeAt(0).commonAncestorContainer;
+        if (node.nodeType === 3) node = node.parentNode;
+        while (node && node !== this.editableArea) {
+          if (node.nodeName === 'UL') break;
+          node = node.parentNode;
+        }
+        if (node && node.nodeName === 'UL' && node.querySelector('li > input[type="checkbox"]')) {
+          btn.classList.add('active');
+        }
+      };
+    }
+
+    var origMarkdownActive = proto._updateMarkdownToolbarActiveStates;
+    if (origMarkdownActive) {
+      proto._updateMarkdownToolbarActiveStates = function () {
+        origMarkdownActive.apply(this, arguments);
+        var btn = this.toolbar && this.toolbar.querySelector('.md-toolbar-button-checklist');
+        if (!btn) return;
+        btn.classList.remove('active');
+        if (!this.markdownArea) return;
+        var text = this.markdownArea.value;
+        var selStart = this.markdownArea.selectionStart;
+        var lineStart = text.lastIndexOf('\n', selStart - 1) + 1;
+        if (selStart === 0 && lineStart > 0 && text.charAt(0) !== '\n') lineStart = 0;
+        var lineEnd = text.indexOf('\n', lineStart);
+        var line = text.substring(lineStart, lineEnd === -1 ? text.length : lineEnd);
+        if (/^\s*[-*+]\s+\[[ xX]\]/.test(line)) {
+          btn.classList.add('active');
+        }
+      };
+    }
+  })();
+
   (function patchAdmonitionHtmlToMarkdown() {
     var proto = MarkdownWYSIWYG.prototype;
     var orig = proto._nodeToMarkdownRecursive;
     if (!orig) return;
     proto._nodeToMarkdownRecursive = function (node, options) {
+      // INPUT type=checkbox: checklist items from GFM task lists
+      if (node.nodeName === 'INPUT' && node.type === 'checkbox') {
+        return (node.checked ? '[x]' : '[ ]');
+      }
       // #text: preserve multiple spaces (upstream collapses with /  +/g)
       if (node.nodeName === '#text') {
-        var text = node.textContent;
+        var text = node.textContent.replace(/\u00a0/g, ' ');
         if (options && options.inTableCell) {
           text = text.replace(/\|/g, '\\|');
           if (!this._findParentElement(node, 'PRE') && !this._findParentElement(node, 'CODE')) {
@@ -299,7 +587,97 @@
           return out + '\n';
         }
       }
+      if (node.nodeName === 'A') {
+        var href = node.getAttribute('href') || '';
+        var linkText = this._processInlineContainerRecursive ? this._processInlineContainerRecursive(node, options || {}).trim() : node.textContent.trim();
+        var linkData = this._liveWysiwygLinkData;
+        if (linkData && linkData.linkOriginals) {
+          var cleanUrl = normalizeUrl(href);
+          var cleanText = (linkText || '').replace(CURSOR_UNICODE_RE, '').replace(/\s+/g, ' ').replace(/\u00a0/g, ' ').trim();
+          for (var k = 0; k < linkData.linkOriginals.length; k++) {
+            var o = linkData.linkOriginals[k];
+            if (o.isImage) continue;
+            var origUrl = normalizeUrl(o.url);
+            var origText = (o.text || '').replace(CURSOR_UNICODE_RE, '').replace(/\s+/g, ' ').replace(/\u00a0/g, ' ').trim();
+            if (origUrl === cleanUrl && origText === cleanText) {
+              var shortMatch = (o.original || '').match(/^\[([^\]]+)\]$/);
+              if (shortMatch) {
+                return '[' + linkText + ']';
+              }
+              break;
+            }
+          }
+        }
+      }
       return orig.apply(this, arguments);
+    };
+  })();
+
+  function removeZeroWidthFromNodes(node) {
+    if (node.nodeType === 3) {
+      if (node.textContent.indexOf('\u200B') !== -1) {
+        node.textContent = node.textContent.replace(/\u200B/g, '');
+      }
+      return;
+    }
+    if (node.nodeType === 1) {
+      if (node.hasAttribute && node.hasAttribute('href')) {
+        var h = node.getAttribute('href');
+        if (/[\u200C\u200D]/.test(h)) {
+          node.setAttribute('href', h.replace(/[\u200C\u200D]/g, ''));
+        }
+      }
+      if (node.childNodes) {
+        for (var i = 0; i < node.childNodes.length; i++) {
+          removeZeroWidthFromNodes(node.childNodes[i]);
+        }
+      }
+    }
+  }
+
+  (function patchListToMarkdownRecursiveForMarkerPreservation() {
+    var proto = MarkdownWYSIWYG.prototype;
+    var origListToMarkdown = proto._listToMarkdownRecursive;
+    if (!origListToMarkdown) return;
+    proto._listToMarkdownRecursive = function (listNode, indent, listType, listCounter, options) {
+      var result = origListToMarkdown.apply(this, arguments);
+      var listData = this._liveWysiwygListMarkerData;
+      if (!listData || !listData.listItems || !listData.listItems.length || listType === 'OL') return result;
+      var originals = listData.listItems;
+      var used = 0;
+      var lines = result.split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var m = line.match(/^(\s*)(-\s+)(.*)$/);
+        if (!m) continue;
+        var lineIndent = m[1];
+        var content = m[3];
+        var normContent = normalizeContentForListMatch(content);
+        var checklistMatch = content.match(/^\[([ xX])\]\s+/);
+        var isChecklist = !!checklistMatch;
+        var contentOnly = isChecklist ? content.replace(/^\[[ xX]\]\s+/, '') : content;
+        var normContentOnly = normalizeContentForListMatch(contentOnly);
+        for (var j = used; j < originals.length; j++) {
+          var o = originals[j];
+          if (o.indent !== lineIndent) continue;
+          if (o.isChecklist && isChecklist) {
+            if (normalizeContentForListMatch(o.content) === normContentOnly) {
+              used = j + 1;
+              var currentCheck = checklistMatch[1];
+              var check = /[xX]/.test(currentCheck) ? '[x]' : '[ ]';
+              lines[i] = lineIndent + o.marker + check + ' ' + contentOnly;
+              break;
+            }
+          } else if (!o.isChecklist && !isChecklist) {
+            if (normalizeContentForListMatch(o.content) === normContent) {
+              used = j + 1;
+              lines[i] = lineIndent + o.marker + content;
+              break;
+            }
+          }
+        }
+      }
+      return lines.join('\n');
     };
   })();
 
@@ -315,7 +693,7 @@
       } else {
         tempDiv = elementOrHtml.cloneNode(true);
       }
-      tempDiv.innerHTML = tempDiv.innerHTML.replace(/\u200B/g, '');
+      removeZeroWidthFromNodes(tempDiv);
       var markdown = '';
       this._normalizeNodes(tempDiv);
       for (var i = 0; i < tempDiv.childNodes.length; i++) {
@@ -379,38 +757,77 @@
   }
 
   /**
-   * Preprocess unordered list markers (*, -, +) from markdown.
-   * Returns { listItems: [{ indent, marker, content }] } for preservation.
+   * Preprocess unordered list markers (*, -, +) and checklist items from markdown.
+   * Returns { listItems: [{ indent, marker, content, isChecklist?, checked? }] } for preservation.
    */
   function preprocessListMarkers(markdown) {
     if (!markdown || typeof markdown !== 'string') return { listItems: [] };
     var listItems = [];
-    var re = /^(\s*)([-*+])\s+(.*)$/gm;
-    var m;
-    while ((m = re.exec(markdown)) !== null) {
-      listItems.push({ indent: m[1], marker: m[2] + ' ', content: m[3] });
+    var lines = markdown.split('\n');
+    var checklistRe = /^(\s*)([-*+])\s+\[([ xX])\]\s+(.*)$/;
+    var regularRe = /^(\s*)([-*+])\s+(.*)$/;
+    for (var i = 0; i < lines.length; i++) {
+      var m = lines[i].match(checklistRe);
+      if (m) {
+        listItems.push({
+          indent: m[1],
+          marker: m[2] + ' ',
+          content: m[4],
+          isChecklist: true,
+          checked: /[xX]/.test(m[3])
+        });
+        continue;
+      }
+      m = lines[i].match(regularRe);
+      if (m) {
+        listItems.push({ indent: m[1], marker: m[2] + ' ', content: m[3] });
+      }
     }
     return { listItems: listItems };
   }
 
   /**
    * Postprocess markdown to restore original list markers where content matches.
-   * New or modified list items use '- '.
+   * Handles both regular list items and checklist items (- [ ] / - [x]).
+   * New or modified list items use '- '; new checklists use '- [ ] '.
    */
+  function normalizeContentForListMatch(s) {
+    if (typeof s !== 'string') return '';
+    return s.replace(/\s+/g, ' ').replace(/\u00a0/g, ' ').trim();
+  }
+
   function postprocessListMarkers(markdown, listData) {
     if (!markdown || typeof markdown !== 'string') return markdown;
     if (!listData || !listData.listItems || !listData.listItems.length) return markdown;
     var originals = listData.listItems;
     var used = 0;
-    return markdown.replace(/^(\s*)(-\s+)(.*)$/gm, function (match, indent, marker, content) {
+    function restoreRegular(match, indent, marker, content) {
+      var normContent = normalizeContentForListMatch(content);
       for (var i = used; i < originals.length; i++) {
-        if (originals[i].indent === indent && originals[i].content === content) {
+        var o = originals[i];
+        if (!o.isChecklist && o.indent === indent && normalizeContentForListMatch(o.content) === normContent) {
           used = i + 1;
-          return indent + originals[i].marker + content;
+          return indent + o.marker + content;
         }
       }
       return match;
-    });
+    }
+    function restoreChecklist(match, indent, marker, checkChar, content) {
+      var normContent = normalizeContentForListMatch(content);
+      for (var i = used; i < originals.length; i++) {
+        var o = originals[i];
+        if (o.isChecklist && o.indent === indent && normalizeContentForListMatch(o.content) === normContent) {
+          used = i + 1;
+          var check = /[xX]/.test(checkChar) ? '[x]' : '[ ]';
+          return indent + o.marker + check + ' ' + content;
+        }
+      }
+      return match;
+    }
+    var result = markdown
+      .replace(/^(\s*)(-\s+)\[([ xX])\]\s+(.*)$/gm, restoreChecklist)
+      .replace(/^(\s*)(-\s+)(.*)$/gm, restoreRegular);
+    return result;
   }
 
   function preprocessCodeBlocks(markdown) {
@@ -547,9 +964,17 @@
     return lines.join('\n');
   }
 
+  var CURSOR_SPAN_HTML_RE = /<span\s+data-live-wysiwyg-cursor(?:-end)?[^>]*>\s*<\/span>/gi;
+  var CURSOR_UNICODE_RE = /[\u200C\u200D]{2,}/g;
+
+  function stripCursorSpanHtml(s) {
+    if (!s || typeof s !== 'string') return s || '';
+    return s.replace(CURSOR_SPAN_HTML_RE, '');
+  }
+
   function normalizeUrl(url) {
     if (!url || typeof url !== 'string') return '';
-    url = url.replace(/^<|>$/g, '').trim();
+    url = url.replace(/^<|>$/g, '').replace(CURSOR_UNICODE_RE, '').trim();
     try {
       url = decodeURIComponent(url);
     } catch (e) {}
@@ -567,7 +992,7 @@
     var i, m, refId, url, text;
 
     for (i = 0; i < lines.length; i++) {
-      m = lines[i].match(/^\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/);
+      m = lines[i].match(/^\s{0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/);
       if (m) {
         refId = m[1];
         url = (m[2] || m[3] || '').trim();
@@ -650,10 +1075,21 @@
 
   function postprocessMarkdownLinks(markdown, linkData) {
     if (!markdown || typeof markdown !== 'string') return markdown;
-    if (!linkData || !linkData.linkOriginals || !linkData.linkOriginals.length) return markdown;
+    if (!linkData) return markdown;
 
-    var linkOriginals = linkData.linkOriginals;
+    var linkOriginals = linkData.linkOriginals || [];
     var refDefinitions = linkData.refDefinitions || '';
+    var refDefsByUrl = {};
+    if (refDefinitions) {
+      var refDefRe = /^\s{0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/gm;
+      var rd;
+      while ((rd = refDefRe.exec(refDefinitions)) !== null) {
+        var rDefName = rd[1];
+        var rDefUrl = normalizeUrl(rd[2] || rd[3] || '');
+        if (rDefUrl && !refDefsByUrl[rDefUrl]) refDefsByUrl[rDefUrl] = rDefName;
+      }
+    }
+
     var inlineLinkRe = /\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
     var inlineImgRe = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
     var spanCursorRe = new RegExp('<span\\s+' + CURSOR_SPAN_ATTR + '\\s*></span>', 'g');
@@ -664,12 +1100,16 @@
       return s.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '').replace(spanCursorRe, '').replace(spanCursorEndRe, '');
     }
 
+    function normalizeLinkText(s) {
+      return (stripMarkers(s) || '').replace(/\s+/g, ' ').replace(/\u00a0/g, ' ').trim();
+    }
     function replaceMatch(match, text, url, isImage) {
       var cleanUrl = normalizeUrl(url);
-      var cleanText = stripMarkers(text);
+      var cleanText = normalizeLinkText(text);
       for (var i = 0; i < linkOriginals.length; i++) {
-        var origText = stripMarkers(linkOriginals[i].text);
-        if (!used[i] && linkOriginals[i].url === cleanUrl && origText === cleanText && !!linkOriginals[i].isImage === !!isImage) {
+        var origText = normalizeLinkText(linkOriginals[i].text);
+        var origUrl = normalizeUrl(linkOriginals[i].url);
+        if (!used[i] && origUrl === cleanUrl && origText === cleanText && !!linkOriginals[i].isImage === !!isImage) {
           used[i] = true;
           var orig = stripMarkers(linkOriginals[i].original);
           if (cleanText !== text) {
@@ -680,6 +1120,12 @@
           return orig;
         }
       }
+      if (!isImage) {
+        var shortcutRefName = refDefsByUrl[cleanUrl];
+        if (shortcutRefName && shortcutRefName.toLowerCase() === cleanText.toLowerCase()) {
+          return '[' + text + ']';
+        }
+      }
       return match;
     }
 
@@ -687,10 +1133,26 @@
       .replace(inlineLinkRe, function (match, text, url) { return replaceMatch(match, text, url, false); })
       .replace(inlineImgRe, function (match, text, url) { return replaceMatch(match, text, url, true); });
 
-    if (refDefinitions && result.indexOf(refDefinitions) === -1) {
-      result = result + (result ? '\n\n' : '') + refDefinitions;
+    if (refDefinitions) {
+      var normResult = result.replace(/\r\n/g, '\n');
+      var normRefDefs = refDefinitions.replace(/\r\n/g, '\n');
+      if (normResult.indexOf(normRefDefs) === -1) {
+        result = result + (result ? '\n\n' : '') + refDefinitions;
+      }
     }
     return result;
+  }
+
+  /**
+   * Convert redundant reference-style links [text][ref] back to shortcut form [text]
+   * when ref id equals link text (case-insensitive). Preserves original shortcut style.
+   */
+  function collapseRedundantReferenceToShortcut(markdown) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+    return markdown.replace(/\[([^\]]+)\]\[([^\]]+)\]/g, function (match, text, ref) {
+      if (text.toLowerCase() === ref.toLowerCase()) return '[' + text + ']';
+      return match;
+    });
   }
 
   function dryDuplicateInlineLinks(markdown, linkData) {
@@ -741,7 +1203,7 @@
     var usedRefNames = {};
     var refCounter = 1;
 
-    var existingRefDefRe = /^\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/gm;
+    var existingRefDefRe = /^\s{0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/gm;
     var existingRef;
     var existingRefsByUrl = {};
     while ((existingRef = existingRefDefRe.exec(body)) !== null) {
@@ -752,12 +1214,24 @@
         existingRefsByUrl[defUrl] = defName;
       }
     }
+    var linkDataRefsByUrl = {};
+    if (linkData && linkData.refDefinitions) {
+      var refDefRe = /^\s{0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/gm;
+      var rd;
+      while ((rd = refDefRe.exec(linkData.refDefinitions)) !== null) {
+        var rDefName = rd[1];
+        var rDefUrl = normalizeUrl(rd[2] || rd[3] || '');
+        if (rDefUrl && !linkDataRefsByUrl[rDefUrl]) {
+          linkDataRefsByUrl[rDefUrl] = rDefName;
+        }
+      }
+    }
 
     for (var url in urlGroups) {
       var hasExistingDef = !!existingRefsByUrl[url];
 
-      var origRefName = null;
-      if (linkData && linkData.linkOriginals) {
+      var origRefName = linkDataRefsByUrl[url] || null;
+      if (!origRefName && linkData && linkData.linkOriginals) {
         for (var i = 0; i < linkData.linkOriginals.length; i++) {
           var orig = linkData.linkOriginals[i];
           if (normalizeUrl(orig.url) === url && !orig.isImage) {
@@ -775,7 +1249,8 @@
         }
       }
 
-      if (urlGroups[url].length < 2 && !hasExistingDef && !origRefName) continue;
+      var hasRefInfo = hasExistingDef || origRefName;
+      if (urlGroups[url].length < 2 && !hasRefInfo) continue;
 
       var refName = null;
       if (hasExistingDef) {
@@ -820,7 +1295,7 @@
     for (var url in refsToCreate) {
       var info = refsToCreate[url];
       var escapedRefName = info.refName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-      var defRegex = new RegExp('^\\[' + escapedRefName + '\\]:', 'mi');
+      var defRegex = new RegExp('^\\s{0,3}\\[' + escapedRefName + '\\]:', 'mi');
       if (!defRegex.test(result)) {
         newDefs.push('[' + info.refName + ']: ' + info.rawUrl);
       }
@@ -829,7 +1304,7 @@
     if (newDefs.length > 0) {
       var trimmed = result.replace(/\s+$/, '');
       var lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1);
-      var endsWithRefDef = /^\[([^\]]+)\]:\s/.test(lastLine);
+      var endsWithRefDef = /^\s{0,3}\[([^\]]+)\]:\s/.test(lastLine);
       result = trimmed + (endsWithRefDef ? '\n' : '\n\n') + newDefs.join('\n');
     }
 
@@ -853,10 +1328,17 @@
     proto.switchToMode = function (mode, isInitialSetup) {
       if (mode === 'wysiwyg' && !isInitialSetup && this.markdownArea && this.markdownArea.value) {
         var body = parseFrontmatter(this.markdownArea.value).body;
-        this._liveWysiwygLinkData = preprocessMarkdownLinks(body);
-        this._liveWysiwygListMarkerData = preprocessListMarkers(body);
-        this._liveWysiwygTableSepData = preprocessTableSeparators(body);
-        this._liveWysiwygCodeBlockData = preprocessCodeBlocks(body);
+        var cleanBody = stripCursorSpanHtml(body);
+        var newLinkData = preprocessMarkdownLinks(cleanBody);
+        var newListData = preprocessListMarkers(cleanBody);
+        this._liveWysiwygTableSepData = preprocessTableSeparators(cleanBody);
+        this._liveWysiwygCodeBlockData = preprocessCodeBlocks(cleanBody);
+        if (newLinkData.refDefinitions) {
+          this._liveWysiwygLinkData = newLinkData;
+        }
+        if (newListData.listItems && newListData.listItems.length) {
+          this._liveWysiwygListMarkerData = newListData;
+        }
       }
       var result = origSwitchToMode.apply(this, arguments);
       if (mode === 'markdown') {
@@ -875,6 +1357,7 @@
         }
         if (this._liveWysiwygLinkData) {
           md = dryDuplicateInlineLinks(md, this._liveWysiwygLinkData);
+          md = collapseRedundantReferenceToShortcut(md);
         }
         if (md !== this.markdownArea.value) {
           this.markdownArea.value = md;
@@ -896,6 +1379,9 @@
         this._liveWysiwygFrontmatter = parsed.frontmatter;
       }
       var body = parsed.body;
+      if (this._liveWysiwygLinkData) {
+        body = postprocessMarkdownLinks(body, this._liveWysiwygLinkData);
+      }
       if (this._liveWysiwygListMarkerData) {
         body = postprocessListMarkers(body, this._liveWysiwygListMarkerData);
       }
@@ -905,7 +1391,12 @@
       if (this._liveWysiwygCodeBlockData) {
         body = postprocessCodeBlocks(body, this._liveWysiwygCodeBlockData);
       }
-      return body;
+      if (this._liveWysiwygLinkData) {
+        body = dryDuplicateInlineLinks(body, this._liveWysiwygLinkData);
+        body = collapseRedundantReferenceToShortcut(body);
+      }
+      body = stripCursorSpanHtml(body).replace(CURSOR_UNICODE_RE, '');
+      return parsed.frontmatter ? serializeWithFrontmatter(parsed.frontmatter, body) : body;
     };
   })();
 
@@ -1436,6 +1927,7 @@
       var ret = origSetValue.call(this, parsed.body, isInitialSetup);
       if (this.editableArea) {
         enhanceCodeBlocks(this.editableArea);
+        enhanceChecklists(this.editableArea);
         if (lastWysiwygSemanticSelection && this.currentMode === 'wysiwyg' && !isInitialSetup) {
           restoreSelectionFromSemantic(this.editableArea, lastWysiwygSemanticSelection);
         }
@@ -1613,6 +2105,7 @@
         if (mode === 'wysiwyg') {
           var editableArea = this.editableArea;
           enhanceCodeBlocks(editableArea);
+          enhanceChecklists(editableArea);
           if (cursorInFrontmatter || cursorAtDocStart) {
             requestAnimationFrame(function () {
               editableArea.focus();
@@ -1762,6 +2255,7 @@
         }
       } else if (mode === 'wysiwyg' && this.editableArea) {
         enhanceCodeBlocks(this.editableArea);
+        enhanceChecklists(this.editableArea);
       }
       return result;
     };
@@ -2069,28 +2563,31 @@
 
   function destroyWysiwyg(textarea, leavingEditMode, userRequestedDisable) {
     var cursorState = null;
-    if (textarea && wysiwygEditor && !leavingEditMode) {
+    var contentToRestore = null;
+    if (textarea && wysiwygEditor) {
       var ed = wysiwygEditor;
-      if (ed.currentMode === 'markdown') {
-        var mdContent = ed.markdownArea.value;
-        if (mdContent && !mdContent.endsWith('\n')) mdContent += '\n';
-        textarea.value = mdContent;
-        cursorState = {
-          start: ed.markdownArea.selectionStart,
-          end: ed.markdownArea.selectionEnd,
-          scrollTop: ed.markdownArea ? ed.markdownArea.scrollTop : 0
-        };
-      } else {
-        injectMarkerAtCaretInEditable(ed.editableArea);
-        var md = ed.getValue();
-        var markerIdx = md.indexOf(CURSOR_MARKER);
-        if (markerIdx >= 0) {
+      contentToRestore = ed.getValue();
+      if (contentToRestore && !contentToRestore.endsWith('\n')) contentToRestore += '\n';
+      if (!leavingEditMode) {
+        if (ed.currentMode === 'markdown') {
+          textarea.value = contentToRestore;
           cursorState = {
-            start: markerIdx,
-            end: markerIdx,
-            scrollTop: ed.editableArea ? ed.editableArea.scrollTop : 0
+            start: ed.markdownArea.selectionStart,
+            end: ed.markdownArea.selectionEnd,
+            scrollTop: ed.markdownArea ? ed.markdownArea.scrollTop : 0
           };
-          ed.editableArea.innerHTML = ed.editableArea.innerHTML.replace(CURSOR_MARKER_RE, '');
+        } else {
+          injectMarkerAtCaretInEditable(ed.editableArea);
+          var md = ed.getValue();
+          var markerIdx = md.indexOf(CURSOR_MARKER);
+          if (markerIdx >= 0) {
+            cursorState = {
+              start: markerIdx,
+              end: markerIdx,
+              scrollTop: ed.editableArea ? ed.editableArea.scrollTop : 0
+            };
+            ed.editableArea.innerHTML = ed.editableArea.innerHTML.replace(CURSOR_MARKER_RE, '');
+          }
         }
       }
     }
@@ -2120,6 +2617,9 @@
       startBodyObserver();
     }
     if (textarea) {
+      if (contentToRestore) {
+        textarea.value = contentToRestore;
+      }
       textarea.style.display = '';
       textarea.removeAttribute('data-live-wysiwyg-replaced');
       if (cursorState) {
@@ -2207,9 +2707,10 @@
           }
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygLinkData) {
             markdownContent = dryDuplicateInlineLinks(markdownContent, wysiwygEditor._liveWysiwygLinkData);
+            markdownContent = collapseRedundantReferenceToShortcut(markdownContent);
           }
           if (markdownContent) {
-            markdownContent = markdownContent.replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '');
+            markdownContent = stripCursorSpanHtml(markdownContent).replace(CURSOR_MARKER_RE, '').replace(CURSOR_MARKER_END_RE, '').replace(CURSOR_UNICODE_RE, '');
             if (!markdownContent.endsWith('\n')) {
               markdownContent = markdownContent + '\n';
             }
@@ -2235,6 +2736,16 @@
         ma.dataset.liveWysiwygBlurAttached = '1';
         ma.addEventListener('blur', function () {
           capturedMarkdownSelection = { start: ma.selectionStart, end: ma.selectionEnd };
+        });
+      }
+    })();
+
+    (function () {
+      var ea = wysiwygEditor.editableArea;
+      if (ea && !ea.dataset.liveWysiwygChecklistInputAttached) {
+        ea.dataset.liveWysiwygChecklistInputAttached = '1';
+        ea.addEventListener('input', function () {
+          ensureChecklistNewItems(ea);
         });
       }
     })();

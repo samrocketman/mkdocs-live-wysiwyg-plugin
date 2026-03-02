@@ -21,7 +21,7 @@ A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](ht
 
 When you click "Edit" in the live-edit plugin, this plugin replaces the plain textarea with a rich WYSIWYG editor.
 
-<img width="1542" height="1400" alt="image" src="https://github.com/user-attachments/assets/cd694d2c-f0a8-46f6-8db8-77fca9af22ef" />
+<img width="769" height="696" alt="image" src="https://github.com/user-attachments/assets/87655fb2-e04a-4db4-85e3-62ff1fe37fe9" />
 
 ## Requirements
 

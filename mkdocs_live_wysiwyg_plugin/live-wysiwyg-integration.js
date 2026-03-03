@@ -2618,6 +2618,43 @@
     }
   }
 
+  function findAndStripCursorMarkerPositions(editable) {
+    var walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT, null, false);
+    var node;
+    var startInfo = null, endInfo = null;
+    while ((node = walker.nextNode())) {
+      var text = node.textContent;
+      if (!startInfo) {
+        var is = text.indexOf(CURSOR_MARKER);
+        if (is >= 0) startInfo = { node: node, idx: is };
+      }
+      if (!endInfo) {
+        var ie = text.indexOf(CURSOR_MARKER_END);
+        if (ie >= 0) endInfo = { node: node, idx: ie };
+      }
+      if (startInfo && endInfo) break;
+    }
+    if (!startInfo) return null;
+    var sameNode = endInfo && startInfo.node === endInfo.node;
+    var startOffset = startInfo.idx;
+    var endNode, endOffset, hasSelection;
+    if (endInfo) {
+      endNode = endInfo.node;
+      endOffset = sameNode ? endInfo.idx - CURSOR_MARKER.length : endInfo.idx;
+      hasSelection = sameNode ? endOffset > startOffset : true;
+    } else {
+      endNode = startInfo.node;
+      endOffset = startInfo.idx;
+      hasSelection = false;
+    }
+    stripCursorMarkersFromDOM(editable);
+    return {
+      startNode: startInfo.node, startOffset: startOffset,
+      endNode: endNode, endOffset: endOffset,
+      hasSelection: hasSelection
+    };
+  }
+
   function getTextOffsetsOfMarkersInEditable(editable) {
     var walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT, null, false);
     var pos = 0;
@@ -2932,6 +2969,17 @@
     return null;
   }
 
+  function replaceEmojiCharsWithShortcodes(text) {
+    var map = typeof liveWysiwygEmojiMap !== 'undefined' ? liveWysiwygEmojiMap : {};
+    var result = text;
+    for (var key in map) {
+      if (map.hasOwnProperty(key) && result.indexOf(map[key]) >= 0) {
+        result = result.split(map[key]).join(':' + key + ':');
+      }
+    }
+    return result;
+  }
+
   function applyPendingReadModeSelection(editor) {
     if (!pendingReadModeSelection || !pendingReadModeSelection.selectedText) return false;
     var selectedText = pendingReadModeSelection.selectedText;
@@ -2949,6 +2997,12 @@
       var sc = emojiToShortcode(selectedText);
       if (sc) {
         pos = findSelectedTextInMarkdown(body, sc, contextBefore, contextAfter);
+      }
+    }
+    if (!pos) {
+      var withShortcodes = replaceEmojiCharsWithShortcodes(selectedText);
+      if (withShortcodes !== selectedText) {
+        pos = findSelectedTextInMarkdown(body, withShortcodes, contextBefore, contextAfter);
       }
     }
     if (editor.currentMode === 'markdown') {
@@ -2970,6 +3024,27 @@
     }
     var ea = editor.editableArea;
     if (!ea) return false;
+    if (pos) {
+      var spanMarker = '<span ' + CURSOR_SPAN_ATTR + '></span>';
+      var spanMarkerEnd = '<span ' + CURSOR_SPAN_ATTR_END + '></span>';
+      var markedBody = body.slice(0, pos.start) + spanMarker +
+                       body.slice(pos.start, pos.end) + spanMarkerEnd +
+                       body.slice(pos.end);
+      ea.innerHTML = editor._markdownToHtml(markedBody);
+      if (typeof enhanceCodeBlocks === 'function') enhanceCodeBlocks(ea);
+      if (typeof enhanceChecklists === 'function') enhanceChecklists(ea);
+      var mPos = findAndStripCursorMarkerPositions(ea);
+      if (mPos) {
+        ea.focus();
+        var range = document.createRange();
+        range.setStart(mPos.startNode, mPos.startOffset);
+        range.setEnd(mPos.endNode, mPos.endOffset);
+        var sel = window.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+        requestAnimationFrame(function () { scrollToCenterCursor(ea, false); });
+        return true;
+      }
+    }
     if (!pos) {
       var imgs = ea.querySelectorAll('img[data-emoji-shortcode]');
       for (var i = 0; i < imgs.length; i++) {
@@ -2997,6 +3072,371 @@
       return true;
     }
     return false;
+  }
+
+  // ---- Read-only to edit-mode selection heuristics ----
+
+  function buildPseudoMarkdown(root) {
+    var md = '';
+    var hashTable = {};
+    var hid = 0;
+    var listStack = [];
+    var olCounters = [];
+
+    function ensureTrailingNewlines(n) {
+      if (md.length === 0 && n > 0) return;
+      var trailing = 0;
+      for (var k = md.length - 1; k >= 0 && md[k] === '\n'; k--) trailing++;
+      while (trailing < n) { md += '\n'; trailing++; }
+    }
+
+    function isBlockTag(t) {
+      return /^(P|DIV|H[1-6]|LI|TR|HR|BLOCKQUOTE|PRE|TABLE|THEAD|TBODY|UL|OL|DL|DT|DD|DETAILS|SUMMARY|SECTION|HEADER|FOOTER|FIGURE|FIGCAPTION)$/.test(t);
+    }
+
+    function walk(node) {
+      if (node.nodeType === 3) {
+        var t = node.textContent;
+        if (/^\s+$/.test(t) && node.parentNode) {
+          var prev = node.previousSibling;
+          var next = node.nextSibling;
+          if ((prev && prev.nodeType === 1 && isBlockTag(prev.nodeName)) ||
+              (next && next.nodeType === 1 && isBlockTag(next.nodeName))) return;
+        }
+        md += t;
+        return;
+      }
+      if (node.nodeType !== 1) return;
+
+      var tag = node.nodeName;
+      if (tag === 'SCRIPT' || tag === 'STYLE') return;
+      if (node.classList && (
+        node.classList.contains('live-edit-controls') ||
+        node.classList.contains('live-wysiwyg-selection-edit-popup') ||
+        node.classList.contains('live-edit-source') ||
+        node.classList.contains('live-edit-wysiwyg-wrapper') ||
+        node.classList.contains('md-wysiwyg-editor-wrapper')
+      )) return;
+      if (tag === 'A' && node.classList && node.classList.contains('headerlink')) return;
+      if (tag === 'TD' && node.classList && node.classList.contains('linenos')) return;
+
+      if (/^H([1-6])$/.test(tag)) {
+        var level = parseInt(tag.charAt(1));
+        ensureTrailingNewlines(md.length > 0 ? 2 : 0);
+        for (var h = 0; h < level; h++) md += '#';
+        md += ' ';
+        walkChildren(node);
+        ensureTrailingNewlines(2);
+        return;
+      }
+
+      if (tag === 'P') {
+        ensureTrailingNewlines(md.length > 0 ? 2 : 0);
+        walkChildren(node);
+        ensureTrailingNewlines(2);
+        return;
+      }
+
+      if (tag === 'STRONG' || tag === 'B') {
+        md += '**';
+        walkChildren(node);
+        md += '**';
+        return;
+      }
+
+      if (tag === 'EM' || tag === 'I') {
+        md += '*';
+        walkChildren(node);
+        md += '*';
+        return;
+      }
+
+      if (tag === 'CODE') {
+        var inPre = false;
+        var p = node.parentNode;
+        while (p) { if (p.nodeName === 'PRE') { inPre = true; break; } p = p.parentNode; }
+        if (!inPre) {
+          md += '`';
+          walkChildren(node);
+          md += '`';
+          return;
+        }
+      }
+
+      if (tag === 'IMG') {
+        var sc = node.getAttribute('data-emoji-shortcode');
+        var title = node.getAttribute('title') || '';
+        var alt = node.alt || '';
+        var key = '_h' + (hid++);
+        var shortcode = null;
+        if (sc) {
+          shortcode = ':' + sc + ':';
+        } else if (title && /^:[a-z0-9_+-]+:$/.test(title)) {
+          shortcode = title;
+        }
+        hashTable[key] = { kind: sc ? 'emoji' : 'image', alt: alt, shortcode: shortcode };
+        md += shortcode || alt;
+        return;
+      }
+
+      if (tag === 'BR') { md += '\n'; return; }
+
+      if (tag === 'UL') {
+        ensureTrailingNewlines(md.length > 0 ? 2 : 0);
+        listStack.push('ul');
+        walkChildren(node);
+        listStack.pop();
+        ensureTrailingNewlines(2);
+        return;
+      }
+
+      if (tag === 'OL') {
+        ensureTrailingNewlines(md.length > 0 ? 2 : 0);
+        listStack.push('ol');
+        olCounters.push(0);
+        walkChildren(node);
+        listStack.pop();
+        olCounters.pop();
+        ensureTrailingNewlines(2);
+        return;
+      }
+
+      if (tag === 'LI') {
+        if (md.length > 0 && md[md.length - 1] !== '\n') md += '\n';
+        var curList = listStack.length > 0 ? listStack[listStack.length - 1] : 'ul';
+        if (curList === 'ol') {
+          var cnt = olCounters.length > 0 ? ++olCounters[olCounters.length - 1] : 1;
+          md += cnt + '. ';
+        } else {
+          md += '- ';
+        }
+        walkChildren(node);
+        if (md.length > 0 && md[md.length - 1] !== '\n') md += '\n';
+        return;
+      }
+
+      if (tag === 'BLOCKQUOTE') {
+        ensureTrailingNewlines(md.length > 0 ? 2 : 0);
+        md += '> ';
+        walkChildren(node);
+        ensureTrailingNewlines(2);
+        return;
+      }
+
+      if (tag === 'PRE') {
+        ensureTrailingNewlines(md.length > 0 ? 2 : 0);
+        var lang = '';
+        var wrapper = node.parentNode;
+        while (wrapper && wrapper !== root) {
+          var cls = wrapper.className || '';
+          var m = cls.match(/language-(\S+)/);
+          if (m) { lang = m[1]; break; }
+          wrapper = wrapper.parentNode;
+        }
+        md += '```' + lang + '\n';
+        walkChildren(node);
+        if (md.length > 0 && md[md.length - 1] !== '\n') md += '\n';
+        md += '```';
+        ensureTrailingNewlines(2);
+        return;
+      }
+
+      if (tag === 'HR') {
+        ensureTrailingNewlines(md.length > 0 ? 2 : 0);
+        md += '---';
+        ensureTrailingNewlines(2);
+        return;
+      }
+
+      walkChildren(node);
+    }
+
+    function walkChildren(node) {
+      for (var c = node.firstChild; c; c = c.nextSibling) walk(c);
+    }
+
+    walk(root);
+    return { md: md, hashTable: hashTable };
+  }
+
+  function buildSearchable(text) {
+    var out = '';
+    var posMap = [];
+    var i = 0;
+    var len = text.length;
+    var lastWasSpace = false;
+
+    while (i < len) {
+      if (i === 0 || text[i - 1] === '\n') {
+        var j = i;
+        while (j < len && text[j] === '#') j++;
+        if (j > i && j - i <= 6 && j < len && text[j] === ' ') {
+          i = j + 1;
+          continue;
+        }
+      }
+      if (text[i] === '`') { i++; continue; }
+      if (text[i] === '*' && i + 1 < len && text[i + 1] === '*') { i += 2; continue; }
+      if (/\s/.test(text[i])) {
+        if (!lastWasSpace && out.length > 0) {
+          posMap.push(i);
+          out += ' ';
+          lastWasSpace = true;
+        }
+        i++;
+        continue;
+      }
+      lastWasSpace = false;
+      posMap.push(i);
+      out += text[i];
+      i++;
+    }
+    while (out.length > 0 && out[out.length - 1] === ' ') {
+      out = out.slice(0, -1);
+      posMap.pop();
+    }
+    return { text: out, posMap: posMap };
+  }
+
+  function normalizeForSearch(text) {
+    return text.replace(/\u00b6/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  function readonly_to_edit_mode_text_selection(editor) {
+    if (!pendingReadModeSelection || !pendingReadModeSelection.selectedText) return false;
+    var saved = {
+      selectedText: pendingReadModeSelection.selectedText,
+      contextBefore: pendingReadModeSelection.contextBefore || '',
+      contextAfter: pendingReadModeSelection.contextAfter || ''
+    };
+    if (applyPendingReadModeSelection(editor)) return true;
+
+    var mdRaw = editor.currentMode === 'markdown'
+      ? editor.markdownArea.value
+      : (editor.getValue ? editor.getValue() : '');
+    var parsed = parseFrontmatter(mdRaw || '');
+    var body = parsed.body || '';
+    var frontmatterLen = (mdRaw || '').length - body.length;
+
+    var normSel = normalizeForSearch(saved.selectedText);
+    if (!normSel) return false;
+    var normCtxBefore = normalizeForSearch(saved.contextBefore);
+    var normCtxAfter = normalizeForSearch(saved.contextAfter);
+
+    var pos = null;
+
+    var bodyS = buildSearchable(body);
+    pos = findInSearchable(bodyS, normSel, normCtxBefore, normCtxAfter);
+
+    if (!pos) {
+      var normSelSC = normalizeForSearch(replaceEmojiCharsWithShortcodes(saved.selectedText));
+      if (normSelSC !== normSel) {
+        pos = findInSearchable(bodyS, normSelSC, normCtxBefore, normCtxAfter);
+      }
+    }
+
+    if (!pos) {
+      var articleEl = document.querySelector('[role="main"] article')
+        || document.querySelector('article.md-typeset')
+        || document.querySelector('.md-content');
+      if (articleEl) {
+        var pm = buildPseudoMarkdown(articleEl);
+        var pmS = buildSearchable(pm.md);
+        var pmMatch = findInSearchable(pmS, normSel, normCtxBefore, normCtxAfter);
+        if (!pmMatch) {
+          var normSelSC2 = normalizeForSearch(replaceEmojiCharsWithShortcodes(saved.selectedText));
+          if (normSelSC2 !== normSel) pmMatch = findInSearchable(pmS, normSelSC2, normCtxBefore, normCtxAfter);
+        }
+        if (pmMatch) {
+          var pmSubstr = pm.md.slice(pmMatch.start, pmMatch.end);
+          pos = findSelectedTextInContent(body, pmSubstr, '', '');
+          if (!pos) {
+            var normPmSub = pmSubstr.replace(/\s+/g, ' ').trim();
+            pos = findInSearchable(bodyS, normPmSub, '', '');
+          }
+        }
+      }
+    }
+
+    if (!pos) return false;
+
+    if (editor.currentMode === 'markdown') {
+      var ma = editor.markdownArea;
+      if (!ma) return false;
+      var selStart = pos.start + frontmatterLen;
+      var selEnd = pos.end + frontmatterLen;
+      var fullLen = ma.value.length;
+      selStart = Math.min(selStart, fullLen);
+      selEnd = Math.min(selEnd, fullLen);
+      ma.focus();
+      ma.setSelectionRange(selStart, selEnd);
+      scrollToCenterCursor(ma, true, selStart);
+      if (editor.markdownLineNumbersDiv) {
+        editor.markdownLineNumbersDiv.scrollTop = ma.scrollTop;
+      }
+      return true;
+    }
+
+    var ea = editor.editableArea;
+    if (!ea) return false;
+    var spanMarker = '<span ' + CURSOR_SPAN_ATTR + '></span>';
+    var spanMarkerEnd = '<span ' + CURSOR_SPAN_ATTR_END + '></span>';
+    var markedBody = body.slice(0, pos.start) + spanMarker +
+                     body.slice(pos.start, pos.end) + spanMarkerEnd +
+                     body.slice(pos.end);
+    ea.innerHTML = editor._markdownToHtml(markedBody);
+    if (typeof enhanceCodeBlocks === 'function') enhanceCodeBlocks(ea);
+    if (typeof enhanceChecklists === 'function') enhanceChecklists(ea);
+    var mPos = findAndStripCursorMarkerPositions(ea);
+    if (mPos) {
+      ea.focus();
+      var range = document.createRange();
+      range.setStart(mPos.startNode, mPos.startOffset);
+      range.setEnd(mPos.endNode, mPos.endOffset);
+      var sel = window.getSelection();
+      if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+      requestAnimationFrame(function () { scrollToCenterCursor(ea, false); });
+      return true;
+    }
+    return false;
+  }
+
+  function findInSearchable(searchable, normNeedle, normCtxBefore, normCtxAfter) {
+    var allMatches = [];
+    var startFrom = 0;
+    while (true) {
+      var idx = searchable.text.indexOf(normNeedle, startFrom);
+      if (idx < 0) break;
+      var endIdx = idx + normNeedle.length - 1;
+      var oS = idx < searchable.posMap.length ? searchable.posMap[idx] : 0;
+      var oE = endIdx < searchable.posMap.length ? searchable.posMap[endIdx] + 1 : searchable.posMap[searchable.posMap.length - 1] + 1;
+      allMatches.push({ start: oS, end: oE, sIdx: idx });
+      startFrom = idx + 1;
+    }
+    if (allMatches.length === 0) return null;
+    if (allMatches.length === 1) return allMatches[0];
+
+    var best = null;
+    var bestScore = -1;
+    for (var i = 0; i < allMatches.length; i++) {
+      var m = allMatches[i];
+      var score = 0;
+      if (normCtxBefore) {
+        var before = searchable.text.substring(Math.max(0, m.sIdx - normCtxBefore.length), m.sIdx);
+        for (var j = 1; j <= Math.min(normCtxBefore.length, before.length); j++) {
+          if (normCtxBefore.slice(-j) === before.slice(-j)) score += j;
+        }
+      }
+      if (normCtxAfter) {
+        var mEnd = m.sIdx + normNeedle.length;
+        var after = searchable.text.substring(mEnd, Math.min(searchable.text.length, mEnd + normCtxAfter.length));
+        for (var k = 1; k <= Math.min(normCtxAfter.length, after.length); k++) {
+          if (normCtxAfter.slice(0, k) === after.slice(0, k)) score += k;
+        }
+      }
+      if (score > bestScore) { bestScore = score; best = m; }
+    }
+    return best || allMatches[0];
   }
 
   function scrollToCenterCursor(container, isTextarea, selectionStart) {
@@ -3284,12 +3724,10 @@
             });
           } else {
             var cursorSet = findCursorSpanAndSetCaret(editableArea);
-            var offsets = null;
+            var markerPos = null;
             if (!cursorSet) {
-              offsets = getTextOffsetsOfMarkersInEditable(editableArea);
-              if (offsets.start >= 0) {
-                stripCursorMarkersFromDOM(editableArea);
-              } else if (markdownMarkerInserted) {
+              markerPos = findAndStripCursorMarkerPositions(editableArea);
+              if (!markerPos && markdownMarkerInserted) {
                 var leftover = editableArea.querySelectorAll('[' + CURSOR_SPAN_ATTR + '], [' + CURSOR_SPAN_ATTR_END + ']');
                 for (var i = 0; i < leftover.length; i++) leftover[i].parentNode.removeChild(leftover[i]);
               }
@@ -3297,32 +3735,20 @@
             requestAnimationFrame(function () {
               if (cursorSet) {
                 editableArea.focus();
-              } else if (offsets && offsets.start >= 0) {
-                var hasSelection = offsets.end >= 0 && offsets.end > offsets.start;
-                var selStart = offsets.start;
-                var selEnd = hasSelection
-                  ? Math.max(selStart, offsets.end - 6)
-                  : selStart;
-                var si = findTextNodeAtOffset(editableArea, selStart);
-                var ei = (selStart === selEnd) ? si : findTextNodeAtOffset(editableArea, selEnd);
-                if (si && ei) {
-                  var nested = findNestedContenteditable(si.node, editableArea);
-                  if (nested) {
-                    nested.focus();
-                  } else {
-                    editableArea.focus();
-                  }
-                  var range = document.createRange();
-                  range.setStart(si.node, si.offset);
-                  range.setEnd(ei.node, ei.offset);
-                  var sel = window.getSelection();
-                  if (sel) {
-                    sel.removeAllRanges();
-                    sel.addRange(range);
-                  }
+              } else if (markerPos) {
+                var nested = findNestedContenteditable(markerPos.startNode, editableArea);
+                if (nested) {
+                  nested.focus();
                 } else {
                   editableArea.focus();
-                  setSelectionInEditable(editableArea, selStart, selEnd);
+                }
+                var range = document.createRange();
+                range.setStart(markerPos.startNode, markerPos.startOffset);
+                range.setEnd(markerPos.endNode, markerPos.endOffset);
+                var sel = window.getSelection();
+                if (sel) {
+                  sel.removeAllRanges();
+                  sel.addRange(range);
                 }
               }
               lastWysiwygSemanticSelection = captureSemanticSelection(editableArea);
@@ -3443,6 +3869,19 @@
 
   var CONTEXT_LEN = 60;
 
+  function visibleTextContent(el) {
+    var result = '';
+    (function walk(node) {
+      if (node.nodeType === 3) {
+        result += node.textContent;
+      } else if (node.nodeType === 1) {
+        if (node.nodeName === 'SCRIPT' || node.nodeName === 'STYLE') return;
+        for (var c = node.firstChild; c; c = c.nextSibling) walk(c);
+      }
+    })(el);
+    return result;
+  }
+
   function getSelectionContext(range) {
     var root = range.commonAncestorContainer;
     if (root.nodeType === 3) root = root.parentNode;
@@ -3452,7 +3891,7 @@
       root = root.parentNode;
     }
     if (!root) root = range.commonAncestorContainer.nodeType === 3 ? range.commonAncestorContainer.parentNode : range.commonAncestorContainer;
-    var fullText = root.textContent || '';
+    var fullText = visibleTextContent(root);
     var preRange = document.createRange();
     preRange.selectNodeContents(root);
     preRange.setEnd(range.startContainer, range.startOffset);
@@ -3466,12 +3905,33 @@
     return { contextBefore: contextBefore, contextAfter: contextAfter };
   }
 
+  function rangeToTextWithImgAlt(range) {
+    var frag = range.cloneContents();
+    var result = '';
+    (function walk(node) {
+      if (node.nodeType === 3) {
+        result += node.textContent;
+      } else if (node.nodeName === 'SCRIPT' || node.nodeName === 'STYLE') {
+        return;
+      } else if (node.nodeName === 'IMG' && node.alt) {
+        result += node.alt;
+      } else {
+        for (var c = node.firstChild; c; c = c.nextSibling) walk(c);
+      }
+    })(frag);
+    return result;
+  }
+
   function storeSelectionIfReadMode(sel) {
     if (!isInReadMode()) return;
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
     if (isSelectionInEditForm(sel)) return;
     var range = sel.getRangeAt(0);
     var selectedText = range.toString();
+    if (range.startContainer.nodeType !== 3 || range.endContainer.nodeType !== 3) {
+      var richText = rangeToTextWithImgAlt(range);
+      if (richText.length > selectedText.length) selectedText = richText;
+    }
     if (!selectedText || selectedText.length === 0) return;
     var ctx = getSelectionContext(range);
     pendingReadModeSelection = {
@@ -4515,8 +4975,23 @@
                 if (emoji) {
                   e.preventDefault();
                   var start = openColon >= 0 ? openColon : lastColon;
-                  replaceRangeWithEmoji(node, start, offset, emoji, ":" + shortcode + ":");
+                  var repl = replaceRangeWithEmoji(node, start, offset, emoji, ":" + shortcode + ":");
+                  ea.focus();
+                  sel.removeAllRanges();
+                  var range = document.createRange();
+                  if (repl && repl.nodeType) {
+                    range.setStartAfter(repl);
+                    range.collapse(true);
+                  } else {
+                    range.setStart(node, start + emoji.length);
+                    range.collapse(true);
+                  }
+                  sel.addRange(range);
                   if (wysiwygEditor._finalizeUpdate) wysiwygEditor._finalizeUpdate(ea.innerHTML);
+                  if (autocompleteState && autocompleteState.pop.parentNode) {
+                    autocompleteState.pop.parentNode.removeChild(autocompleteState.pop);
+                  }
+                  autocompleteState = null;
                   return;
                 }
               }
@@ -4689,6 +5164,7 @@
             }
             if ((e.key === "Enter" || e.key === "Tab") && sel) {
               e.preventDefault();
+              e.stopPropagation();
               var key = sel.dataset.key;
               var pop = autocompleteState.pop;
               var onSelectCb = autocompleteState.onSelect;
@@ -4761,6 +5237,9 @@
         };
         var protected_ = md.replace(/\`\`\`[\s\S]*?\`\`\`/g, protectBlock);
         protected_ = protected_.replace(/`[^`\n]+`/g, protectBlock);
+        // Protect emoji img tags (raw HTML) so shortcode replacement does not run inside
+        // attribute values (e.g. title=":white_check_mark:") - that causes recursive nesting.
+        protected_ = protected_.replace(/<img[^>]*data-emoji-shortcode[^>]*>/gi, protectBlock);
         protected_ = protected_.replace(shortcodeRe, function (m, key) {
           var em = EMOJI_MAP[key];
           return em ? emojiToImgHtml(":" + key + ":", em) : m;
@@ -4785,12 +5264,17 @@
       var proto = MarkdownWYSIWYG.prototype;
       var origNodeToMarkdown = proto._nodeToMarkdownRecursive;
       if (!origNodeToMarkdown) return;
+      var shortcodePattern = /^:[a-z0-9_+-]+:$/;
       proto._nodeToMarkdownRecursive = function (node, options) {
-        if (node.nodeName === "IMG" && node.getAttribute && node.getAttribute("data-emoji-shortcode")) {
-          return node.getAttribute("data-emoji-shortcode");
+        if (node.nodeName === "IMG" && node.getAttribute) {
+          var sc = node.getAttribute("data-emoji-shortcode");
+          if (sc && shortcodePattern.test(sc)) return sc;
         }
-        if (node.nodeName === "SPAN" && node.getAttribute && node.getAttribute("data-emoji-shortcode")) {
+        if (node.nodeName === "SPAN" && node.getAttribute) {
           var shortcode = node.getAttribute("data-emoji-shortcode");
+          if (!shortcode || !shortcodePattern.test(shortcode)) {
+            return origNodeToMarkdown.apply(this, arguments);
+          }
           var childContent = "";
           for (var i = 0; i < node.childNodes.length; i++) {
             childContent += origNodeToMarkdown.call(this, node.childNodes[i], options || {});
@@ -4806,153 +5290,13 @@
     })();
 
 
-    (function patchSwitchToModeSelectionPreservation() {
-      var MARKER = "\uFFFF\uFFFF\uFFFF";
-      var MARKER_END = "\uFFFE\uFFFE\uFFFE";
-      function getPath(node, root) {
-        var path = [];
-        var cur = node;
-        while (cur && cur !== root) {
-          var parent = cur.parentNode;
-          if (!parent) return null;
-          var idx = Array.prototype.indexOf.call(parent.childNodes, cur);
-          path.unshift(idx);
-          cur = parent;
-        }
-        return cur === root ? path : null;
-      }
-      function getNodeByPath(root, path) {
-        var cur = root;
-        for (var i = 0; i < path.length; i++) {
-          cur = cur.childNodes[path[i]];
-          if (!cur) return null;
-        }
-        return cur;
-      }
-      function insertMarkerAtOffset(parent, refNode, offset, markerText) {
-        var markerNode = document.createTextNode(markerText);
-        if (refNode.nodeType === 3) {
-          var before = refNode.textContent.substring(0, offset);
-          var after = refNode.textContent.substring(offset);
-          var beforeNode = document.createTextNode(before);
-          var afterNode = document.createTextNode(after);
-          parent.insertBefore(afterNode, refNode.nextSibling);
-          parent.insertBefore(markerNode, afterNode);
-          parent.insertBefore(beforeNode, refNode);
-          parent.removeChild(refNode);
-        } else if (refNode.nodeType === 1) {
-          refNode.insertBefore(markerNode, refNode.childNodes[offset] || null);
-        }
-      }
-      var proto = MarkdownWYSIWYG.prototype;
-      var origSwitchToMode = proto.switchToMode;
-      if (!origSwitchToMode) return;
-      proto.switchToMode = function (mode, isInitialSetup) {
-        if (this.currentMode === mode && !isInitialSetup) {
-          return origSwitchToMode.apply(this, arguments);
-        }
-        var sel = window.getSelection();
-        var savedMdSel = null;
-        var savedWysiwygRange = null;
-        if (!isInitialSetup && sel && sel.rangeCount > 0) {
-          var r = sel.getRangeAt(0);
-          if (this.currentMode === "wysiwyg" && this.editableArea.contains(r.commonAncestorContainer)) {
-            savedWysiwygRange = r.cloneRange();
-          } else if (this.currentMode === "markdown" && this.markdownArea === document.activeElement) {
-            savedMdSel = { start: this.markdownArea.selectionStart, end: this.markdownArea.selectionEnd };
-          }
-        }
-        origSwitchToMode.apply(this, arguments);
-        if (isInitialSetup || (!savedMdSel && !savedWysiwygRange)) return;
-        if (mode === "markdown" && savedWysiwygRange) {
-          var ea = this.editableArea;
-          var clone = ea.cloneNode(true);
-          var startPath = getPath(savedWysiwygRange.startContainer, ea);
-          var endPath = getPath(savedWysiwygRange.endContainer, ea);
-          if (startPath && endPath) {
-            var endNode = getNodeByPath(clone, endPath);
-            var startNode = getNodeByPath(clone, startPath);
-            if (startNode && endNode) {
-              var startParent = startNode.parentNode;
-              var endParent = endNode.parentNode;
-              var isEmojiSpan = function (n) {
-                return n && n.nodeType === 1 && n.nodeName === "SPAN" && n.getAttribute && n.getAttribute("data-emoji-shortcode");
-              };
-              var isEmojiImg = function (n) {
-                return n && n.nodeType === 1 && n.nodeName === "IMG" && n.getAttribute && n.getAttribute("data-emoji-shortcode");
-              };
-              var sameEmojiSpan = startNode === endNode && startNode.nodeType === 3 && isEmojiSpan(startParent);
-              var sameEmojiImg = startNode === endNode && isEmojiImg(startNode);
-              if (sameEmojiSpan) {
-                var span = startParent;
-                var spanParent = span.parentNode;
-                if (spanParent) {
-                  var markerStart = document.createTextNode(MARKER);
-                  var markerEnd = document.createTextNode(MARKER_END);
-                  spanParent.insertBefore(markerStart, span);
-                  spanParent.insertBefore(markerEnd, span.nextSibling);
-                }
-              } else if (sameEmojiImg) {
-                var imgParent = startNode.parentNode;
-                if (imgParent) {
-                  var markerStart = document.createTextNode(MARKER);
-                  var markerEnd = document.createTextNode(MARKER_END);
-                  imgParent.insertBefore(markerStart, startNode);
-                  imgParent.insertBefore(markerEnd, startNode.nextSibling);
-                }
-              } else {
-                if (endParent) insertMarkerAtOffset(endParent, endNode, savedWysiwygRange.endOffset, MARKER_END);
-                startNode = getNodeByPath(clone, startPath);
-                startParent = startNode ? startNode.parentNode : null;
-                if (startParent) insertMarkerAtOffset(startParent, startNode, savedWysiwygRange.startOffset, MARKER);
-              }
-              var mdWithMarkers = this._htmlToMarkdown(clone);
-              var idx1 = mdWithMarkers.indexOf(MARKER);
-              var idx2 = mdWithMarkers.indexOf(MARKER_END);
-              if (idx1 >= 0 && idx2 >= 0) {
-                var md = this._htmlToMarkdown(ea);
-                this.markdownArea.value = md;
-                this.markdownArea.setSelectionRange(idx1 + MARKER.length, idx2);
-                this.markdownArea.focus();
-                this._updateMarkdownLineNumbers();
-              }
-            }
-          }
-        } else if (mode === "wysiwyg" && savedMdSel) {
-          var md = this.markdownArea.value;
-          var selText = md.substring(savedMdSel.start, savedMdSel.end);
-          var mdWithMarkers = md.substring(0, savedMdSel.start) + MARKER + selText + MARKER_END + md.substring(savedMdSel.end);
-          this.editableArea.innerHTML = this._markdownToHtml(mdWithMarkers);
-          var range = document.createRange();
-          var walker = document.createTreeWalker(this.editableArea, NodeFilter.SHOW_TEXT, null, false);
-          var node;
-          var startPos = null;
-          var endPos = null;
-          while (node = walker.nextNode()) {
-            var idx = node.textContent.indexOf(MARKER);
-            if (idx >= 0 && !startPos) {
-              startPos = { node: node, offset: idx + MARKER.length };
-            }
-            idx = node.textContent.indexOf(MARKER_END);
-            if (idx >= 0 && !endPos) {
-              endPos = { node: node, offset: idx };
-            }
-          }
-          if (startPos && endPos) {
-            range.setStart(startPos.node, startPos.offset);
-            range.setEnd(endPos.node, endPos.offset);
-            sel.removeAllRanges();
-            sel.addRange(range);
-          }
-          walker = document.createTreeWalker(this.editableArea, NodeFilter.SHOW_TEXT, null, false);
-          while (node = walker.nextNode()) {
-            if (node.textContent.indexOf(MARKER) >= 0) node.textContent = node.textContent.split(MARKER).join("");
-            if (node.textContent.indexOf(MARKER_END) >= 0) node.textContent = node.textContent.split(MARKER_END).join("");
-          }
-          this.editableArea.focus();
-        }
-      };
-    })();
+    // Selection preservation across mode switches is handled by the frontmatter
+    // patch above (via injectMarkerAtCaretInEditable / CURSOR_MARKER).  That
+    // approach naturally handles emoji <img> ↔ :shortcode: mapping because
+    // _htmlToMarkdown converts <img data-emoji-shortcode> to :shortcode: with
+    // adjacent CURSOR_MARKER text, and _markdownToHtml converts :shortcode: to
+    // <img> with adjacent CURSOR_MARKER text.  No separate marker-based patch
+    // is needed.
 
     // Re-render editable area with emoji patches now applied
     if (wysiwygEditor && wysiwygEditor.editableArea && wysiwygEditor.markdownArea) {
@@ -6468,7 +6812,7 @@
 
     if (wysiwygEditor) {
       wysiwygEditor.switchToMode(preferredMode, true);
-      var appliedReadModeSelection = applyPendingReadModeSelection(wysiwygEditor);
+      var appliedReadModeSelection = readonly_to_edit_mode_text_selection(wysiwygEditor);
       if (!appliedReadModeSelection) {
         if (preferredMode === 'markdown') {
           wysiwygEditor.markdownArea.setSelectionRange(0, 0);

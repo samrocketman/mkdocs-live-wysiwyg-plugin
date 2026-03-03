@@ -2,6 +2,9 @@
 
 A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](https://github.com/eddyluten/mkdocs-live-edit-plugin), based on [@celsowm/markdown-wysiwyg](https://www.npmjs.com/package/@celsowm/markdown-wysiwyg).
 
+See [shortcuts and behaviors document](docs/shortcuts.md) for how to edit documents.
+
+
 - :rainbow::sparkles: Author quality of life features
   - :white_check_mark: Non-destructive WYSIWYG editing is a top priority.  `git diff` will show changes the author intended.  No extra mess typically associated with WYSIWYG editors.
   - :white_check_mark: Selected text to edit is the fastest flow.  A small context menu pops up around selected text which enables the author to fix the issue right away.

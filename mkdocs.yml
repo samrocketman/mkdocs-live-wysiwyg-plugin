@@ -7,3 +7,7 @@ plugins:
 theme:
   features:
     - content.code.annotate
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences

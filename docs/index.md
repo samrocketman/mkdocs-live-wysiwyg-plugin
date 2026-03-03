@@ -10,7 +10,24 @@ build: techdocs-preview.sh build # (1)
 preview: techdocs-preview.sh # (2)
 ```
 
-1. Build the `site`.
+Another item
+
+1. Foo
+
+   ```
+   some code
+   ```
+
+   1. Build the `site`.
+
+      ```
+      text content
+      ```
+
+      test
+
+   2. Another
+
 2. Launch a server on `http://127.0.0.1:8000/`.
 
 This code block is 4-space indented.

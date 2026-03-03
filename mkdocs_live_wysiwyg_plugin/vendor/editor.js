@@ -1338,16 +1338,118 @@ class MarkdownWYSIWYG {
         this.markdownArea.addEventListener('scroll', this._boundListeners.syncScrollMarkdown);
     }
 
+    _listIndentOutdentByDOM(outdent) {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return false;
+        const range = sel.getRangeAt(0);
+        let commonAncestor = range.commonAncestorContainer;
+        if (commonAncestor.nodeType === Node.TEXT_NODE) commonAncestor = commonAncestor.parentNode;
+        const startLI = this._findParentElement(range.startContainer, 'LI');
+        const endLI = this._findParentElement(range.endContainer, 'LI');
+        if (!startLI || !endLI) return true;
+        let list, items;
+        if (startLI.parentNode === endLI.parentNode) {
+            list = startLI.parentNode;
+            const directLis = Array.from(list.children).filter(c => c.nodeName === 'LI');
+            const startIdx = directLis.indexOf(startLI);
+            const endIdx = directLis.indexOf(endLI);
+            if (startIdx < 0 || endIdx < 0) return true;
+            const lo = Math.min(startIdx, endIdx);
+            const hi = Math.max(startIdx, endIdx);
+            items = directLis.slice(lo, hi + 1);
+        } else if (startLI.contains && startLI.contains(endLI)) {
+            list = startLI.parentNode;
+            items = [startLI];
+        } else if (endLI.contains && endLI.contains(startLI)) {
+            list = endLI.parentNode;
+            items = [endLI];
+        } else {
+            return true;
+        }
+        if (!list || (list.nodeName !== 'UL' && list.nodeName !== 'OL')) return true;
+        const savedStart = range.startContainer;
+        const savedStartOffset = range.startOffset;
+        const savedEnd = range.endContainer;
+        const savedEndOffset = range.endOffset;
+        if (outdent) {
+            const listParent = list.parentNode;
+            if (listParent.nodeName === 'LI') {
+                const grandparentList = listParent.parentNode;
+                if (!grandparentList || (grandparentList.nodeName !== 'UL' && grandparentList.nodeName !== 'OL')) return true;
+                let ref = listParent;
+                for (let i = 0; i < items.length; i++) {
+                    const it = items[i];
+                    list.removeChild(it);
+                    const nextRef = ref.nextSibling;
+                    if (nextRef) {
+                        grandparentList.insertBefore(it, nextRef);
+                    } else {
+                        grandparentList.appendChild(it);
+                    }
+                    ref = it;
+                }
+                if (list.childNodes.length === 0) listParent.removeChild(list);
+            } else {
+                return true;
+            }
+        } else {
+            const firstItem = items[0];
+            let prev = firstItem.previousElementSibling;
+            while (prev && prev.nodeName !== 'LI') prev = prev.previousElementSibling;
+            if (!prev) return true;
+            let nestedList = null;
+            for (let n = prev.firstChild; n; n = n.nextSibling) {
+                if (n.nodeName === 'UL' || n.nodeName === 'OL') { nestedList = n; break; }
+            }
+            if (!nestedList) {
+                nestedList = document.createElement(list.nodeName);
+                prev.appendChild(nestedList);
+            }
+            for (let i = 0; i < items.length; i++) {
+                const it = items[i];
+                list.removeChild(it);
+                nestedList.appendChild(it);
+            }
+        }
+        const firstMoved = items[0];
+        const lastMoved = items[items.length - 1];
+        const newRange = document.createRange();
+        try {
+            newRange.setStart(savedStart, savedStartOffset);
+            newRange.setEnd(savedEnd, savedEndOffset);
+        } catch (err) {
+            newRange.setStart(firstMoved, 0);
+            if (firstMoved !== lastMoved) {
+                const lastLen = lastMoved.childNodes.length;
+                newRange.setEnd(lastMoved, lastLen > 0 ? lastLen : 1);
+            } else {
+                newRange.collapse(true);
+            }
+        }
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+        return true;
+    }
+
     _handleKeyDownShared(e, targetArea) {
         if (e.key === 'Tab') {
             e.preventDefault();
             if (targetArea === this.editableArea) {
                 const sel = window.getSelection();
                 if (sel && sel.rangeCount > 0) {
-                    const listItem = this._findParentElement(sel.getRangeAt(0).commonAncestorContainer, 'LI');
-                    const tableCell = this._findParentElement(sel.getRangeAt(0).commonAncestorContainer, ['TD', 'TH']);
-                    if (listItem) {
-                        document.execCommand(e.shiftKey ? 'outdent' : 'indent');
+                    const range = sel.getRangeAt(0);
+                    let commonAncestor = range.commonAncestorContainer;
+                    if (commonAncestor.nodeType === Node.TEXT_NODE) commonAncestor = commonAncestor.parentNode;
+                    const listItem = this._findParentElement(commonAncestor, 'LI');
+                    const list = this._findParentElement(commonAncestor, ['UL', 'OL']);
+                    const inList = !!(listItem || (list && (list.nodeName === 'UL' || list.nodeName === 'OL')));
+                    const tableCell = this._findParentElement(commonAncestor, ['TD', 'TH']);
+                    if (inList) {
+                        if (this._listIndentOutdentByDOM(e.shiftKey)) {
+                            this._finalizeUpdate(this.editableArea.innerHTML);
+                        } else {
+                            document.execCommand(e.shiftKey ? 'outdent' : 'indent');
+                        }
                     } else if (tableCell) {
                         const table = this._findParentElement(tableCell, 'TABLE');
                         if (table) {
@@ -1766,7 +1868,9 @@ class MarkdownWYSIWYG {
     _handleIndent() {
         if (this.currentMode === 'wysiwyg') {
             this.editableArea.focus();
-            document.execCommand('indent', false, null);
+            if (!this._listIndentOutdentByDOM(false)) {
+                document.execCommand('indent', false, null);
+            }
             this._finalizeUpdate(this.editableArea.innerHTML);
         } else {
             this.markdownArea.focus();
@@ -1778,7 +1882,9 @@ class MarkdownWYSIWYG {
     _handleOutdent() {
         if (this.currentMode === 'wysiwyg') {
             this.editableArea.focus();
-            document.execCommand('outdent', false, null);
+            if (!this._listIndentOutdentByDOM(true)) {
+                document.execCommand('outdent', false, null);
+            }
             this._finalizeUpdate(this.editableArea.innerHTML);
         } else {
             this.markdownArea.focus();
@@ -2319,6 +2425,10 @@ class MarkdownWYSIWYG {
                         }
                         listItemContent += this._listToMarkdownRecursive(childNode, indent + contIndent, childNode.nodeName, 1, options);
                     } else {
+                        const isBlock = ['PRE', 'P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE'].includes(childNode.nodeName);
+                        if (isBlock && listItemContent.trim().length > 0 && !listItemContent.endsWith('\n\n')) {
+                            listItemContent += '\n\n';
+                        }
                         listItemContent += this._nodeToMarkdownRecursive(childNode, options);
                     }
                 });
@@ -2330,15 +2440,20 @@ class MarkdownWYSIWYG {
 
                 // If there are subsequent lines (e.g. from <p> inside <li> or multiple blocks)
                 if (lines.length > 0) {
+                    const baseIndent = indent + contIndent;
                     lines.forEach(line => {
                         if (line.trim().length > 0) { // Only add non-empty lines
-                            processedContent += '\n' + indent + contIndent + line.trimStart(); // Indent subsequent lines
-                        } else if (processedContent.length > 0 || hasNestedList) { // Add empty line if needed for structure
-                            processedContent += '\n' + indent + contIndent;
+                            // Lines with leading whitespace are from nested list (already indented); others (e.g. PRE) need baseIndent
+                            const lineIndent = (hasNestedList && (line.startsWith(' ') || line.startsWith('\t'))) ? '' : baseIndent;
+                            processedContent += '\n' + lineIndent + line;
+                        } else if (processedContent.length > 0 || hasNestedList) { // Blank line - no indent to avoid 4-space code block interpretation
+                            processedContent += '\n';
                         }
                     });
                 }
-                markdown += `${indent}${itemMarker}${processedContent.trimEnd()}\n`; // Ensure no trailing space on the item line
+                const itemEnd = processedContent.trimEnd();
+                const isMultiLine = itemEnd.indexOf('\n') >= 0;
+                markdown += `${indent}${itemMarker}${itemEnd}\n${isMultiLine ? '\n' : ''}`; // Blank line after multi-line items for proper rendering
                 if (isOrdered) listCounter++;
             }
         });

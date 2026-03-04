@@ -77,6 +77,232 @@
   background-color: #f0fff4;
 }
 
+/* New admonition types from Material for MkDocs */
+.md-editable-area .admonition.abstract,
+.live-edit-wysiwyg-wrapper .admonition.abstract {
+  border-left-color: #00b0ff;
+  background-color: #e8f5ff;
+}
+
+.md-editable-area .admonition.info,
+.live-edit-wysiwyg-wrapper .admonition.info {
+  border-left-color: #00b8d4;
+  background-color: #e0f7fa;
+}
+
+.md-editable-area .admonition.success,
+.live-edit-wysiwyg-wrapper .admonition.success {
+  border-left-color: #00c853;
+  background-color: #e8f5e9;
+}
+
+.md-editable-area .admonition.question,
+.live-edit-wysiwyg-wrapper .admonition.question {
+  border-left-color: #64dd17;
+  background-color: #f1f8e9;
+}
+
+.md-editable-area .admonition.failure,
+.live-edit-wysiwyg-wrapper .admonition.failure {
+  border-left-color: #ff5252;
+  background-color: #ffebee;
+}
+
+.md-editable-area .admonition.bug,
+.live-edit-wysiwyg-wrapper .admonition.bug {
+  border-left-color: #f50057;
+  background-color: #fce4ec;
+}
+
+.md-editable-area .admonition.example,
+.live-edit-wysiwyg-wrapper .admonition.example {
+  border-left-color: #7c4dff;
+  background-color: #ede7f6;
+}
+
+.md-editable-area .admonition.quote,
+.live-edit-wysiwyg-wrapper .admonition.quote {
+  border-left-color: #9e9e9e;
+  background-color: #f5f5f5;
+}
+
+/* Inline admonition placement */
+.md-editable-area .admonition.inline,
+.live-edit-wysiwyg-wrapper .admonition.inline {
+  float: left;
+  width: 40%;
+  margin-right: 1em;
+  margin-top: 0;
+}
+
+.md-editable-area .admonition.inline.end,
+.live-edit-wysiwyg-wrapper .admonition.inline.end {
+  float: right;
+  margin-right: 0;
+  margin-left: 1em;
+}
+
+/* Collapsible admonitions (<details>) — base styles */
+.md-editable-area details[class],
+.live-edit-wysiwyg-wrapper details[class] {
+  margin: 1em 0;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  border-left: 4px solid #6ab0de;
+  background-color: #f7f9fc;
+  position: relative;
+}
+
+.md-editable-area details[class] > summary,
+.live-edit-wysiwyg-wrapper details[class] > summary {
+  font-weight: bold;
+  margin: 0 0 0.5em 0;
+  padding: 0 0 0 1.75rem;
+  cursor: text;
+  list-style: none;
+}
+
+.md-editable-area details[class] > summary::before,
+.live-edit-wysiwyg-wrapper details[class] > summary::before {
+  transform: translate(-0.5em, -0.5em);
+}
+
+.md-editable-area details[class] > summary::-webkit-details-marker,
+.live-edit-wysiwyg-wrapper details[class] > summary::-webkit-details-marker {
+  display: none;
+}
+
+.md-editable-area details[class] > summary::marker,
+.live-edit-wysiwyg-wrapper details[class] > summary::marker {
+  display: none;
+  content: '';
+}
+
+/* Per-type colors for <details> */
+.md-editable-area details.note,
+.live-edit-wysiwyg-wrapper details.note {
+  border-left-color: #6ab0de;
+  background-color: #f0f7ff;
+}
+
+.md-editable-area details.warning,
+.live-edit-wysiwyg-wrapper details.warning {
+  border-left-color: #f0ad4e;
+  background-color: #fff8e6;
+}
+
+.md-editable-area details.danger,
+.live-edit-wysiwyg-wrapper details.danger {
+  border-left-color: #d9534f;
+  background-color: #fff0f0;
+}
+
+.md-editable-area details.tip,
+.live-edit-wysiwyg-wrapper details.tip {
+  border-left-color: #5cb85c;
+  background-color: #f0fff4;
+}
+
+.md-editable-area details.important,
+.live-edit-wysiwyg-wrapper details.important {
+  border-left-color: #f0ad4e;
+  background-color: #fffbf0;
+}
+
+.md-editable-area details.caution,
+.live-edit-wysiwyg-wrapper details.caution {
+  border-left-color: #f0ad4e;
+  background-color: #fff8e6;
+}
+
+.md-editable-area details.error,
+.live-edit-wysiwyg-wrapper details.error {
+  border-left-color: #d9534f;
+  background-color: #fff0f0;
+}
+
+.md-editable-area details.attention,
+.live-edit-wysiwyg-wrapper details.attention {
+  border-left-color: #f0ad4e;
+  background-color: #fff8e6;
+}
+
+.md-editable-area details.hint,
+.live-edit-wysiwyg-wrapper details.hint {
+  border-left-color: #5cb85c;
+  background-color: #f0fff4;
+}
+
+.md-editable-area details.abstract,
+.live-edit-wysiwyg-wrapper details.abstract {
+  border-left-color: #00b0ff;
+  background-color: #e8f5ff;
+}
+
+.md-editable-area details.info,
+.live-edit-wysiwyg-wrapper details.info {
+  border-left-color: #00b8d4;
+  background-color: #e0f7fa;
+}
+
+.md-editable-area details.success,
+.live-edit-wysiwyg-wrapper details.success {
+  border-left-color: #00c853;
+  background-color: #e8f5e9;
+}
+
+.md-editable-area details.question,
+.live-edit-wysiwyg-wrapper details.question {
+  border-left-color: #64dd17;
+  background-color: #f1f8e9;
+}
+
+.md-editable-area details.failure,
+.live-edit-wysiwyg-wrapper details.failure {
+  border-left-color: #ff5252;
+  background-color: #ffebee;
+}
+
+.md-editable-area details.bug,
+.live-edit-wysiwyg-wrapper details.bug {
+  border-left-color: #f50057;
+  background-color: #fce4ec;
+}
+
+.md-editable-area details.example,
+.live-edit-wysiwyg-wrapper details.example {
+  border-left-color: #7c4dff;
+  background-color: #ede7f6;
+}
+
+.md-editable-area details.quote,
+.live-edit-wysiwyg-wrapper details.quote {
+  border-left-color: #9e9e9e;
+  background-color: #f5f5f5;
+}
+
+/* Inline placement for <details> */
+.md-editable-area details[class].inline,
+.live-edit-wysiwyg-wrapper details[class].inline {
+  float: left;
+  width: 40%;
+  margin-right: 1em;
+  margin-top: 0;
+}
+
+.md-editable-area details[class].inline.end,
+.live-edit-wysiwyg-wrapper details[class].inline.end {
+  float: right;
+  margin-right: 0;
+  margin-left: 1em;
+}
+
+/* Admonitions need position:relative for the gear button */
+.md-editable-area .admonition,
+.live-edit-wysiwyg-wrapper .admonition {
+  position: relative;
+}
+
 /* WYSIWYG toggle button icon */
 .live-wysiwyg-btn-icon {
   width: 1.2em;

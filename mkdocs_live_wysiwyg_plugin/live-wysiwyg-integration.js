@@ -1197,18 +1197,372 @@
   var ADMONITION_ICON_FLAME = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M13.5.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"/></svg>';
   var ADMONITION_ICON_ALERT = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>';
   var ADMONITION_ICON_ZAP = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>';
+  var ADMONITION_ICON_CLIPBOARD = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1s-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm-2 14l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>';
+  var ADMONITION_ICON_INFO = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
+  var ADMONITION_ICON_CHECK = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+  var ADMONITION_ICON_QUESTION = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>';
+  var ADMONITION_ICON_XMARK = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z"/></svg>';
+  var ADMONITION_ICON_BUG = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5s-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>';
+  var ADMONITION_ICON_BEAKER = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M19.8 18.4L14 10.67V6.5l1.35-1.69c.26-.33.03-.81-.39-.81H9.04c-.42 0-.65.48-.39.81L10 6.5v4.17L4.2 18.4c-.49.66-.02 1.6.8 1.6h14c.82 0 1.29-.94.8-1.6z"/></svg>';
+  var ADMONITION_ICON_QUOTE = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z"/></svg>';
 
   var ADMONITION_TYPES = [
     { id: 'note',      label: 'Note',      color: '#448aff', icon: ADMONITION_ICON_PENCIL },
+    { id: 'abstract',  label: 'Abstract',  color: '#00b0ff', icon: ADMONITION_ICON_CLIPBOARD },
+    { id: 'info',      label: 'Info',      color: '#00b8d4', icon: ADMONITION_ICON_INFO },
     { id: 'tip',       label: 'Tip',       color: '#00c853', icon: ADMONITION_ICON_FLAME },
     { id: 'hint',      label: 'Hint',      color: '#00b0ff', icon: ADMONITION_ICON_FLAME },
     { id: 'important', label: 'Important', color: '#ff6d00', icon: ADMONITION_ICON_FLAME },
+    { id: 'success',   label: 'Success',   color: '#00c853', icon: ADMONITION_ICON_CHECK },
+    { id: 'question',  label: 'Question',  color: '#64dd17', icon: ADMONITION_ICON_QUESTION },
     { id: 'warning',   label: 'Warning',   color: '#ff9100', icon: ADMONITION_ICON_ALERT },
     { id: 'caution',   label: 'Caution',   color: '#ffc400', icon: ADMONITION_ICON_ALERT },
     { id: 'attention', label: 'Attention', color: '#ffab00', icon: ADMONITION_ICON_ALERT },
+    { id: 'failure',   label: 'Failure',   color: '#ff5252', icon: ADMONITION_ICON_XMARK },
     { id: 'danger',    label: 'Danger',    color: '#ff1744', icon: ADMONITION_ICON_ZAP },
-    { id: 'error',     label: 'Error',     color: '#ff5252', icon: ADMONITION_ICON_ZAP }
+    { id: 'error',     label: 'Error',     color: '#ff5252', icon: ADMONITION_ICON_ZAP },
+    { id: 'bug',       label: 'Bug',       color: '#f50057', icon: ADMONITION_ICON_BUG },
+    { id: 'example',   label: 'Example',   color: '#7c4dff', icon: ADMONITION_ICON_BEAKER },
+    { id: 'quote',     label: 'Quote',     color: '#9e9e9e', icon: ADMONITION_ICON_QUOTE }
   ];
+
+  var ADMONITION_TYPE_IDS = ['note', 'warning', 'danger', 'tip', 'hint', 'important', 'caution', 'error', 'attention', 'abstract', 'info', 'success', 'question', 'failure', 'bug', 'example', 'quote'];
+
+  function isAdmonitionElement(node) {
+    if (!node || !node.classList) return false;
+    if (node.nodeName === 'DIV' && node.classList.contains('admonition')) return true;
+    if (node.nodeName === 'DETAILS') {
+      for (var i = 0; i < ADMONITION_TYPE_IDS.length; i++) {
+        if (node.classList.contains(ADMONITION_TYPE_IDS[i])) return true;
+      }
+    }
+    return false;
+  }
+
+  function getAdmonitionType(node) {
+    for (var i = 0; i < ADMONITION_TYPE_IDS.length; i++) {
+      if (node.classList.contains(ADMONITION_TYPE_IDS[i])) return ADMONITION_TYPE_IDS[i];
+    }
+    return null;
+  }
+
+  function convertToCollapsible(adDiv) {
+    var type = getAdmonitionType(adDiv);
+    if (!type) return adDiv;
+    var details = document.createElement('details');
+    details.setAttribute('open', '');
+    var classes = type;
+    if (adDiv.classList.contains('inline')) classes += ' inline';
+    if (adDiv.classList.contains('end')) classes += ' end';
+    details.className = classes;
+    details.setAttribute('contenteditable', 'true');
+
+    var titleEl = adDiv.querySelector(':scope > .admonition-title');
+    var summary = document.createElement('summary');
+    summary.textContent = titleEl ? titleEl.textContent : (type.charAt(0).toUpperCase() + type.slice(1));
+    details.appendChild(summary);
+
+    while (adDiv.firstChild) {
+      var child = adDiv.firstChild;
+      if (child === titleEl) { adDiv.removeChild(child); continue; }
+      if (child.classList && child.classList.contains('md-admonition-settings-btn')) { adDiv.removeChild(child); continue; }
+      details.appendChild(child);
+    }
+    if (adDiv.parentNode) adDiv.parentNode.replaceChild(details, adDiv);
+    return details;
+  }
+
+  function convertToNonCollapsible(detailsEl) {
+    var type = getAdmonitionType(detailsEl);
+    if (!type) return detailsEl;
+    var div = document.createElement('div');
+    var classes = 'admonition ' + type;
+    if (detailsEl.classList.contains('inline')) classes += ' inline';
+    if (detailsEl.classList.contains('end')) classes += ' end';
+    div.className = classes;
+    div.setAttribute('contenteditable', 'true');
+
+    var summaryEl = detailsEl.querySelector(':scope > summary');
+    var titleP = document.createElement('p');
+    titleP.className = 'admonition-title';
+    titleP.textContent = summaryEl ? summaryEl.textContent : (type.charAt(0).toUpperCase() + type.slice(1));
+    div.appendChild(titleP);
+
+    while (detailsEl.firstChild) {
+      var child = detailsEl.firstChild;
+      if (child === summaryEl) { detailsEl.removeChild(child); continue; }
+      if (child.classList && child.classList.contains('md-admonition-settings-btn')) { detailsEl.removeChild(child); continue; }
+      div.appendChild(child);
+    }
+    if (detailsEl.parentNode) detailsEl.parentNode.replaceChild(div, detailsEl);
+    return div;
+  }
+
+  var _activeAdmonitionDropdown = null;
+  function dismissAdmonitionSettingsDropdown() {
+    if (_activeAdmonitionDropdown) {
+      if (_activeAdmonitionDropdown.el.parentNode) _activeAdmonitionDropdown.el.parentNode.removeChild(_activeAdmonitionDropdown.el);
+      if (_activeAdmonitionDropdown.closeHandler) document.removeEventListener('mousedown', _activeAdmonitionDropdown.closeHandler, true);
+      if (_activeAdmonitionDropdown.scrollHandler) window.removeEventListener('scroll', _activeAdmonitionDropdown.scrollHandler, true);
+      _activeAdmonitionDropdown = null;
+    }
+  }
+
+  function createAdmonitionSettingsDropdown(anchorBtn, adEl, ea) {
+    dismissAdmonitionSettingsDropdown();
+    dismissActiveSettingsDropdown();
+
+    var dropdown = document.createElement('div');
+    dropdown.className = 'md-admonition-settings-dropdown';
+    dropdown.setAttribute('contenteditable', 'false');
+
+    function positionDropdown() {
+      var rect = anchorBtn.getBoundingClientRect();
+      var left = rect.right - 210;
+      if (left < 0) left = rect.left;
+      dropdown.style.top = (rect.bottom + 2) + 'px';
+      dropdown.style.left = left + 'px';
+    }
+
+    function readState() {
+      var isCollapsible = (adEl.nodeName === 'DETAILS');
+      var isCollapsed = isCollapsible && adEl.hasAttribute('data-default-collapsed');
+      var hasInline = adEl.classList.contains('inline');
+      var hasEnd = adEl.classList.contains('end');
+      var hideTitle = adEl.hasAttribute('data-hide-title');
+      var placement = hasInline ? (hasEnd ? 'inline-end' : 'inline') : 'standalone';
+      return { isCollapsible: isCollapsible, isCollapsed: isCollapsed, placement: placement, hideTitle: hideTitle };
+    }
+
+    function buildUI() {
+      dropdown.innerHTML = '';
+      var state = readState();
+
+      var placementGroup = document.createElement('div');
+      placementGroup.className = 'md-admonition-placement-group';
+
+      var btnStandalone = document.createElement('button');
+      btnStandalone.type = 'button';
+      btnStandalone.className = 'md-admonition-placement-full' + (state.placement === 'standalone' ? ' active' : '');
+      btnStandalone.textContent = 'Standalone';
+      btnStandalone.addEventListener('mousedown', function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        adEl.classList.remove('inline', 'end');
+        syncAndRebuild();
+      });
+
+      var halvesRow = document.createElement('div');
+      halvesRow.className = 'md-admonition-placement-halves';
+
+      var btnInlineLeft = document.createElement('button');
+      btnInlineLeft.type = 'button';
+      btnInlineLeft.className = 'md-admonition-placement-half' + (state.placement === 'inline' ? ' active' : '');
+      btnInlineLeft.innerHTML = '&#9664; Inline';
+      btnInlineLeft.addEventListener('mousedown', function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        adEl.classList.add('inline');
+        adEl.classList.remove('end');
+        syncAndRebuild();
+      });
+
+      var btnInlineRight = document.createElement('button');
+      btnInlineRight.type = 'button';
+      btnInlineRight.className = 'md-admonition-placement-half' + (state.placement === 'inline-end' ? ' active' : '');
+      btnInlineRight.innerHTML = 'Inline &#9654;';
+      btnInlineRight.addEventListener('mousedown', function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        adEl.classList.add('inline', 'end');
+        syncAndRebuild();
+      });
+
+      halvesRow.appendChild(btnInlineLeft);
+      halvesRow.appendChild(btnInlineRight);
+      placementGroup.appendChild(btnStandalone);
+      placementGroup.appendChild(halvesRow);
+      dropdown.appendChild(placementGroup);
+
+      var collapsibleRow = document.createElement('div');
+      collapsibleRow.className = 'md-admonition-settings-row';
+      var collapsibleLabel = document.createElement('span');
+      collapsibleLabel.className = 'md-admonition-settings-label';
+      collapsibleLabel.textContent = 'Collapsible';
+      var collapsibleToggle = document.createElement('button');
+      collapsibleToggle.type = 'button';
+      collapsibleToggle.className = 'md-admonition-settings-toggle' + (state.isCollapsible ? ' active' : '');
+      collapsibleToggle.textContent = state.isCollapsible ? 'ON' : 'OFF';
+      collapsibleToggle.addEventListener('mousedown', function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        if (adEl.nodeName === 'DETAILS') {
+          adEl = convertToNonCollapsible(adEl);
+        } else {
+          adEl = convertToCollapsible(adEl);
+        }
+        addSettingsButtonToAdmonition(adEl);
+        anchorBtn = adEl.querySelector(':scope > .md-admonition-settings-btn');
+        positionDropdown();
+        syncAndRebuild();
+      });
+      collapsibleRow.appendChild(collapsibleLabel);
+      collapsibleRow.appendChild(collapsibleToggle);
+      dropdown.appendChild(collapsibleRow);
+
+      if (state.isCollapsible) {
+        var collapsedRow = document.createElement('div');
+        collapsedRow.className = 'md-admonition-settings-row';
+        var collapsedLabel = document.createElement('span');
+        collapsedLabel.className = 'md-admonition-settings-label';
+        collapsedLabel.textContent = 'Collapsed';
+        var collapsedToggle = document.createElement('button');
+        collapsedToggle.type = 'button';
+        collapsedToggle.className = 'md-admonition-settings-toggle' + (state.isCollapsed ? ' active' : '');
+        collapsedToggle.textContent = state.isCollapsed ? 'ON' : 'OFF';
+        collapsedToggle.addEventListener('mousedown', function (ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          if (adEl.hasAttribute('data-default-collapsed')) {
+            adEl.removeAttribute('data-default-collapsed');
+          } else {
+            adEl.setAttribute('data-default-collapsed', '1');
+          }
+          syncAndRebuild();
+        });
+        collapsedRow.appendChild(collapsedLabel);
+        collapsedRow.appendChild(collapsedToggle);
+        dropdown.appendChild(collapsedRow);
+      }
+
+      if (!state.isCollapsible) {
+        var hideTitleRow = document.createElement('div');
+        hideTitleRow.className = 'md-admonition-settings-row';
+        var hideTitleLabel = document.createElement('span');
+        hideTitleLabel.className = 'md-admonition-settings-label';
+        hideTitleLabel.textContent = 'Hide title';
+        var hideTitleToggle = document.createElement('button');
+        hideTitleToggle.type = 'button';
+        hideTitleToggle.className = 'md-admonition-settings-toggle' + (state.hideTitle ? ' active' : '');
+        hideTitleToggle.textContent = state.hideTitle ? 'ON' : 'OFF';
+        hideTitleToggle.addEventListener('mousedown', function (ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          if (adEl.hasAttribute('data-hide-title')) {
+            adEl.removeAttribute('data-hide-title');
+            var type = getAdmonitionType(adEl);
+            var defTitle = type ? (type.charAt(0).toUpperCase() + type.slice(1)) : 'Note';
+            var existingTitle = adEl.querySelector(':scope > .admonition-title');
+            if (!existingTitle) {
+              var titleP = document.createElement('p');
+              titleP.className = 'admonition-title';
+              titleP.textContent = defTitle;
+              adEl.insertBefore(titleP, adEl.firstChild);
+            }
+          } else {
+            adEl.setAttribute('data-hide-title', '1');
+            var titleEl = adEl.querySelector(':scope > .admonition-title');
+            if (titleEl) adEl.removeChild(titleEl);
+          }
+          syncAndRebuild();
+        });
+        hideTitleRow.appendChild(hideTitleLabel);
+        hideTitleRow.appendChild(hideTitleToggle);
+        dropdown.appendChild(hideTitleRow);
+      }
+    }
+
+    function syncAndRebuild() {
+      if (wysiwygEditor && wysiwygEditor._finalizeUpdate) {
+        wysiwygEditor._finalizeUpdate(ea.innerHTML);
+      }
+      buildUI();
+    }
+
+    buildUI();
+    document.body.appendChild(dropdown);
+    positionDropdown();
+
+    var closeHandler = function (ev) {
+      if (dropdown.contains(ev.target) || anchorBtn.contains(ev.target)) return;
+      dismissAdmonitionSettingsDropdown();
+    };
+    var scrollHandler = function () { positionDropdown(); };
+    document.addEventListener('mousedown', closeHandler, true);
+    window.addEventListener('scroll', scrollHandler, true);
+
+    _activeAdmonitionDropdown = { el: dropdown, closeHandler: closeHandler, scrollHandler: scrollHandler };
+  }
+
+  function addSettingsButtonToAdmonition(adEl) {
+    if (adEl.querySelector(':scope > .md-admonition-settings-btn')) return;
+    var btn = document.createElement('button');
+    btn.className = 'md-admonition-settings-btn';
+    btn.setAttribute('contenteditable', 'false');
+    btn.innerHTML = GEAR_SVG;
+    btn.type = 'button';
+    adEl.appendChild(btn);
+    btn.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (_activeAdmonitionDropdown) {
+        dismissAdmonitionSettingsDropdown();
+        return;
+      }
+      var ea = adEl.closest('.md-editable-area') || adEl.closest('[contenteditable="true"]');
+      if (!ea) {
+        var p = adEl.parentNode;
+        while (p) {
+          if (p.classList && p.classList.contains('md-editable-area')) { ea = p; break; }
+          p = p.parentNode;
+        }
+      }
+      if (ea) createAdmonitionSettingsDropdown(btn, adEl, ea);
+    });
+  }
+
+  function restoreEmptyAdmonitionTitle(titleEl) {
+    if (!titleEl) return;
+    var text = (titleEl.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '');
+    if (text.length > 0) return;
+    var adEl = titleEl.parentNode;
+    if (!adEl || !isAdmonitionElement(adEl)) return;
+    var type = getAdmonitionType(adEl);
+    var defTitle = type ? (type.charAt(0).toUpperCase() + type.slice(1)) : 'Note';
+    titleEl.textContent = defTitle;
+  }
+
+  function findTitleFromNode(node, ea) {
+    var el = node && node.nodeType === 3 ? node.parentNode : node;
+    while (el && el !== ea) {
+      if (el.classList && el.classList.contains('admonition-title')) return el;
+      if (el.nodeName === 'SUMMARY' && el.parentNode && el.parentNode.nodeName === 'DETAILS') return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
+
+  function enhanceAdmonitions(editableArea) {
+    if (!editableArea) return;
+    var admonitions = editableArea.querySelectorAll('.admonition');
+    for (var i = 0; i < admonitions.length; i++) {
+      addSettingsButtonToAdmonition(admonitions[i]);
+    }
+    for (var j = 0; j < ADMONITION_TYPE_IDS.length; j++) {
+      var detailsEls = editableArea.querySelectorAll('details.' + ADMONITION_TYPE_IDS[j]);
+      for (var k = 0; k < detailsEls.length; k++) {
+        var det = detailsEls[k];
+        det.setAttribute('open', '');
+        addSettingsButtonToAdmonition(det);
+        var summary = det.querySelector(':scope > summary');
+        if (summary) {
+          if (!summary.dataset.liveWysiwygClickPatched) {
+            summary.dataset.liveWysiwygClickPatched = '1';
+            summary.addEventListener('click', function (e) {
+              var d = this.parentNode;
+              if (d && d.nodeName === 'DETAILS') {
+                requestAnimationFrame(function () { d.setAttribute('open', ''); });
+              }
+            });
+          }
+        }
+      }
+    }
+  }
 
   (function patchInsertAdmonition() {
     var proto = MarkdownWYSIWYG.prototype;
@@ -1303,30 +1657,35 @@
         adDiv.appendChild(bodyP);
         var range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
         if (range) {
-          var block = range.startContainer;
-          if (block.nodeType === 3) block = block.parentNode;
-          while (block && block !== ea && block.parentNode !== ea) {
-            block = block.parentNode;
-          }
           var insertParent = ea;
           var targetBlock = null;
-          var bq = block;
-          while (bq && bq !== ea) {
-            if (bq.nodeName === 'BLOCKQUOTE') break;
-            bq = bq.parentNode;
+          var ancestor = range.startContainer;
+          if (ancestor.nodeType === 3) ancestor = ancestor.parentNode;
+          var foundContainer = null;
+          var cur = ancestor;
+          while (cur && cur !== ea) {
+            if (isAdmonitionElement(cur)) { foundContainer = cur; break; }
+            if (cur.nodeName === 'BLOCKQUOTE') { foundContainer = cur; break; }
+            cur = cur.parentNode;
           }
-          if (bq && bq.nodeName === 'BLOCKQUOTE') {
-            insertParent = bq;
-            var inner = range.startContainer;
-            if (inner.nodeType === 3) inner = inner.parentNode;
-            while (inner && inner !== bq && inner.parentNode !== bq) {
+          if (foundContainer) {
+            insertParent = foundContainer;
+            var inner = ancestor;
+            while (inner && inner !== foundContainer && inner.parentNode !== foundContainer) {
               inner = inner.parentNode;
             }
-            if (inner && inner !== bq && inner.parentNode === bq) {
-              targetBlock = inner;
+            if (inner && inner !== foundContainer && inner.parentNode === foundContainer) {
+              var isTitleOrGear = (inner.classList && (inner.classList.contains('admonition-title') || inner.classList.contains('md-admonition-settings-btn'))) || inner.nodeName === 'SUMMARY';
+              if (!isTitleOrGear) targetBlock = inner;
             }
-          } else if (block && block !== ea && block.parentNode === ea) {
-            targetBlock = block;
+          } else {
+            var block = ancestor;
+            while (block && block !== ea && block.parentNode !== ea) {
+              block = block.parentNode;
+            }
+            if (block && block !== ea && block.parentNode === ea) {
+              targetBlock = block;
+            }
           }
           if (targetBlock && targetBlock.parentNode === insertParent) {
             var blockText = (targetBlock.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '');
@@ -1348,6 +1707,7 @@
         } else {
           ea.appendChild(adDiv);
         }
+        enhanceAdmonitions(ea);
         editor.savedRangeInfo = null;
         editor._finalizeUpdate(ea.innerHTML);
       } else {
@@ -1730,29 +2090,58 @@
           (node.classList.contains('md-code-lang-btn') || node.classList.contains('md-code-lang-btn-advanced') || node.classList.contains('md-code-settings-btn') || node.classList.contains('md-code-settings-btn-advanced'))) {
         return '';
       }
-      if (node.nodeName === 'DIV' && node.classList && node.classList.contains('admonition')) {
+      if (node.nodeName === 'BUTTON' && node.classList &&
+          node.classList.contains('md-admonition-settings-btn')) {
+        return '';
+      }
+      var _admonitionTypes = ['note', 'warning', 'danger', 'tip', 'hint', 'important', 'caution', 'error', 'attention', 'abstract', 'info', 'success', 'question', 'failure', 'bug', 'example', 'quote'];
+      var _isAdmonitionDiv = node.nodeName === 'DIV' && node.classList && node.classList.contains('admonition');
+      var _isDetailsAdmonition = node.nodeName === 'DETAILS' && node.classList;
+      if (_isAdmonitionDiv || _isDetailsAdmonition) {
         var type = null;
-        var types = ['note', 'warning', 'danger', 'tip', 'hint', 'important', 'caution', 'error', 'attention'];
-        for (var i = 0; i < types.length; i++) {
-          if (node.classList.contains(types[i])) {
-            type = types[i];
+        for (var i = 0; i < _admonitionTypes.length; i++) {
+          if (node.classList.contains(_admonitionTypes[i])) {
+            type = _admonitionTypes[i];
             break;
           }
         }
         if (type) {
-          var titleEl = node.querySelector('.admonition-title');
+          var isCollapsible = (node.nodeName === 'DETAILS');
+          var isExpanded = isCollapsible && !node.hasAttribute('data-default-collapsed');
+          var hasInline = node.classList.contains('inline');
+          var hasEnd = node.classList.contains('end');
+          var hideTitle = node.hasAttribute('data-hide-title');
+
+          var titleEl = isCollapsible ? node.querySelector(':scope > summary') : node.querySelector(':scope > .admonition-title');
           var title = titleEl ? titleEl.textContent.replace(/\u00a0/g, ' ').trim() : '';
+
           var contentParts = [];
           for (var j = 0; j < node.childNodes.length; j++) {
             var c = node.childNodes[j];
-            if (c.nodeType !== 1 || c === titleEl) continue;
-            contentParts.push(orig.call(this, c, options || {}));
+            if (c === titleEl) continue;
+            if (c.nodeType === 1 && c.classList && c.classList.contains('md-admonition-settings-btn')) continue;
+            if (c.nodeType === 3) {
+              var txt = c.textContent;
+              if (txt && !/^[\s\u200B\u200C\u200D\uFEFF]*$/.test(txt)) contentParts.push(txt);
+              continue;
+            }
+            if (c.nodeType !== 1) continue;
+            contentParts.push(this._nodeToMarkdownRecursive(c, options || {}));
           }
           var body = contentParts.join('').trim();
           var bodyIndented = body ? body.split('\n').map(function (l) { return l ? '    ' + l : ''; }).join('\n') : '';
-          var out = '!!! ' + type;
+
+          var prefix = isCollapsible ? (isExpanded ? '???+' : '???') : '!!!';
+          var out = prefix + ' ' + type;
+          if (hasInline) out += ' inline';
+          if (hasEnd) out += ' end';
+
           var defaultTitle = type.charAt(0).toUpperCase() + type.slice(1);
-          if (title && title !== defaultTitle) out += ' "' + title.replace(/"/g, '\\"') + '"';
+          if (hideTitle && !isCollapsible) {
+            out += ' ""';
+          } else if (title && title !== defaultTitle) {
+            out += ' "' + title.replace(/"/g, '\\"') + '"';
+          }
           out += '\n' + (bodyIndented ? bodyIndented + '\n' : '');
           return out + '\n';
         }
@@ -3158,6 +3547,7 @@
       ea.innerHTML = editor._markdownToHtml(markedBody);
       if (typeof enhanceCodeBlocks === 'function') enhanceCodeBlocks(ea);
       if (typeof enhanceChecklists === 'function') enhanceChecklists(ea);
+      if (typeof enhanceAdmonitions === 'function') enhanceAdmonitions(ea);
       var mPos = findAndStripCursorMarkerPositions(ea);
       if (mPos) {
         ea.focus();
@@ -3366,6 +3756,87 @@
         return;
       }
 
+      if (tag === 'DIV' && node.classList && node.classList.contains('admonition')) {
+        var adType = null;
+        var adTypes = ['note', 'warning', 'danger', 'tip', 'hint', 'important', 'caution', 'error', 'attention', 'abstract', 'info', 'success', 'question', 'failure', 'bug', 'example', 'quote'];
+        for (var ati = 0; ati < adTypes.length; ati++) {
+          if (node.classList.contains(adTypes[ati])) { adType = adTypes[ati]; break; }
+        }
+        if (adType) {
+          ensureTrailingNewlines(md.length > 0 ? 2 : 0);
+          var adPrefix = '!!! ' + adType;
+          if (node.classList.contains('inline')) adPrefix += ' inline';
+          if (node.classList.contains('end')) adPrefix += ' end';
+          var adTitleEl = null;
+          for (var tc = node.firstChild; tc; tc = tc.nextSibling) {
+            if (tc.nodeType === 1 && tc.classList && tc.classList.contains('admonition-title')) { adTitleEl = tc; break; }
+          }
+          if (node.hasAttribute('data-hide-title')) {
+            adPrefix += ' ""';
+          } else if (adTitleEl) {
+            var adTitleText = adTitleEl.textContent.replace(/\u00b6/g, '').trim();
+            var adDefaultTitle = adType.charAt(0).toUpperCase() + adType.slice(1);
+            if (adTitleText && adTitleText !== adDefaultTitle) adPrefix += ' "' + adTitleText + '"';
+          }
+          md += adPrefix + '\n';
+          var savedMdLen = md.length;
+          for (var ac = node.firstChild; ac; ac = ac.nextSibling) {
+            if (ac === adTitleEl) continue;
+            if (ac.nodeType === 1 && ac.classList && ac.classList.contains('md-admonition-settings-btn')) continue;
+            walk(ac);
+          }
+          var bodyContent = md.slice(savedMdLen);
+          md = md.slice(0, savedMdLen);
+          var bodyLines = bodyContent.split('\n');
+          for (var bli = 0; bli < bodyLines.length; bli++) {
+            md += bodyLines[bli] ? '    ' + bodyLines[bli] : '';
+            if (bli < bodyLines.length - 1) md += '\n';
+          }
+          ensureTrailingNewlines(2);
+          return;
+        }
+      }
+
+      if (tag === 'DETAILS' && node.classList) {
+        var detType = null;
+        var detTypes = ['note', 'warning', 'danger', 'tip', 'hint', 'important', 'caution', 'error', 'attention', 'abstract', 'info', 'success', 'question', 'failure', 'bug', 'example', 'quote'];
+        for (var dti = 0; dti < detTypes.length; dti++) {
+          if (node.classList.contains(detTypes[dti])) { detType = detTypes[dti]; break; }
+        }
+        if (detType) {
+          ensureTrailingNewlines(md.length > 0 ? 2 : 0);
+          var detIsExpanded = node.hasAttribute('open') && !node.hasAttribute('data-default-collapsed');
+          var detPrefix = detIsExpanded ? '???+ ' + detType : '??? ' + detType;
+          if (node.classList.contains('inline')) detPrefix += ' inline';
+          if (node.classList.contains('end')) detPrefix += ' end';
+          var summaryEl = null;
+          for (var sc = node.firstChild; sc; sc = sc.nextSibling) {
+            if (sc.nodeType === 1 && sc.nodeName === 'SUMMARY') { summaryEl = sc; break; }
+          }
+          if (summaryEl) {
+            var summaryText = summaryEl.textContent.replace(/\u00b6/g, '').trim();
+            var detDefaultTitle = detType.charAt(0).toUpperCase() + detType.slice(1);
+            if (summaryText && summaryText !== detDefaultTitle) detPrefix += ' "' + summaryText + '"';
+          }
+          md += detPrefix + '\n';
+          var savedMdLen2 = md.length;
+          for (var dc = node.firstChild; dc; dc = dc.nextSibling) {
+            if (dc === summaryEl) continue;
+            if (dc.nodeType === 1 && dc.classList && dc.classList.contains('md-admonition-settings-btn')) continue;
+            walk(dc);
+          }
+          var bodyContent2 = md.slice(savedMdLen2);
+          md = md.slice(0, savedMdLen2);
+          var bodyLines2 = bodyContent2.split('\n');
+          for (var bli2 = 0; bli2 < bodyLines2.length; bli2++) {
+            md += bodyLines2[bli2] ? '    ' + bodyLines2[bli2] : '';
+            if (bli2 < bodyLines2.length - 1) md += '\n';
+          }
+          ensureTrailingNewlines(2);
+          return;
+        }
+      }
+
       if (tag === 'HR') {
         ensureTrailingNewlines(md.length > 0 ? 2 : 0);
         md += '---';
@@ -3512,6 +3983,7 @@
     ea.innerHTML = editor._markdownToHtml(markedBody);
     if (typeof enhanceCodeBlocks === 'function') enhanceCodeBlocks(ea);
     if (typeof enhanceChecklists === 'function') enhanceChecklists(ea);
+    if (typeof enhanceAdmonitions === 'function') enhanceAdmonitions(ea);
     var mPos = findAndStripCursorMarkerPositions(ea);
     if (mPos) {
       ea.focus();
@@ -3612,6 +4084,7 @@
       if (this.editableArea) {
         enhanceCodeBlocks(this.editableArea);
         enhanceChecklists(this.editableArea);
+        enhanceAdmonitions(this.editableArea);
         if (lastWysiwygSemanticSelection && this.currentMode === 'wysiwyg' && !isInitialSetup) {
           restoreSelectionFromSemantic(this.editableArea, lastWysiwygSemanticSelection);
         }
@@ -3790,6 +4263,7 @@
           var editableArea = this.editableArea;
           enhanceCodeBlocks(editableArea);
           enhanceChecklists(editableArea);
+          enhanceAdmonitions(editableArea);
           if (cursorInFrontmatter || cursorAtDocStart) {
             requestAnimationFrame(function () {
               editableArea.focus();
@@ -3926,6 +4400,7 @@
       } else if (mode === 'wysiwyg' && this.editableArea) {
         enhanceCodeBlocks(this.editableArea);
         enhanceChecklists(this.editableArea);
+        enhanceAdmonitions(this.editableArea);
       }
       return result;
     };
@@ -4508,6 +4983,19 @@
 
     (function () {
       var ea = wysiwygEditor.editableArea;
+      if (ea && !ea.dataset.liveWysiwygAdmonitionTitleMousedownAttached) {
+        ea.dataset.liveWysiwygAdmonitionTitleMousedownAttached = '1';
+        ea.addEventListener('mousedown', function () {
+          var sel = window.getSelection();
+          if (!sel || !sel.rangeCount) return;
+          var titleEl = findTitleFromNode(sel.anchorNode, ea);
+          if (titleEl) restoreEmptyAdmonitionTitle(titleEl);
+        });
+      }
+    })();
+
+    (function () {
+      var ea = wysiwygEditor.editableArea;
       if (ea && !ea.dataset.liveWysiwygChecklistInputAttached) {
         ea.dataset.liveWysiwygChecklistInputAttached = '1';
         ea.addEventListener('input', function () {
@@ -4933,6 +5421,7 @@
           }
           enhanceCodeBlocks(ea);
           enhanceBasicPreBlocks(ea);
+          enhanceAdmonitions(ea);
           requestAnimationFrame(function () {
             var codeEl = pre.querySelector('code') || pre;
             var textNode = codeEl.firstChild;
@@ -6275,6 +6764,75 @@
 
     (function () {
       var ea = wysiwygEditor.editableArea;
+      if (ea && !ea.dataset.liveWysiwygHiddenTitleAdmonitionEnterAttached) {
+        ea.dataset.liveWysiwygHiddenTitleAdmonitionEnterAttached = '1';
+        ea.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' || e.shiftKey) return;
+          if (wysiwygEditor.currentMode !== 'wysiwyg') return;
+          var sel = window.getSelection();
+          if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
+          var r = sel.getRangeAt(0);
+          var node = r.startContainer;
+          var admonition = null;
+          var el = (node.nodeType === 3) ? node.parentNode : node;
+          while (el && el !== ea) {
+            if (isAdmonitionElement(el)) { admonition = el; break; }
+            el = el.parentNode;
+          }
+          if (!admonition || !admonition.hasAttribute('data-hide-title')) return;
+
+          var firstContent = null;
+          for (var ch = admonition.firstChild; ch; ch = ch.nextSibling) {
+            if (ch.nodeType !== 1) continue;
+            if (ch.classList && ch.classList.contains('md-admonition-settings-btn')) continue;
+            firstContent = ch;
+            break;
+          }
+          if (!firstContent) return;
+
+          var cursorBlock = node;
+          while (cursorBlock && cursorBlock.parentNode !== admonition) {
+            cursorBlock = cursorBlock.parentNode;
+          }
+          if (cursorBlock !== firstContent) return;
+
+          var atStart = false;
+          if (r.startContainer === firstContent && r.startOffset === 0) {
+            atStart = true;
+          } else if (r.startContainer.nodeType === 3 && r.startOffset === 0) {
+            var prev = r.startContainer;
+            while (prev) {
+              var ps = prev.previousSibling;
+              if (ps) {
+                var text = (ps.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+                if (text.length > 0) break;
+                prev = ps;
+              } else {
+                if (prev.parentNode === firstContent) { atStart = true; break; }
+                prev = prev.parentNode;
+              }
+            }
+          }
+          if (!atStart) return;
+
+          e.preventDefault();
+          var p = document.createElement('p');
+          p.innerHTML = '&#8203;';
+          admonition.parentNode.insertBefore(p, admonition);
+          var newRange = document.createRange();
+          newRange.setStart(p.firstChild || p, 0);
+          newRange.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+          if (wysiwygEditor._finalizeUpdate) {
+            wysiwygEditor._finalizeUpdate(ea.innerHTML);
+          }
+        }, true);
+      }
+    })();
+
+    (function () {
+      var ea = wysiwygEditor.editableArea;
       if (ea && !ea.dataset.liveWysiwygCodeBlockEnterExitAttached) {
         ea.dataset.liveWysiwygCodeBlockEnterExitAttached = '1';
         var stripMarkers = /[\u200B\u200C\u200D\uFEFF]/g;
@@ -6981,6 +7539,7 @@
         var cl = node.classList;
         if (name === 'UL' || name === 'OL') return 'list';
         if (cl && cl.contains('admonition')) return 'admonition';
+        if (name === 'DETAILS' && isAdmonitionElement(node)) return 'admonition';
         if (cl && cl.contains('md-code-block')) return 'codeblock';
         if (name === 'PRE') return 'codeblock';
         if (name === 'BLOCKQUOTE') return 'blockquote';
@@ -7017,7 +7576,7 @@
       function isEmptyContainer(container) {
         var text = (container.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '');
         if (text.length > 0) return false;
-        if (container.querySelector('pre, .md-code-block, .admonition, img, table, blockquote, ul, ol')) return false;
+        if (container.querySelector('pre, .md-code-block, .admonition, details, img, table, blockquote, ul, ol')) return false;
         return true;
       }
 
@@ -7036,7 +7595,7 @@
       }
 
       function stripCodeUIFromClone(clone) {
-        var uis = clone.querySelectorAll('.md-code-lang-btn, .md-code-lang-btn-advanced, .md-code-lang-dropdown, .md-code-settings-btn, .md-code-settings-btn-advanced, .md-code-settings-dropdown');
+        var uis = clone.querySelectorAll('.md-code-lang-btn, .md-code-lang-btn-advanced, .md-code-lang-dropdown, .md-code-settings-btn, .md-code-settings-btn-advanced, .md-code-settings-dropdown, .md-admonition-settings-btn');
         for (var i = uis.length - 1; i >= 0; i--) {
           uis[i].parentNode.removeChild(uis[i]);
         }
@@ -7073,12 +7632,15 @@
         if (isEmptyContainer(parent)) {
           if (parent === ea) {
             insertPlaceholder(ea);
-          } else if (parent.classList && parent.classList.contains('admonition')) {
-            var titleEl = parent.querySelector('.admonition-title');
+          } else if (isAdmonitionElement(parent)) {
+            var titleEl = (parent.nodeName === 'DETAILS')
+              ? parent.querySelector(':scope > summary')
+              : parent.querySelector(':scope > .admonition-title');
+            var gearBtn = parent.querySelector(':scope > .md-admonition-settings-btn');
             var hasOtherContent = false;
             for (var ci = 0; ci < parent.childNodes.length; ci++) {
               var cn = parent.childNodes[ci];
-              if (cn === titleEl) continue;
+              if (cn === titleEl || cn === gearBtn) continue;
               if (cn.nodeType === 3 && !cn.textContent.replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '')) continue;
               hasOtherContent = true;
               break;
@@ -7121,7 +7683,7 @@
             ctx.li = cur;
             ctx.type = 'list-item';
           }
-          if (cur.classList && cur.classList.contains('admonition') && !ctx.admonition) {
+          if (!ctx.admonition && isAdmonitionElement(cur)) {
             ctx.admonition = cur;
             if (ctx.type === 'toplevel') ctx.type = 'admonition';
           }
@@ -7153,7 +7715,7 @@
       function isEmptyParagraph(node) {
         if (!node || node.nodeName !== 'P') return false;
         var text = (node.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '');
-        return text.length === 0 && !node.querySelector('img, pre, .md-code-block, .admonition, table, blockquote, ul, ol');
+        return text.length === 0 && !node.querySelector('img, pre, .md-code-block, .admonition, details, table, blockquote, ul, ol');
       }
 
       function insertBlockAfterTarget(block, ctx) {
@@ -7223,6 +7785,8 @@
           } else {
             ea.appendChild(adEl);
           }
+        } else if (ctx.type === 'admonition') {
+          insertBlockAfterTarget(adEl, ctx);
         } else if (ctx.type === 'blockquote') {
           insertBlockAfterTarget(adEl, ctx);
         } else {
@@ -7396,12 +7960,14 @@
           case 'admonition':
             blockContent.setAttribute('contenteditable', 'true');
             pasteAdmonition(blockContent, ctx);
+            enhanceAdmonitions(ea);
             focusInsidePastedBlock('admonition', blockContent);
             break;
           case 'codeblock':
             pasteCodeblock(blockContent, ctx);
             enhanceBasicPreBlocks(ea);
             enhanceCodeBlocks(ea);
+            enhanceAdmonitions(ea);
             focusInsidePastedBlock('codeblock', blockContent);
             break;
           case 'blockquote':

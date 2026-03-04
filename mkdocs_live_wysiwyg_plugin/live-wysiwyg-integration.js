@@ -862,71 +862,161 @@
     cb.parentNode.removeChild(cb);
   }
 
+  function findCursorList(ea) {
+    var sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    var node = sel.getRangeAt(0).commonAncestorContainer;
+    if (node.nodeType === 3) node = node.parentNode;
+    var li = node;
+    while (li && li !== ea) {
+      if (li.nodeName === 'LI') break;
+      li = li.parentNode;
+    }
+    if (!li || li.nodeName !== 'LI') return null;
+    var list = li.parentNode;
+    if (!list || (list.nodeName !== 'UL' && list.nodeName !== 'OL')) return null;
+    var isChecklist = false;
+    if (list.nodeName === 'UL') {
+      for (var i = 0; i < list.children.length; i++) {
+        var child = list.children[i];
+        if (child.nodeName === 'LI') {
+          var cb = child.querySelector('input[type="checkbox"]');
+          if (cb && cb.parentNode === child) { isChecklist = true; break; }
+        }
+      }
+    }
+    return { list: list, li: li, isChecklist: isChecklist };
+  }
+
+  function convertListTag(list, newTag) {
+    if (list.nodeName === newTag) return list;
+    var newList = document.createElement(newTag);
+    while (list.firstChild) newList.appendChild(list.firstChild);
+    list.parentNode.replaceChild(newList, list);
+    return newList;
+  }
+
+  function createListInContainer(ea, listTag, isChecklist) {
+    var sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    var range = sel.getRangeAt(0);
+    var node = range.startContainer;
+    if (node.nodeType === 3) node = node.parentNode;
+
+    var container = ea;
+    var anc = node;
+    while (anc && anc !== ea) {
+      var inLi = anc.nodeName === 'LI' && anc.parentNode && (anc.parentNode.nodeName === 'UL' || anc.parentNode.nodeName === 'OL');
+      if ((anc.classList && anc.classList.contains('admonition')) || anc.nodeName === 'BLOCKQUOTE' || inLi) {
+        container = anc;
+        break;
+      }
+      anc = anc.parentNode;
+    }
+
+    var inner = node;
+    while (inner && inner !== container && inner.parentNode !== container) {
+      inner = inner.parentNode;
+    }
+    var targetBlock = (inner && inner !== container && inner.parentNode === container) ? inner : null;
+
+    if (container === ea && !targetBlock) {
+      var block = node;
+      while (block && block !== ea && block.parentNode !== ea) block = block.parentNode;
+      if (block && block !== ea && block.parentNode === ea) targetBlock = block;
+    }
+
+    var list = document.createElement(listTag);
+    var li = document.createElement('li');
+
+    if (targetBlock) {
+      var text = (targetBlock.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '').trim();
+      if (text && targetBlock.nodeType === 1) {
+        while (targetBlock.firstChild) li.appendChild(targetBlock.firstChild);
+      } else {
+        li.innerHTML = '&#8203;';
+      }
+      list.appendChild(li);
+      if (isChecklist) addCheckboxToLi(li);
+      container.insertBefore(list, targetBlock);
+      container.removeChild(targetBlock);
+    } else {
+      li.innerHTML = '&#8203;';
+      list.appendChild(li);
+      if (isChecklist) addCheckboxToLi(li);
+      container.appendChild(list);
+    }
+
+    sel = window.getSelection();
+    if (sel) {
+      var newRange = document.createRange();
+      var focusNode = li;
+      if (isChecklist) {
+        var cb = li.querySelector('input[type="checkbox"]');
+        if (cb && cb.nextSibling) {
+          focusNode = cb.nextSibling;
+          newRange.setStart(focusNode, focusNode.nodeType === 3 ? focusNode.textContent.length : 0);
+        } else {
+          newRange.selectNodeContents(li);
+          newRange.collapse(false);
+        }
+      } else {
+        newRange.selectNodeContents(li);
+        newRange.collapse(false);
+      }
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+    }
+  }
+
   (function patchToggleChecklist() {
     var proto = MarkdownWYSIWYG.prototype;
 
     proto._toggleChecklist = function () {
       if (this.currentMode === 'wysiwyg') {
         this.editableArea.focus();
-        var sel = window.getSelection();
-        if (!sel || sel.rangeCount === 0) return;
-        var node = sel.getRangeAt(0).commonAncestorContainer;
-        if (node.nodeType === 3) node = node.parentNode;
-        var ul = node;
-        while (ul && ul !== this.editableArea) {
-          if (ul.nodeName === 'UL') break;
-          ul = ul.parentNode;
-        }
-        if (ul && ul.nodeName === 'UL') {
-          var hasCheckbox = false;
-          for (var i = 0; i < ul.children.length; i++) {
-            var li = ul.children[i];
-            if (li.nodeName === 'LI') {
-              var cb = li.querySelector('input[type="checkbox"]');
-              if (cb && cb.parentNode === li) { hasCheckbox = true; break; }
+        var ea = this.editableArea;
+        var info = findCursorList(ea);
+        if (info) {
+          var list = info.list;
+          var cursorLi = info.li;
+          var sel = window.getSelection();
+          var savedNode = null, savedOffset = 0;
+          if (sel && sel.rangeCount > 0) {
+            var r = sel.getRangeAt(0);
+            savedNode = r.startContainer;
+            savedOffset = r.startOffset;
+          }
+          if (info.isChecklist) {
+            for (var i = 0; i < list.children.length; i++) {
+              if (list.children[i].nodeName === 'LI') removeCheckboxFromLi(list.children[i]);
+            }
+          } else {
+            if (list.nodeName === 'OL') {
+              list = convertListTag(list, 'UL');
+            }
+            for (var i = 0; i < list.children.length; i++) {
+              if (list.children[i].nodeName === 'LI') addCheckboxToLi(list.children[i]);
             }
           }
-          var lis = ul.children;
-          for (var i = 0; i < lis.length; i++) {
-            if (lis[i].nodeName === 'LI') {
-              if (hasCheckbox) removeCheckboxFromLi(lis[i]);
-              else addCheckboxToLi(lis[i]);
+          if (sel && savedNode) {
+            try {
+              var rng = document.createRange();
+              if (savedNode.parentNode) {
+                rng.setStart(savedNode, Math.min(savedOffset, savedNode.nodeType === 3 ? savedNode.textContent.length : savedNode.childNodes.length));
+              } else {
+                rng.selectNodeContents(cursorLi);
+                rng.collapse(false);
+              }
+              rng.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(rng);
+            } catch (ex) {
+              /* cursor restore failed, leave as-is */
             }
           }
         } else {
-          document.execCommand('insertUnorderedList', false, null);
-          sel = window.getSelection();
-          if (sel && sel.rangeCount > 0) {
-            node = sel.getRangeAt(0).commonAncestorContainer;
-            if (node.nodeType === 3) node = node.parentNode;
-            ul = node;
-            while (ul && ul !== this.editableArea) {
-              if (ul.nodeName === 'UL') break;
-              ul = ul.parentNode;
-            }
-            if (ul && ul.nodeName === 'UL') {
-              var lis = ul.children;
-              for (var i = 0; i < lis.length; i++) {
-                if (lis[i].nodeName === 'LI') addCheckboxToLi(lis[i]);
-              }
-              var firstLi = ul.querySelector('li');
-              if (firstLi) {
-                var cb = firstLi.querySelector('input[type="checkbox"]');
-                if (cb) {
-                  var target = cb.nextSibling;
-                  var range = document.createRange();
-                  if (target && target.nodeType === 3) {
-                    range.setStart(target, target.textContent.length);
-                  } else {
-                    range.setStartAfter(cb);
-                  }
-                  range.collapse(true);
-                  sel.removeAllRanges();
-                  sel.addRange(range);
-                }
-              }
-            }
-          }
+          createListInContainer(ea, 'UL', true);
         }
         this._finalizeUpdate(this.editableArea.innerHTML);
       } else {
@@ -1050,39 +1140,53 @@
     var origHandleToolbarClick = proto._handleToolbarClick;
     if (origHandleToolbarClick) {
       proto._handleToolbarClick = function (buttonConfig, buttonElement) {
-        if (buttonConfig.id === 'ol' && this.currentMode === 'wysiwyg') {
-          var sel = window.getSelection();
-          if (sel && sel.rangeCount > 0) {
-            var node = sel.getRangeAt(0).commonAncestorContainer;
-            if (node.nodeType === 3) node = node.parentNode;
-            var list = node;
-            while (list && list !== this.editableArea) {
-              if (list.nodeName === 'UL' || list.nodeName === 'OL') break;
-              list = list.parentNode;
+        var isListBtn = (buttonConfig.id === 'ul' || buttonConfig.id === 'ol') && this.currentMode === 'wysiwyg';
+        if (isListBtn) {
+          this.editableArea.focus();
+          var ea = this.editableArea;
+          var info = findCursorList(ea);
+          if (info) {
+            var list = info.list;
+            var requestedTag = (buttonConfig.id === 'ol') ? 'OL' : 'UL';
+            if (list.nodeName === requestedTag && !info.isChecklist) {
+              origHandleToolbarClick.apply(this, arguments);
+              return;
             }
-            if (list && list.nodeName === 'UL') {
-              var hasDirectCheckbox = false;
+            var sel = window.getSelection();
+            var savedNode = null, savedOffset = 0;
+            if (sel && sel.rangeCount > 0) {
+              var r = sel.getRangeAt(0);
+              savedNode = r.startContainer;
+              savedOffset = r.startOffset;
+            }
+            if (info.isChecklist) {
               for (var i = 0; i < list.children.length; i++) {
-                var li = list.children[i];
-                if (li.nodeName === 'LI') {
-                  var cb = li.querySelector('input[type="checkbox"]');
-                  if (cb && cb.parentNode === li) { hasDirectCheckbox = true; break; }
-                }
-              }
-              if (hasDirectCheckbox) {
-                this.editableArea.focus();
-                for (var i = 0; i < list.children.length; i++) {
-                  if (list.children[i].nodeName === 'LI') removeCheckboxFromLi(list.children[i]);
-                }
-                var ol = document.createElement('OL');
-                while (list.firstChild) ol.appendChild(list.firstChild);
-                list.parentNode.replaceChild(ol, list);
-                this._finalizeUpdate(this.editableArea.innerHTML);
-                this._updateToolbarActiveStates();
-                return;
+                if (list.children[i].nodeName === 'LI') removeCheckboxFromLi(list.children[i]);
               }
             }
+            convertListTag(list, requestedTag);
+            if (sel && savedNode) {
+              try {
+                var rng = document.createRange();
+                if (savedNode.parentNode) {
+                  rng.setStart(savedNode, Math.min(savedOffset, savedNode.nodeType === 3 ? savedNode.textContent.length : savedNode.childNodes.length));
+                } else {
+                  rng.selectNodeContents(info.li);
+                  rng.collapse(false);
+                }
+                rng.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(rng);
+              } catch (ex) { /* cursor restore failed */ }
+            }
+            this._finalizeUpdate(ea.innerHTML);
+            this._updateToolbarActiveStates();
+            return;
           }
+          createListInContainer(ea, (buttonConfig.id === 'ol') ? 'OL' : 'UL', false);
+          this._finalizeUpdate(ea.innerHTML);
+          this._updateToolbarActiveStates();
+          return;
         }
         origHandleToolbarClick.apply(this, arguments);
       };
@@ -2735,6 +2839,27 @@
     }
   }
 
+  function focusCursorAtDocStart(editable) {
+    var first = editable.firstElementChild;
+    if (first && /^H[1-6]$/.test(first.nodeName)) {
+      var walker = document.createTreeWalker(first, NodeFilter.SHOW_TEXT, null, false);
+      var textNode = walker.nextNode();
+      if (textNode) {
+        var stripMarkers = /[\u200B\u200C\u200D\uFEFF]/g;
+        var offset = 0;
+        var raw = textNode.textContent || '';
+        while (offset < raw.length && stripMarkers.test(raw[offset])) { offset++; stripMarkers.lastIndex = 0; }
+        var range = document.createRange();
+        range.setStart(textNode, offset);
+        range.collapse(true);
+        var sel = window.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+        return;
+      }
+    }
+    setSelectionInEditable(editable, 0, 0);
+  }
+
   function captureSemanticSelection(editable) {
     var sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return null;
@@ -3668,7 +3793,7 @@
           if (cursorInFrontmatter || cursorAtDocStart) {
             requestAnimationFrame(function () {
               editableArea.focus();
-              setSelectionInEditable(editableArea, 0, 0);
+              focusCursorAtDocStart(editableArea);
               editableArea.scrollTop = 0;
             });
           } else if (codeTitleSelection) {
@@ -6098,6 +6223,58 @@
 
     (function () {
       var ea = wysiwygEditor.editableArea;
+      if (ea && !ea.dataset.liveWysiwygHeadingEnterAttached) {
+        ea.dataset.liveWysiwygHeadingEnterAttached = '1';
+        ea.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' || e.shiftKey) return;
+          if (wysiwygEditor.currentMode !== 'wysiwyg') return;
+          var sel = window.getSelection();
+          if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
+          var r = sel.getRangeAt(0);
+          var node = r.startContainer;
+          var heading = null;
+          var el = (node.nodeType === 3) ? node.parentNode : node;
+          while (el && el !== ea) {
+            if (/^H[1-6]$/.test(el.nodeName)) { heading = el; break; }
+            el = el.parentNode;
+          }
+          if (!heading) return;
+          var atStart = false;
+          if (r.startContainer === heading && r.startOffset === 0) {
+            atStart = true;
+          } else if (r.startContainer.nodeType === 3 && r.startOffset === 0) {
+            var prev = r.startContainer;
+            while (prev) {
+              var ps = prev.previousSibling;
+              if (ps) {
+                var text = (ps.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+                if (text.length > 0) break;
+                prev = ps;
+              } else {
+                if (prev.parentNode === heading) { atStart = true; break; }
+                prev = prev.parentNode;
+              }
+            }
+          }
+          if (!atStart) return;
+          e.preventDefault();
+          var p = document.createElement('p');
+          p.innerHTML = '&#8203;';
+          heading.parentNode.insertBefore(p, heading);
+          var newRange = document.createRange();
+          newRange.setStart(p.firstChild || p, 0);
+          newRange.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+          if (wysiwygEditor._finalizeUpdate) {
+            wysiwygEditor._finalizeUpdate(ea.innerHTML);
+          }
+        }, true);
+      }
+    })();
+
+    (function () {
+      var ea = wysiwygEditor.editableArea;
       if (ea && !ea.dataset.liveWysiwygCodeBlockEnterExitAttached) {
         ea.dataset.liveWysiwygCodeBlockEnterExitAttached = '1';
         var stripMarkers = /[\u200B\u200C\u200D\uFEFF]/g;
@@ -6386,6 +6563,31 @@
                 r.collapse(true);
                 sel.removeAllRanges();
                 sel.addRange(r);
+                var afterText = codeEl.textContent.substring(
+                  (function () {
+                    var off = 0;
+                    var w = doc.createTreeWalker(codeEl, NodeFilter.SHOW_TEXT, null, false);
+                    var n;
+                    while ((n = w.nextNode())) {
+                      if (n === nl) return off + 1 + indentStr.length;
+                      off += n.textContent.length;
+                    }
+                    return codeEl.textContent.length;
+                  })()
+                );
+                if (!afterText || !afterText.replace(/[\n\r\s\t\u200B\u200C\u200D\uFEFF]/g, '')) {
+                  var lastTextNode = null;
+                  var tw = doc.createTreeWalker(codeEl, NodeFilter.SHOW_TEXT, null, false);
+                  var tn;
+                  while ((tn = tw.nextNode())) lastTextNode = tn;
+                  if (lastTextNode) {
+                    if (!lastTextNode.textContent.endsWith('\n')) {
+                      lastTextNode.textContent += '\n';
+                    }
+                  } else {
+                    codeEl.appendChild(doc.createTextNode('\n'));
+                  }
+                }
                 if (ea.dispatchEvent) {
                   ea.dispatchEvent(new Event('input', { bubbles: true }));
                 }
@@ -6513,18 +6715,96 @@
       }
     })();
 
+    function _isCodeUINode(n) {
+      if (n.nodeType !== 1 || !n.classList) return false;
+      return n.classList.contains('md-code-lang-btn') || n.classList.contains('md-code-lang-btn-advanced') ||
+             n.classList.contains('md-code-lang-dropdown') || n.classList.contains('md-code-line-numbers') ||
+             n.classList.contains('md-code-settings-btn') || n.classList.contains('md-code-settings-btn-advanced') ||
+             n.classList.contains('md-code-settings-dropdown');
+    }
+
+    function _buildTargetRange(target) {
+      var range = document.createRange();
+      if (target.nodeName === 'PRE') {
+        var codeEl = target.querySelector('code');
+        var isSingleCode = false;
+        if (codeEl) {
+          var effectiveCount = 0;
+          for (var si = 0; si < target.childNodes.length; si++) {
+            if (_isCodeUINode(target.childNodes[si])) continue;
+            effectiveCount++;
+          }
+          isSingleCode = (effectiveCount === 1 && codeEl.childNodes.length === 1 &&
+                          codeEl.firstChild && codeEl.firstChild.nodeType === 3);
+        }
+        if (isSingleCode) {
+          var textNode = codeEl.firstChild;
+          var len = textNode.textContent.length;
+          if (textNode.textContent.endsWith('\n') && len > 0) len = len - 1;
+          range.setStart(textNode, 0);
+          range.setEnd(textNode, len);
+        } else {
+          var firstContent = null, lastContent = null;
+          for (var ci = 0; ci < target.childNodes.length; ci++) {
+            var cn = target.childNodes[ci];
+            if (_isCodeUINode(cn)) continue;
+            if (!firstContent) firstContent = cn;
+            lastContent = cn;
+          }
+          if (firstContent) {
+            range.setStartBefore(firstContent);
+            if (lastContent.nodeType === 3 && lastContent.textContent.endsWith('\n')) {
+              range.setEnd(lastContent, lastContent.textContent.length - 1);
+            } else {
+              range.setEndAfter(lastContent);
+            }
+          } else {
+            range.selectNodeContents(target);
+          }
+        }
+      } else {
+        range.selectNodeContents(target);
+      }
+      return range;
+    }
+
+    function _buildAdmonitionBodyRange(ad) {
+      var range = document.createRange();
+      var firstBody = null, lastBody = null;
+      for (var ci = 0; ci < ad.childNodes.length; ci++) {
+        var cn = ad.childNodes[ci];
+        if (cn.nodeType === 1 && cn.classList && cn.classList.contains('admonition-title')) continue;
+        if (cn.nodeType === 3 && !cn.textContent.replace(/[​‌‍﻿\s]/g, '')) continue;
+        if (!firstBody) firstBody = cn;
+        lastBody = cn;
+      }
+      if (firstBody && lastBody) {
+        range.setStartBefore(firstBody);
+        range.setEndAfter(lastBody);
+      } else {
+        range.selectNodeContents(ad);
+      }
+      return range;
+    }
+
+    function _selectionCoversRange(sel, targetRange) {
+      if (!sel.rangeCount) return false;
+      var cur = sel.getRangeAt(0);
+      try {
+        return cur.compareBoundaryPoints(Range.START_TO_START, targetRange) <= 0 &&
+               cur.compareBoundaryPoints(Range.END_TO_END, targetRange) >= 0;
+      } catch (ex) { return false; }
+    }
+
     (function () {
       var ea = wysiwygEditor.editableArea;
       if (ea && !ea.dataset.liveWysiwygProgressiveSelectAllAttached) {
         ea.dataset.liveWysiwygProgressiveSelectAllAttached = '1';
 
-        function isCodeUINode(n) {
-          if (n.nodeType !== 1 || !n.classList) return false;
-          return n.classList.contains('md-code-lang-btn') || n.classList.contains('md-code-lang-btn-advanced') ||
-                 n.classList.contains('md-code-lang-dropdown') || n.classList.contains('md-code-line-numbers') ||
-                 n.classList.contains('md-code-settings-btn') || n.classList.contains('md-code-settings-btn-advanced') ||
-                 n.classList.contains('md-code-settings-dropdown');
-        }
+        var isCodeUINode = _isCodeUINode;
+        var buildTargetRange = _buildTargetRange;
+        var buildAdmonitionBodyRange = _buildAdmonitionBodyRange;
+        var selectionCoversRange = _selectionCoversRange;
 
         function isSelectableTarget(node) {
           if (node === ea) return true;
@@ -6539,79 +6819,6 @@
           if (/^(P|H[1-6]|LI|TD|TH)$/.test(name)) return true;
           if (/^(UL|OL|TABLE|BLOCKQUOTE)$/.test(name)) return true;
           return false;
-        }
-
-        function buildTargetRange(target) {
-          var range = document.createRange();
-          if (target.nodeName === 'PRE') {
-            var codeEl = target.querySelector('code');
-            var isSingleCode = false;
-            if (codeEl) {
-              var effectiveCount = 0;
-              for (var si = 0; si < target.childNodes.length; si++) {
-                if (isCodeUINode(target.childNodes[si])) continue;
-                effectiveCount++;
-              }
-              isSingleCode = (effectiveCount === 1 && codeEl.childNodes.length === 1 &&
-                              codeEl.firstChild && codeEl.firstChild.nodeType === 3);
-            }
-            if (isSingleCode) {
-              var textNode = codeEl.firstChild;
-              var len = textNode.textContent.length;
-              if (textNode.textContent.endsWith('\n') && len > 0) len = len - 1;
-              range.setStart(textNode, 0);
-              range.setEnd(textNode, len);
-            } else {
-              var firstContent = null, lastContent = null;
-              for (var ci = 0; ci < target.childNodes.length; ci++) {
-                var cn = target.childNodes[ci];
-                if (isCodeUINode(cn)) continue;
-                if (!firstContent) firstContent = cn;
-                lastContent = cn;
-              }
-              if (firstContent) {
-                range.setStartBefore(firstContent);
-                if (lastContent.nodeType === 3 && lastContent.textContent.endsWith('\n')) {
-                  range.setEnd(lastContent, lastContent.textContent.length - 1);
-                } else {
-                  range.setEndAfter(lastContent);
-                }
-              } else {
-                range.selectNodeContents(target);
-              }
-            }
-          } else {
-            range.selectNodeContents(target);
-          }
-          return range;
-        }
-
-        function buildAdmonitionBodyRange(ad) {
-          var range = document.createRange();
-          var firstBody = null, lastBody = null;
-          for (var ci = 0; ci < ad.childNodes.length; ci++) {
-            var cn = ad.childNodes[ci];
-            if (cn.nodeType === 1 && cn.classList && cn.classList.contains('admonition-title')) continue;
-            if (cn.nodeType === 3 && !cn.textContent.replace(/[​‌‍﻿\s]/g, '')) continue;
-            if (!firstBody) firstBody = cn;
-            lastBody = cn;
-          }
-          if (firstBody && lastBody) {
-            range.setStartBefore(firstBody);
-            range.setEndAfter(lastBody);
-          } else {
-            range.selectNodeContents(ad);
-          }
-          return range;
-        }
-
-        function selectionCoversRange(sel, targetRange) {
-          if (!sel.rangeCount) return false;
-          var cur = sel.getRangeAt(0);
-          try {
-            return cur.compareBoundaryPoints(Range.START_TO_START, targetRange) <= 0 &&
-                   cur.compareBoundaryPoints(Range.END_TO_END, targetRange) >= 0;
-          } catch (ex) { return false; }
         }
 
         var HEADING_RE = /^H[1-6]$/;
@@ -6761,6 +6968,454 @@
       }
     })();
 
+    (function blockCutPasteHandler() {
+      var ea = wysiwygEditor.editableArea;
+      if (!ea || ea.dataset.liveWysiwygBlockCutPasteAttached) return;
+      ea.dataset.liveWysiwygBlockCutPasteAttached = '1';
+
+      var BLOCK_ATTR = 'data-wysiwyg-block';
+
+      function classifyBlock(node) {
+        if (!node || node.nodeType !== 1) return null;
+        var name = node.nodeName;
+        var cl = node.classList;
+        if (name === 'UL' || name === 'OL') return 'list';
+        if (cl && cl.contains('admonition')) return 'admonition';
+        if (cl && cl.contains('md-code-block')) return 'codeblock';
+        if (name === 'PRE') return 'codeblock';
+        if (name === 'BLOCKQUOTE') return 'blockquote';
+        return null;
+      }
+
+      function findSelectedBlock(sel) {
+        if (!sel || !sel.rangeCount) return null;
+        var node = sel.anchorNode;
+        if (!node) return null;
+        var el = (node.nodeType === 3) ? node.parentNode : node;
+        var candidates = [];
+        while (el && el !== ea) {
+          var type = classifyBlock(el);
+          if (type) {
+            candidates.push({ node: el, type: type });
+          }
+          el = el.parentNode;
+        }
+        for (var i = 0; i < candidates.length; i++) {
+          var c = candidates[i];
+          var targetRange = _buildTargetRange(c.node);
+          if (_selectionCoversRange(sel, targetRange)) {
+            if (c.node.nodeName === 'PRE' && c.node.parentNode &&
+                c.node.parentNode.classList && c.node.parentNode.classList.contains('md-code-block')) {
+              return { node: c.node.parentNode, type: 'codeblock' };
+            }
+            return c;
+          }
+        }
+        return null;
+      }
+
+      function isEmptyContainer(container) {
+        var text = (container.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '');
+        if (text.length > 0) return false;
+        if (container.querySelector('pre, .md-code-block, .admonition, img, table, blockquote, ul, ol')) return false;
+        return true;
+      }
+
+      function insertPlaceholder(parent) {
+        var p = document.createElement('p');
+        p.innerHTML = '&#8203;';
+        parent.appendChild(p);
+        var sel = window.getSelection();
+        if (sel) {
+          var range = document.createRange();
+          range.setStart(p, 0);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+
+      function stripCodeUIFromClone(clone) {
+        var uis = clone.querySelectorAll('.md-code-lang-btn, .md-code-lang-btn-advanced, .md-code-lang-dropdown, .md-code-settings-btn, .md-code-settings-btn-advanced, .md-code-settings-dropdown');
+        for (var i = uis.length - 1; i >= 0; i--) {
+          uis[i].parentNode.removeChild(uis[i]);
+        }
+        return clone;
+      }
+
+      ea.addEventListener('cut', function (e) {
+        if (wysiwygEditor.currentMode !== 'wysiwyg') return;
+        var sel = window.getSelection();
+        var block = findSelectedBlock(sel);
+        if (!block) return;
+
+        e.preventDefault();
+
+        var clone = block.node.cloneNode(true);
+        stripCodeUIFromClone(clone);
+
+        var wrapperHtml = '<div ' + BLOCK_ATTR + '="' + block.type + '">' + clone.outerHTML + '</div>';
+        e.clipboardData.setData('text/html', wrapperHtml);
+
+        var tempDiv = document.createElement('div');
+        tempDiv.appendChild(clone.cloneNode(true));
+        var plainText = '';
+        try {
+          plainText = wysiwygEditor._htmlToMarkdown(tempDiv);
+        } catch (ex) {
+          plainText = block.node.textContent || '';
+        }
+        e.clipboardData.setData('text/plain', plainText);
+
+        var parent = block.node.parentNode;
+        parent.removeChild(block.node);
+
+        if (isEmptyContainer(parent)) {
+          if (parent === ea) {
+            insertPlaceholder(ea);
+          } else if (parent.classList && parent.classList.contains('admonition')) {
+            var titleEl = parent.querySelector('.admonition-title');
+            var hasOtherContent = false;
+            for (var ci = 0; ci < parent.childNodes.length; ci++) {
+              var cn = parent.childNodes[ci];
+              if (cn === titleEl) continue;
+              if (cn.nodeType === 3 && !cn.textContent.replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '')) continue;
+              hasOtherContent = true;
+              break;
+            }
+            if (!hasOtherContent) {
+              var bp = document.createElement('p');
+              bp.innerHTML = '&#8203;';
+              parent.appendChild(bp);
+            }
+          } else if (parent.nodeName === 'BLOCKQUOTE' || parent.nodeName === 'LI') {
+            var bp = document.createElement('p');
+            bp.innerHTML = '&#8203;';
+            parent.appendChild(bp);
+          }
+        }
+
+        if (wysiwygEditor._finalizeUpdate) {
+          wysiwygEditor._finalizeUpdate(ea.innerHTML);
+        }
+      }, true);
+
+      function findPasteContext(sel) {
+        if (!sel || !sel.rangeCount) return { type: 'toplevel', container: ea, targetBlock: null };
+        var range = sel.getRangeAt(0);
+        var node = range.startContainer;
+        var el = (node.nodeType === 3) ? node.parentNode : node;
+
+        if (el === ea && range.startOffset < ea.childNodes.length) {
+          var child = ea.childNodes[range.startOffset];
+          if (child && child.nodeType === 1) {
+            el = child;
+          }
+        }
+
+        var ctx = { type: 'toplevel', container: ea, targetBlock: null, li: null, admonition: null, blockquote: null };
+
+        var cur = el;
+        while (cur && cur !== ea) {
+          if (cur.nodeName === 'LI' && !ctx.li) {
+            ctx.li = cur;
+            ctx.type = 'list-item';
+          }
+          if (cur.classList && cur.classList.contains('admonition') && !ctx.admonition) {
+            ctx.admonition = cur;
+            if (ctx.type === 'toplevel') ctx.type = 'admonition';
+          }
+          if (cur.nodeName === 'BLOCKQUOTE' && !ctx.blockquote) {
+            ctx.blockquote = cur;
+            if (ctx.type === 'toplevel') ctx.type = 'blockquote';
+          }
+          cur = cur.parentNode;
+        }
+
+        var inner = el;
+        var contextParent = null;
+        if (ctx.type === 'list-item') contextParent = ctx.li;
+        else if (ctx.type === 'admonition') contextParent = ctx.admonition;
+        else if (ctx.type === 'blockquote') contextParent = ctx.blockquote;
+        else contextParent = ea;
+
+        while (inner && inner !== contextParent && inner.parentNode !== contextParent) {
+          inner = inner.parentNode;
+        }
+        if (inner && inner !== contextParent && inner.parentNode === contextParent) {
+          ctx.targetBlock = inner;
+        }
+
+        ctx.container = contextParent;
+        return ctx;
+      }
+
+      function isEmptyParagraph(node) {
+        if (!node || node.nodeName !== 'P') return false;
+        var text = (node.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '');
+        return text.length === 0 && !node.querySelector('img, pre, .md-code-block, .admonition, table, blockquote, ul, ol');
+      }
+
+      function insertBlockAfterTarget(block, ctx) {
+        var target = ctx.targetBlock;
+        var container = ctx.container;
+        if (target && isEmptyParagraph(target)) {
+          container.insertBefore(block, target);
+          container.removeChild(target);
+        } else if (target && target.parentNode === container) {
+          container.insertBefore(block, target.nextSibling);
+        } else {
+          container.appendChild(block);
+        }
+      }
+
+      function isEmptyListItem(li) {
+        var text = (li.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '');
+        if (text.length > 0) return false;
+        if (li.querySelector('img, pre, .md-code-block, .admonition, table, blockquote, ul, ol')) return false;
+        return true;
+      }
+
+      function pasteList(listEl, ctx) {
+        if (ctx.type === 'list-item') {
+          var parentList = ctx.li.parentNode;
+          if (!parentList || (parentList.nodeName !== 'UL' && parentList.nodeName !== 'OL')) {
+            insertBlockAfterTarget(listEl, ctx);
+            return;
+          }
+          var liWasEmpty = isEmptyListItem(ctx.li);
+          if (liWasEmpty) {
+            var liCount = 0;
+            for (var ci = 0; ci < parentList.childNodes.length; ci++) {
+              if (parentList.childNodes[ci].nodeName === 'LI') liCount++;
+            }
+            if (liCount === 1) {
+              parentList.parentNode.insertBefore(listEl, parentList);
+              parentList.parentNode.removeChild(parentList);
+              return;
+            }
+          }
+          var items = [];
+          while (listEl.firstChild) {
+            if (listEl.firstChild.nodeName === 'LI') {
+              items.push(listEl.firstChild);
+            }
+            listEl.removeChild(listEl.firstChild);
+          }
+          var ref = ctx.li.nextSibling;
+          for (var i = 0; i < items.length; i++) {
+            parentList.insertBefore(items[i], ref);
+          }
+          if (liWasEmpty && ctx.li.parentNode) {
+            ctx.li.parentNode.removeChild(ctx.li);
+          }
+        } else {
+          insertBlockAfterTarget(listEl, ctx);
+        }
+      }
+
+      function pasteAdmonition(adEl, ctx) {
+        if (ctx.type === 'list-item') {
+          var topBlock = ctx.li;
+          while (topBlock && topBlock.parentNode !== ea) topBlock = topBlock.parentNode;
+          if (topBlock && topBlock.parentNode === ea) {
+            ea.insertBefore(adEl, topBlock.nextSibling);
+          } else {
+            ea.appendChild(adEl);
+          }
+        } else if (ctx.type === 'blockquote') {
+          insertBlockAfterTarget(adEl, ctx);
+        } else {
+          insertBlockAfterTarget(adEl, ctx);
+        }
+      }
+
+      function pasteCodeblock(blockEl, ctx) {
+        if (ctx.type === 'list-item') {
+          var target = ctx.targetBlock;
+          if (target && target.parentNode === ctx.li) {
+            ctx.li.insertBefore(blockEl, target.nextSibling);
+          } else {
+            ctx.li.appendChild(blockEl);
+          }
+        } else {
+          insertBlockAfterTarget(blockEl, ctx);
+        }
+      }
+
+      function pasteBlockquote(bqEl, ctx) {
+        if (ctx.type === 'list-item') {
+          var target = ctx.targetBlock;
+          if (target && target.parentNode === ctx.li) {
+            ctx.li.insertBefore(bqEl, target.nextSibling);
+          } else {
+            ctx.li.appendChild(bqEl);
+          }
+        } else if (ctx.type === 'admonition') {
+          insertBlockAfterTarget(bqEl, ctx);
+        } else {
+          insertBlockAfterTarget(bqEl, ctx);
+        }
+      }
+
+      function focusInsidePastedBlock(blockType, blockEl) {
+        var sel = window.getSelection();
+        if (!sel) return;
+        var rng = document.createRange();
+        var target = null;
+
+        if (blockType === 'list') {
+          var lastLi = null;
+          for (var i = blockEl.children.length - 1; i >= 0; i--) {
+            if (blockEl.children[i].nodeName === 'LI') { lastLi = blockEl.children[i]; break; }
+          }
+          if (lastLi) {
+            var deepest = lastLi;
+            for (;;) {
+              var nestedList = null;
+              for (var j = deepest.children.length - 1; j >= 0; j--) {
+                if (deepest.children[j].nodeName === 'UL' || deepest.children[j].nodeName === 'OL') {
+                  nestedList = deepest.children[j];
+                  break;
+                }
+              }
+              if (nestedList) {
+                var nestedLi = null;
+                for (var k = nestedList.children.length - 1; k >= 0; k--) {
+                  if (nestedList.children[k].nodeName === 'LI') { nestedLi = nestedList.children[k]; break; }
+                }
+                if (nestedLi) { deepest = nestedLi; } else break;
+              } else break;
+            }
+            target = deepest;
+          }
+        } else if (blockType === 'admonition') {
+          var bodyEl = null;
+          for (var i = blockEl.childNodes.length - 1; i >= 0; i--) {
+            var cn = blockEl.childNodes[i];
+            if (cn.nodeType === 1 && !(cn.classList && cn.classList.contains('admonition-title'))) {
+              bodyEl = cn;
+              break;
+            }
+          }
+          target = bodyEl || blockEl;
+        } else if (blockType === 'codeblock') {
+          var pre = blockEl.nodeName === 'PRE' ? blockEl : blockEl.querySelector('pre');
+          if (pre) {
+            var code = pre.querySelector('code');
+            var textNode = code ? code.firstChild : pre.firstChild;
+            if (textNode && textNode.nodeType === 3) {
+              rng.setStart(textNode, textNode.textContent.length);
+              rng.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(rng);
+              return;
+            }
+          }
+          target = pre || blockEl;
+        } else if (blockType === 'blockquote') {
+          var lastChild = null;
+          for (var i = blockEl.childNodes.length - 1; i >= 0; i--) {
+            if (blockEl.childNodes[i].nodeType === 1) { lastChild = blockEl.childNodes[i]; break; }
+          }
+          target = lastChild || blockEl;
+        }
+
+        if (target) {
+          rng.selectNodeContents(target);
+          rng.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(rng);
+        }
+      }
+
+      function focusInsidePastedListItems(items) {
+        if (!items || items.length === 0) return;
+        var lastItem = items[items.length - 1];
+        var deepest = lastItem;
+        for (;;) {
+          var nestedList = null;
+          for (var j = deepest.children.length - 1; j >= 0; j--) {
+            if (deepest.children[j].nodeName === 'UL' || deepest.children[j].nodeName === 'OL') {
+              nestedList = deepest.children[j];
+              break;
+            }
+          }
+          if (nestedList) {
+            var nestedLi = null;
+            for (var k = nestedList.children.length - 1; k >= 0; k--) {
+              if (nestedList.children[k].nodeName === 'LI') { nestedLi = nestedList.children[k]; break; }
+            }
+            if (nestedLi) { deepest = nestedLi; } else break;
+          } else break;
+        }
+        var sel = window.getSelection();
+        if (sel) {
+          var rng = document.createRange();
+          rng.selectNodeContents(deepest);
+          rng.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(rng);
+        }
+      }
+
+      ea.addEventListener('paste', function (e) {
+        if (wysiwygEditor.currentMode !== 'wysiwyg') return;
+        var clipHtml = (e.clipboardData || window.clipboardData).getData('text/html');
+        if (!clipHtml) return;
+
+        var temp = document.createElement('div');
+        temp.innerHTML = clipHtml;
+        var wrapper = temp.querySelector('[' + BLOCK_ATTR + ']');
+        if (!wrapper) return;
+
+        var blockType = wrapper.getAttribute(BLOCK_ATTR);
+        if (!blockType) return;
+
+        var blockContent = wrapper.firstElementChild;
+        if (!blockContent) return;
+
+        e.preventDefault();
+
+        var sel = window.getSelection();
+        var ctx = findPasteContext(sel);
+
+        switch (blockType) {
+          case 'list':
+            var pastedItems = [];
+            for (var pi = 0; pi < blockContent.children.length; pi++) {
+              if (blockContent.children[pi].nodeName === 'LI') pastedItems.push(blockContent.children[pi]);
+            }
+            pasteList(blockContent, ctx);
+            if (blockContent.parentNode) {
+              focusInsidePastedBlock('list', blockContent);
+            } else if (pastedItems.length > 0) {
+              focusInsidePastedListItems(pastedItems);
+            }
+            break;
+          case 'admonition':
+            blockContent.setAttribute('contenteditable', 'true');
+            pasteAdmonition(blockContent, ctx);
+            focusInsidePastedBlock('admonition', blockContent);
+            break;
+          case 'codeblock':
+            pasteCodeblock(blockContent, ctx);
+            enhanceBasicPreBlocks(ea);
+            enhanceCodeBlocks(ea);
+            focusInsidePastedBlock('codeblock', blockContent);
+            break;
+          case 'blockquote':
+            pasteBlockquote(blockContent, ctx);
+            focusInsidePastedBlock('blockquote', blockContent);
+            break;
+        }
+
+        if (wysiwygEditor._finalizeUpdate) {
+          wysiwygEditor._finalizeUpdate(ea.innerHTML);
+        }
+      }, true);
+    })();
+
         const observer = new MutationObserver(function () {
       if (!textarea.parentNode) return;
       if (textarea.classList.contains('live-edit-hidden')) {
@@ -6827,11 +7482,7 @@
             if (lastWysiwygSemanticSelection && restoreSelectionFromSemantic(ea, lastWysiwygSemanticSelection)) {
               installSemanticClearListeners(ea);
             } else {
-              var range = document.createRange();
-              range.selectNodeContents(ea);
-              range.collapse(true);
-              var sel = window.getSelection();
-              if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+              focusCursorAtDocStart(ea);
             }
           }
         }

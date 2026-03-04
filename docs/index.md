@@ -3,6 +3,15 @@ title: Example WYSIWYG site
 ---
 # Welcome
 
+- foo
+- bar
+
+  > abc
+  
+  bar
+
+- baz
+
 This is a test page for the mkdocs-live-wysiwyg-plugin.
 
 ```yaml title="Preview Example"

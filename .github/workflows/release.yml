@@ -47,8 +47,3 @@ jobs:
         run: |
           git push origin main
           git push origin "v${{ steps.version.outputs.version }}"
-
-      - name: Trigger PyPI publish
-        run: gh workflow run publish.yml --ref "v${{ steps.version.outputs.version }}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

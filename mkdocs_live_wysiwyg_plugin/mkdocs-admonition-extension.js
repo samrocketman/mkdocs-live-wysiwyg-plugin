@@ -1,54 +1,66 @@
 /**
  * MkDocs admonition extension for marked.js.
- * Renders !!! type "title" syntax as MkDocs-compatible admonition HTML.
+ * Renders !!!/???/???+ type syntax as MkDocs-compatible admonition HTML.
+ * Supports collapsible (details/summary), inline placement, and empty titles.
  * Must be called after marked loads and before MarkdownWYSIWYG is used.
  */
 (function () {
   if (typeof marked === 'undefined') return;
 
-  var ADMONITION_TYPES = ['note', 'warning', 'danger', 'tip', 'hint', 'important', 'caution', 'error', 'attention'];
-  var ADMONITION_TITLES = {
-    note: 'Note',
-    warning: 'Warning',
-    danger: 'Danger',
-    tip: 'Tip',
-    hint: 'Hint',
-    important: 'Important',
-    caution: 'Caution',
-    error: 'Error',
-    attention: 'Attention'
-  };
+  var ADMONITION_TYPES = [
+    'note', 'warning', 'danger', 'tip', 'hint', 'important', 'caution',
+    'error', 'attention', 'abstract', 'info', 'success', 'question',
+    'failure', 'bug', 'example', 'quote'
+  ];
+  var ADMONITION_TITLES = {};
+  for (var i = 0; i < ADMONITION_TYPES.length; i++) {
+    var t = ADMONITION_TYPES[i];
+    ADMONITION_TITLES[t] = t.charAt(0).toUpperCase() + t.slice(1);
+  }
+
+  var ADMONITION_RE = /^(\?\?\?\+|\?\?\?|!!!)\s+(\w+)(?:\s+(inline(?:\s+end)?))?(?:\s+"([^"]*)")?\s*\n((?:(?:    .*|[ \t]*)(?:\n|$))*)/;
 
   marked.use({
     extensions: [{
       name: 'mkdocsAdmonition',
       level: 'block',
       start: function (src) {
-        var idx = src.indexOf('!!!');
-        return idx >= 0 ? idx : undefined;
+        var m = src.match(/(?:^|\n)(!!!|\?\?\?\+|\?\?\?)\s/);
+        return m ? m.index + (src[m.index] === '\n' ? 1 : 0) : undefined;
       },
       tokenizer: function (src) {
-        var match = src.match(/^!!!\s+(\w+)(?:\s+"([^"]*)")?\s*\n((?:(?:    .*|[ \t]*)(?:\n|$))*)/);
+        var match = src.match(ADMONITION_RE);
         if (!match) return;
-        var type = match[1].toLowerCase();
-        var title = match[2];
-        var content = (match[3] || '').replace(/^    /gm, '');
+        var prefix = match[1];
+        var type = match[2].toLowerCase();
+        var modifiers = match[3] || '';
+        var title = match[4];
+        var content = (match[5] || '').replace(/^    /gm, '');
         return {
           type: 'mkdocsAdmonition',
           raw: match[0],
+          admonitionPrefix: prefix,
           admonitionType: type,
+          admonitionModifiers: modifiers.trim(),
           admonitionTitle: title,
           admonitionContent: content,
           tokens: []
         };
       },
       renderer: function (token) {
+        var prefix = token.admonitionPrefix;
         var type = token.admonitionType;
+        var mods = token.admonitionModifiers;
         var title = token.admonitionTitle;
         var content = token.admonitionContent;
+        var isCollapsible = (prefix === '???' || prefix === '???+');
+        var isExpanded = (prefix === '???+');
+        var hideTitle = (title === '');
+
         var displayTitle = title !== undefined
           ? (title === '' ? '' : title)
           : (ADMONITION_TITLES[type] || type.charAt(0).toUpperCase() + type.slice(1));
+
         var contentHtml = '';
         if (content && content.trim()) {
           try {
@@ -57,11 +69,26 @@
             contentHtml = '<p>' + content.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</p>';
           }
         }
+
+        var classes = type;
+        if (mods) classes += ' ' + mods;
+
+        if (isCollapsible) {
+          var attrs = ' class="' + classes + '" open';
+          if (!isExpanded) attrs += ' data-default-collapsed="1"';
+          var summaryHtml = displayTitle
+            ? '<summary>' + displayTitle.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</summary>'
+            : '<summary></summary>';
+          return '<details' + attrs + '>\n' + summaryHtml + contentHtml + '\n</details>\n\n';
+        }
+
+        var divAttrs = ' class="admonition ' + classes + '"';
+        if (hideTitle) divAttrs += ' data-hide-title="1"';
         var titleHtml = '';
         if (displayTitle) {
           titleHtml = '<p class="admonition-title">' + displayTitle.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</p>';
         }
-        return '<div class="admonition ' + type + '">\n' + titleHtml + contentHtml + '\n</div>\n\n';
+        return '<div' + divAttrs + '>\n' + titleHtml + contentHtml + '\n</div>\n\n';
       }
     }]
   });

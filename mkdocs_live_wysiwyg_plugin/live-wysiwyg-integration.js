@@ -1536,16 +1536,48 @@
     return null;
   }
 
+  function populateRawHtmlBlocks(editableArea) {
+    if (!editableArea) return;
+    var blocks = editableArea.querySelectorAll('[' + RAW_HTML_BLOCK_ATTR + ']');
+    for (var bi = 0; bi < blocks.length; bi++) {
+      var block = blocks[bi];
+      if (block._rawHtmlPopulated) continue;
+      var b64 = block.getAttribute(RAW_HTML_BLOCK_ATTR);
+      if (!b64) continue;
+      var decoded = _b64Decode(b64);
+      block.innerHTML = decoded;
+      block.setAttribute('contenteditable', 'false');
+      block.style.border = '1px dashed #ccc';
+      block.style.borderRadius = '4px';
+      block.style.padding = '4px';
+      block.style.margin = '4px 0';
+      block.style.opacity = '0.85';
+      block.style.pointerEvents = 'none';
+      block._rawHtmlPopulated = true;
+    }
+  }
+
+  function _isInsideRawHtmlBlock(el) {
+    var p = el.parentNode;
+    while (p && p !== document) {
+      if (p.getAttribute && p.getAttribute(RAW_HTML_BLOCK_ATTR)) return true;
+      p = p.parentNode;
+    }
+    return false;
+  }
+
   function enhanceAdmonitions(editableArea) {
     if (!editableArea) return;
     var admonitions = editableArea.querySelectorAll('.admonition');
     for (var i = 0; i < admonitions.length; i++) {
+      if (_isInsideRawHtmlBlock(admonitions[i])) continue;
       addSettingsButtonToAdmonition(admonitions[i]);
     }
     for (var j = 0; j < ADMONITION_TYPE_IDS.length; j++) {
       var detailsEls = editableArea.querySelectorAll('details.' + ADMONITION_TYPE_IDS[j]);
       for (var k = 0; k < detailsEls.length; k++) {
         var det = detailsEls[k];
+        if (_isInsideRawHtmlBlock(det)) continue;
         det.setAttribute('open', '');
         addSettingsButtonToAdmonition(det);
         var summary = det.querySelector(':scope > summary');
@@ -2015,6 +2047,71 @@
       if (node.nodeName === 'INPUT' && node.type === 'checkbox') {
         return (node.checked ? '[x]' : '[ ]');
       }
+      if (node.nodeType === 8) {
+        if (node._liveWysiwygConsumed) return '';
+        var commentData = (node.data || '').trim();
+        if (commentData.indexOf(RAW_HTML_CLOSE_PREFIX) === 0) {
+          var b64 = commentData.substring(RAW_HTML_CLOSE_PREFIX.length);
+          return _b64Decode(b64) + '\n';
+        }
+        return '';
+      }
+      if (node.nodeType === 1 && node.getAttribute) {
+        var rawBlockB64 = node.getAttribute(RAW_HTML_BLOCK_ATTR);
+        if (rawBlockB64) {
+          var decoded = _b64Decode(rawBlockB64);
+          if (!this._rawHtmlPlaceholders) this._rawHtmlPlaceholders = [];
+          var idx = this._rawHtmlPlaceholders.length;
+          this._rawHtmlPlaceholders.push(decoded);
+          return '\u0000__RAWHTMLBLOCK_' + idx + '__\u0000\n';
+        }
+        var commentB64 = node.getAttribute(RAW_HTML_COMMENT_ATTR);
+        if (commentB64) {
+          var decoded = _b64Decode(commentB64);
+          if (!this._rawHtmlPlaceholders) this._rawHtmlPlaceholders = [];
+          var idx = this._rawHtmlPlaceholders.length;
+          this._rawHtmlPlaceholders.push(decoded);
+          return '\u0000__RAWHTMLBLOCK_' + idx + '__\u0000\n';
+        }
+        var rawTagB64 = node.getAttribute(RAW_HTML_ATTR);
+        if (rawTagB64) {
+          var originalOpenTag = _b64Decode(rawTagB64);
+          var childMd = '';
+          for (var ri = 0; ri < node.childNodes.length; ri++) {
+            var rChild = node.childNodes[ri];
+            if (rChild.nodeType === 8) {
+              var rData = (rChild.data || '').trim();
+              if (rData.indexOf(RAW_HTML_CLOSE_PREFIX) === 0) continue;
+            }
+            if (rChild.nodeType === 1 && rChild.getAttribute) {
+              if (rChild.getAttribute(RAW_HTML_COMMENT_ATTR) || rChild.getAttribute(RAW_HTML_ATTR)) {
+                childMd += this._nodeToMarkdownRecursive(rChild, options || {});
+              } else {
+                childMd += _serializeElementAsHtml(rChild);
+              }
+            } else if (rChild.nodeType === 3) {
+              childMd += rChild.textContent;
+            } else {
+              childMd += this._nodeToMarkdownRecursive(rChild, options || {});
+            }
+          }
+          var closeTag = '';
+          var nextSib = node.nextSibling;
+          while (nextSib) {
+            if (nextSib.nodeType === 8) {
+              var nd = (nextSib.data || '').trim();
+              if (nd.indexOf(RAW_HTML_CLOSE_PREFIX) === 0) {
+                closeTag = _b64Decode(nd.substring(RAW_HTML_CLOSE_PREFIX.length));
+                nextSib._liveWysiwygConsumed = true;
+                break;
+              }
+            }
+            if (nextSib.nodeType === 1 || (nextSib.nodeType === 3 && nextSib.textContent.trim())) break;
+            nextSib = nextSib.nextSibling;
+          }
+          return originalOpenTag + '\n' + childMd + (closeTag ? closeTag + '\n' : '');
+        }
+      }
       // #text: preserve multiple spaces (upstream collapses with /  +/g)
       if (node.nodeName === '#text') {
         var text = node.textContent.replace(/\u00a0/g, ' ');
@@ -2159,6 +2256,9 @@
             var origUrl = normalizeUrl(o.url);
             var origText = (o.text || '').replace(CURSOR_UNICODE_RE, '').replace(/\s+/g, ' ').replace(/\u00a0/g, ' ').trim();
             if (origUrl === cleanUrl && origText === cleanText) {
+              if (o.isAutolink) {
+                return '<' + href + '>';
+              }
               var shortMatch = (o.original || '').match(/^\[([^\]]+)\]$/);
               if (shortMatch) {
                 return '[' + linkText + ']';
@@ -2166,6 +2266,10 @@
               break;
             }
           }
+        }
+        var bareText = (linkText || '').replace(CURSOR_UNICODE_RE, '').trim();
+        if (bareText && href && normalizeUrl(bareText) === normalizeUrl(href)) {
+          return bareText;
         }
       }
       return orig.apply(this, arguments);
@@ -2201,7 +2305,39 @@
     proto._listToMarkdownRecursive = function (listNode, indent, listType, listCounter, options) {
       var result = origListToMarkdown.apply(this, arguments);
       var listData = this._liveWysiwygListMarkerData;
-      if (!listData || !listData.listItems || !listData.listItems.length || listType === 'OL') return result;
+      if (!listData || !listData.listItems || !listData.listItems.length) return result;
+      if (listType === 'OL') {
+        var olOriginals = listData.listItems;
+        var olUsed = listData._olUsed || 0;
+        var olLines = result.split('\n');
+        var olStyle = listData.olStyle;
+        for (var oi = 0; oi < olLines.length; oi++) {
+          var olm = olLines[oi].match(/^(\s*)(\d+)\.\s+(.*)$/);
+          if (!olm) continue;
+          var olIndent = olm[1];
+          var olContent = olm[3];
+          var olNorm = normalizeContentForListMatch(olContent);
+          var matched = false;
+          for (var oj = olUsed; oj < olOriginals.length; oj++) {
+            var oo = olOriginals[oj];
+            if (!oo.isOrdered) continue;
+            if (oo.indent !== olIndent) continue;
+            if (normalizeContentForListMatch(oo.content) === olNorm) {
+              olUsed = oj + 1;
+              olLines[oi] = olIndent + oo.number + '. ' + olContent;
+              matched = true;
+              break;
+            }
+          }
+          if (!matched && olStyle === 'all-ones') {
+            olLines[oi] = olIndent + '1. ' + olContent;
+          }
+        }
+        listData._olUsed = olUsed;
+        var olResult = olLines.join('\n');
+        olResult = _compactOlBlankLines(olResult);
+        return olResult;
+      }
       var originals = listData.listItems;
       var used = 0;
       var lines = result.split('\n');
@@ -2236,7 +2372,9 @@
           }
         }
       }
-      return lines.join('\n');
+      var ulResult = lines.join('\n');
+      ulResult = _compactUlBlankLines(ulResult);
+      return ulResult;
     };
   })();
 
@@ -2307,6 +2445,25 @@
         codeBlocks[j] = codeBlocks[j].replace(/[ \t]+$/gm, '');
         protected_ = protected_.split(placeholderPrefix + j + placeholderSuffix).join(codeBlocks[j]);
       }
+      var rawHtmlBlocks = this._rawHtmlPlaceholders || [];
+      this._rawHtmlPlaceholders = null;
+      var rawPrefix = '\u0000__RAWHTMLBLOCK_';
+      var rawSuffix = '__\u0000';
+      for (var ri = 0; ri < rawHtmlBlocks.length; ri++) {
+        var rawPh = rawPrefix + ri + rawSuffix;
+        var rawIdx = protected_.indexOf(rawPh);
+        if (rawIdx === -1) continue;
+        var lineStart = protected_.lastIndexOf('\n', rawIdx - 1);
+        lineStart = lineStart === -1 ? 0 : lineStart + 1;
+        var beforePh = protected_.substring(lineStart, rawIdx);
+        var lineEnd = protected_.indexOf('\n', rawIdx + rawPh.length);
+        if (lineEnd === -1) lineEnd = protected_.length;
+        if (/^\s*$/.test(beforePh)) {
+          protected_ = protected_.substring(0, lineStart) + rawHtmlBlocks[ri] + protected_.substring(lineEnd);
+        } else {
+          protected_ = protected_.substring(0, rawIdx) + rawHtmlBlocks[ri] + protected_.substring(rawIdx + rawPh.length);
+        }
+      }
       return protected_.trim();
     };
   })();
@@ -2333,11 +2490,13 @@
    * Returns { listItems: [{ indent, marker, content, isChecklist?, checked? }] } for preservation.
    */
   function preprocessListMarkers(markdown) {
-    if (!markdown || typeof markdown !== 'string') return { listItems: [] };
+    if (!markdown || typeof markdown !== 'string') return { listItems: [], olStyle: null };
     var listItems = [];
     var lines = markdown.split('\n');
     var checklistRe = /^(\s*)([-*+])\s+\[([ xX])\]\s+(.*)$/;
     var regularRe = /^(\s*)([-*+])\s+(.*)$/;
+    var orderedRe = /^(\s*)(\d+)(\.)\s+(.*)$/;
+    var olNumbers = [];
     for (var i = 0; i < lines.length; i++) {
       var m = lines[i].match(checklistRe);
       if (m) {
@@ -2350,12 +2509,24 @@
         });
         continue;
       }
+      m = lines[i].match(orderedRe);
+      if (m) {
+        var num = m[2];
+        olNumbers.push(parseInt(num, 10));
+        listItems.push({ indent: m[1], marker: num + '. ', content: m[4], isOrdered: true, number: num });
+        continue;
+      }
       m = lines[i].match(regularRe);
       if (m) {
         listItems.push({ indent: m[1], marker: m[2] + ' ', content: m[3] });
       }
     }
-    return { listItems: listItems };
+    var olStyle = null;
+    if (olNumbers.length > 1) {
+      var allOnes = olNumbers.every(function(n) { return n === 1; });
+      olStyle = allOnes ? 'all-ones' : 'incrementing';
+    }
+    return { listItems: listItems, olStyle: olStyle };
   }
 
   /**
@@ -2373,11 +2544,12 @@
     if (!listData || !listData.listItems || !listData.listItems.length) return markdown;
     var originals = listData.listItems;
     var used = 0;
+    var olUsed = 0;
     function restoreRegular(match, indent, marker, content) {
       var normContent = normalizeContentForListMatch(content);
       for (var i = used; i < originals.length; i++) {
         var o = originals[i];
-        if (!o.isChecklist && o.indent === indent && normalizeContentForListMatch(o.content) === normContent) {
+        if (!o.isChecklist && !o.isOrdered && o.indent === indent && normalizeContentForListMatch(o.content) === normContent) {
           used = i + 1;
           return indent + o.marker + content;
         }
@@ -2396,9 +2568,26 @@
       }
       return match;
     }
+    function restoreOrdered(match, indent, num, content) {
+      var normContent = normalizeContentForListMatch(content);
+      for (var i = olUsed; i < originals.length; i++) {
+        var o = originals[i];
+        if (o.isOrdered && o.indent === indent && normalizeContentForListMatch(o.content) === normContent) {
+          olUsed = i + 1;
+          return indent + o.number + '. ' + content;
+        }
+      }
+      if (listData.olStyle === 'all-ones') {
+        return indent + '1. ' + content;
+      }
+      return match;
+    }
     var result = markdown
       .replace(/^(\s*)(-\s+)\[([ xX])\]\s+(.*)$/gm, restoreChecklist)
-      .replace(/^(\s*)(-\s+)(.*)$/gm, restoreRegular);
+      .replace(/^(\s*)(-\s+)(.*)$/gm, restoreRegular)
+      .replace(/^(\s*)(\d+)\.\s+(.*)$/gm, restoreOrdered);
+    result = _compactOlBlankLines(result);
+    result = _compactUlBlankLines(result);
     return result;
   }
 
@@ -2545,6 +2734,380 @@
       }
     }
     return lines.join('\n');
+  }
+
+  function preprocessHorizontalRules(markdown) {
+    if (!markdown || typeof markdown !== 'string') return { rules: [] };
+    var rules = [];
+    var lines = markdown.split('\n');
+    var inFencedCode = false;
+    var fencePattern = null;
+    var hrRe = /^\s*([-*_])(\s*\1){2,}\s*$/;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (inFencedCode) {
+        if (fencePattern && fencePattern.test(line)) {
+          inFencedCode = false;
+          fencePattern = null;
+        }
+        continue;
+      }
+      var fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})/);
+      if (fenceMatch) {
+        inFencedCode = true;
+        var fc = fenceMatch[2];
+        fencePattern = new RegExp('^\\s*' + fc.charAt(0) + '{' + fc.length + ',}\\s*$');
+        continue;
+      }
+      if (!hrRe.test(line)) continue;
+      if (/^\s*-/.test(line)) {
+        var isSetext = false;
+        for (var j = i - 1; j >= 0; j--) {
+          if (/^\s*$/.test(lines[j])) break;
+          isSetext = true;
+          break;
+        }
+        if (isSetext) continue;
+      }
+      rules.push(line);
+    }
+    return { rules: rules };
+  }
+
+  function postprocessHorizontalRules(markdown, hrData) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+    if (!hrData || !hrData.rules || !hrData.rules.length) return markdown;
+    var originals = hrData.rules;
+    var used = 0;
+    var lines = markdown.split('\n');
+    var inFencedCode = false;
+    var fencePattern = null;
+    for (var i = 0; i < lines.length; i++) {
+      if (used >= originals.length) break;
+      var line = lines[i];
+      if (inFencedCode) {
+        if (fencePattern && fencePattern.test(line)) {
+          inFencedCode = false;
+          fencePattern = null;
+        }
+        continue;
+      }
+      var fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})/);
+      if (fenceMatch) {
+        inFencedCode = true;
+        var fc = fenceMatch[2];
+        fencePattern = new RegExp('^\\s*' + fc.charAt(0) + '{' + fc.length + ',}\\s*$');
+        continue;
+      }
+      if (/^\s*---\s*$/.test(line)) {
+        lines[i] = originals[used];
+        used++;
+      }
+    }
+    return lines.join('\n');
+  }
+
+  var RAW_HTML_ATTR = 'data-live-wysiwyg-raw-html';
+  var RAW_HTML_CLOSE_PREFIX = 'live-wysiwyg-raw-close:';
+  var RAW_HTML_COMMENT_ATTR = 'data-live-wysiwyg-html-comment';
+  var RAW_HTML_BLOCK_ATTR = 'data-live-wysiwyg-raw-html-block';
+
+  function _serializeElementAsHtml(node) {
+    if (node.nodeType === 3) return node.textContent;
+    if (node.nodeType !== 1) return '';
+    var tag = node.nodeName.toLowerCase();
+    var attrs = '';
+    if (node.attributes) {
+      for (var ai = 0; ai < node.attributes.length; ai++) {
+        var attr = node.attributes[ai];
+        if (attr.name === RAW_HTML_ATTR || attr.name === RAW_HTML_COMMENT_ATTR || attr.name === RAW_HTML_BLOCK_ATTR) continue;
+        attrs += ' ' + attr.name + '="' + attr.value.replace(/"/g, '&quot;') + '"';
+      }
+    }
+    var voidTags = ['br','hr','img','input','col','area','base','link','meta','source','track','wbr'];
+    if (voidTags.indexOf(tag) >= 0) return '<' + tag + attrs + '>';
+    var inner = '';
+    for (var ci = 0; ci < node.childNodes.length; ci++) {
+      inner += _serializeElementAsHtml(node.childNodes[ci]);
+    }
+    return '<' + tag + attrs + '>' + inner + '</' + tag + '>';
+  }
+
+  function _countBlockTagDepth(line, tagName) {
+    var re = new RegExp('<(/??)\\s*' + tagName + '\\b([^>]*?)(/?)\\s*>', 'gi');
+    var depth = 0;
+    var m;
+    while ((m = re.exec(line)) !== null) {
+      var isClose = m[1] === '/';
+      var isSelfClose = m[3] === '/';
+      if (isClose) depth--;
+      else if (!isSelfClose) depth++;
+    }
+    return depth;
+  }
+
+  var _rawHtmlVoidTags = ['br','hr','img','input','col','area','base','link','meta','source','track','wbr'];
+
+  function _b64Encode(str) {
+    try { return btoa(unescape(encodeURIComponent(str))); }
+    catch (e) { return btoa(str); }
+  }
+
+  function _b64Decode(str) {
+    try { return decodeURIComponent(escape(atob(str))); }
+    catch (e) { try { return atob(str); } catch (e2) { return str; } }
+  }
+
+  function _stripCommonLeadingWhitespace(text) {
+    var lines = text.split('\n');
+    var minIndent = Infinity;
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].trim().length === 0) continue;
+      var leading = lines[i].match(/^(\s*)/)[1].length;
+      if (leading < minIndent) minIndent = leading;
+    }
+    if (minIndent > 0 && minIndent < Infinity) {
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].trim().length === 0) continue;
+        lines[i] = lines[i].substring(minIndent);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  var _keepBlankBeforeListRe = /^\s*(`{3,}|~{3,})\s*$|^\s*<|^\s*>|\u0000__RAWHTMLBLOCK_/;
+  var _isListContextLineRe = /^\s|^\d+\.\s|^[-*+]\s/;
+
+  function _compactOlBlankLines(text) {
+    return text.replace(/([^\n]*)\n[ \t]*\n(?=\s*\d+\.\s)/g, function (match, prevLine) {
+      if (_keepBlankBeforeListRe.test(prevLine)) return match;
+      if (!_isListContextLineRe.test(prevLine)) return match;
+      return prevLine + '\n';
+    });
+  }
+
+  function _compactUlBlankLines(text) {
+    return text.replace(/([^\n]*)\n[ \t]*\n(?=\s*[-*+]\s)/g, function (match, prevLine) {
+      if (_keepBlankBeforeListRe.test(prevLine)) return match;
+      if (!_isListContextLineRe.test(prevLine)) return match;
+      return prevLine + '\n';
+    });
+  }
+
+  function _isHtmlTagKnownToMarkdown(tag) {
+    var m = tag.match(/^<\/?([a-zA-Z][a-zA-Z0-9]*)/);
+    if (!m) return false;
+    var name = m[1].toLowerCase();
+    var mdTags = ['p','br','hr','em','strong','del','s','strike','b','i','u',
+      'h1','h2','h3','h4','h5','h6','ul','ol','li','blockquote',
+      'pre','code','a','img','table','thead','tbody','tr','th','td',
+      'input','sup','sub'];
+    return mdTags.indexOf(name) >= 0;
+  }
+
+  function preprocessRawHtml(markdown) {
+    if (!markdown || typeof markdown !== 'string') return { markdown: markdown, comments: [], tags: [] };
+    var comments = [];
+    var tags = [];
+
+    var lines = markdown.split('\n');
+    var inFencedCode = false;
+    var fencePattern = null;
+    var result = [];
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+
+      if (inFencedCode) {
+        if (fencePattern && fencePattern.test(line)) {
+          inFencedCode = false;
+          fencePattern = null;
+        }
+        result.push(line);
+        continue;
+      }
+
+      var fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})/);
+      if (fenceMatch) {
+        inFencedCode = true;
+        var fc = fenceMatch[2];
+        fencePattern = new RegExp('^\\s*' + fc.charAt(0) + '{' + fc.length + ',}\\s*$');
+        result.push(line);
+        continue;
+      }
+
+      var admonitionMatch = line.match(/^(\s*)(\?\?\?\+|\?\?\?|!!!)\s+\w+/);
+      if (admonitionMatch) {
+        result.push(line);
+        continue;
+      }
+
+      var blockOpenMatch = line.match(/^(\s*)<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/);
+      if (blockOpenMatch && !/\/\s*>$/.test(blockOpenMatch[0])) {
+        var bTagName = blockOpenMatch[2].toLowerCase();
+        if (!_isHtmlTagKnownToMarkdown('<' + bTagName + '>') && _rawHtmlVoidTags.indexOf(bTagName) < 0) {
+          var blockLines = [line];
+          var depth = _countBlockTagDepth(line, bTagName);
+          var blockClosed = (depth <= 0);
+          if (depth > 0) {
+            var j = i + 1;
+            while (j < lines.length && depth > 0) {
+              blockLines.push(lines[j]);
+              depth += _countBlockTagDepth(lines[j], bTagName);
+              j++;
+            }
+            blockClosed = (depth <= 0);
+            if (blockClosed) i = j - 1;
+          }
+          if (blockClosed) {
+            var fullBlock = blockLines.join('\n');
+            var encoded = _b64Encode(fullBlock);
+            var blockIndent = blockOpenMatch[1] || '';
+            result.push(blockIndent + '<div ' + RAW_HTML_BLOCK_ATTR + '="' + encoded + '"></div>');
+            continue;
+          }
+        }
+      }
+
+      var commentProcessed = _preprocessLineComments(line, lines, i, comments, result);
+      if (commentProcessed !== false) {
+        i = commentProcessed;
+        continue;
+      }
+
+      var tagProcessed = _preprocessLineTags(line, tags, result);
+      if (tagProcessed) {
+        continue;
+      }
+
+      result.push(line);
+    }
+
+    return { markdown: result.join('\n'), comments: comments, tags: tags };
+  }
+
+  function _preprocessLineComments(line, lines, idx, comments, result) {
+    var commentStart = line.indexOf('<!--');
+    if (commentStart === -1) return false;
+
+    var commentEnd = line.indexOf('-->', commentStart + 4);
+    if (commentEnd !== -1) {
+      var before = line.substring(0, commentStart);
+      var comment = line.substring(commentStart, commentEnd + 3);
+      var after = line.substring(commentEnd + 3);
+      var isBlockComment = !before.trim() && !after.trim();
+      var originalForEncode = isBlockComment ? before + comment : comment;
+      var encoded = _b64Encode(originalForEncode);
+      var idx_ = comments.length;
+      comments.push({ original: comment, leading: isBlockComment ? before : '', lineIdx: idx });
+      var placeholder = '<span ' + RAW_HTML_COMMENT_ATTR + '="' + encoded + '" style="display:none"></span>';
+      if (isBlockComment) {
+        result.push(before + placeholder + after);
+      } else {
+        result.push(before + placeholder + after);
+      }
+      return idx;
+    }
+
+    var multiLines = [line];
+    var j = idx + 1;
+    while (j < lines.length) {
+      multiLines.push(lines[j]);
+      if (lines[j].indexOf('-->') !== -1) break;
+      j++;
+    }
+    var fullComment = multiLines.join('\n');
+    var endPos = fullComment.indexOf('-->');
+    if (endPos === -1) {
+      result.push(line);
+      return false;
+    }
+    var leading = line.substring(0, commentStart);
+    var commentText = fullComment.substring(commentStart, endPos + 3);
+    var afterComment = fullComment.substring(endPos + 3);
+    var isBlockComment = !leading.trim();
+    var originalForEncode = isBlockComment ? leading + commentText : commentText;
+
+    var encoded = _b64Encode(originalForEncode);
+    comments.push({ original: commentText, leading: isBlockComment ? leading : '', lineIdx: idx });
+    var placeholder = '<span ' + RAW_HTML_COMMENT_ATTR + '="' + encoded + '" style="display:none"></span>';
+    var afterLines = afterComment.split('\n');
+    result.push(leading + placeholder + afterLines[0]);
+    for (var k = 1; k < afterLines.length; k++) {
+      result.push(afterLines[k]);
+    }
+    return j;
+  }
+
+  function _preprocessLineTags(line, tags, result) {
+    var tagRe = /<(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*?)(\/?)>/g;
+    var out = '';
+    var lastIdx = 0;
+    var changed = false;
+    var m;
+
+    var codeSpans = [];
+    var csRe = /`[^`\n]+`/g;
+    var csm;
+    while ((csm = csRe.exec(line)) !== null) {
+      codeSpans.push({ start: csm.index, end: csm.index + csm[0].length });
+    }
+    function isInsideCodeSpan(pos) {
+      for (var k = 0; k < codeSpans.length; k++) {
+        if (pos >= codeSpans[k].start && pos < codeSpans[k].end) return true;
+      }
+      return false;
+    }
+
+    while ((m = tagRe.exec(line)) !== null) {
+      if (isInsideCodeSpan(m.index)) continue;
+
+      var fullTag = m[0];
+      var tagName = m[2];
+      var isClose = m[1] === '/';
+      var isSelfClose = m[4] === '/';
+
+      if (_isHtmlTagKnownToMarkdown(fullTag)) continue;
+
+      var tagContent = m[3] || '';
+      if (!isClose && /^:\/\//.test(tagContent)) continue;
+      var innerText = tagName + tagContent;
+      if (!isClose && innerText.indexOf('@') >= 0 && innerText.indexOf(' ') === -1) continue;
+
+      changed = true;
+
+      var prefixText = line.substring(lastIdx, m.index);
+      var onlyWhitespace = /^[ \t]*$/.test(prefixText);
+      var originalForEncode = (onlyWhitespace && lastIdx === 0) ? prefixText + fullTag : fullTag;
+
+      out += prefixText;
+
+      if (isSelfClose) {
+        var encoded = _b64Encode(originalForEncode);
+        tags.push({ original: originalForEncode, type: 'selfclose' });
+        out += fullTag.replace(/\/?>$/, ' ' + RAW_HTML_ATTR + '="' + encoded + '"/>');
+      } else if (isClose) {
+        var encoded = _b64Encode(originalForEncode);
+        tags.push({ original: originalForEncode, type: 'close' });
+        out += fullTag + '<!--' + RAW_HTML_CLOSE_PREFIX + encoded + '-->';
+      } else {
+        var encoded = _b64Encode(originalForEncode);
+        tags.push({ original: originalForEncode, type: 'open' });
+        out += fullTag.replace(/>$/, ' ' + RAW_HTML_ATTR + '="' + encoded + '">');
+      }
+      lastIdx = m.index + fullTag.length;
+    }
+
+    if (!changed) return false;
+    out += line.substring(lastIdx);
+    result.push(out);
+    return true;
+  }
+
+  function postprocessRawHtml(markdown, rawHtmlData) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+    if (!rawHtmlData) return markdown;
+    return markdown;
   }
 
   var CURSOR_SPAN_HTML_RE = /<span\s+data-live-wysiwyg-cursor(?:-end)?[^>]*>\s*<\/span>/gi;
@@ -2717,10 +3280,43 @@
       .replace(inlineImgRe, function (match, text, url) { return replaceMatch(match, text, url, true); });
 
     if (refDefinitions) {
-      var normResult = result.replace(/\r\n/g, '\n');
-      var normRefDefs = refDefinitions.replace(/\r\n/g, '\n');
-      if (normResult.indexOf(normRefDefs) === -1) {
-        result = result + (result ? '\n\n' : '') + refDefinitions;
+      var refDefNameRe = /^\s{0,3}\[([^\]]+)\]:/;
+      var existingRefNames = {};
+      var resultLines = result.split('\n');
+      for (var ri = 0; ri < resultLines.length; ri++) {
+        var rm = resultLines[ri].match(refDefNameRe);
+        if (rm) existingRefNames[rm[1].toLowerCase()] = true;
+      }
+      var defLines = refDefinitions.split('\n');
+      var missingDefs = [];
+      for (var di = 0; di < defLines.length; di++) {
+        if (!defLines[di].trim()) continue;
+        var dm = defLines[di].match(refDefNameRe);
+        if (dm && existingRefNames[dm[1].toLowerCase()]) continue;
+        missingDefs.push(defLines[di]);
+      }
+      if (missingDefs.length > 0) {
+        var defsToAppend = missingDefs.join('\n');
+        var trimmed = result.replace(/\s+$/, '');
+        var lastOpenIdx = trimmed.lastIndexOf('<!--');
+        var inserted = false;
+        if (lastOpenIdx >= 0) {
+          var afterLastOpen = trimmed.slice(lastOpenIdx);
+          var closingIdx = afterLastOpen.indexOf('-->');
+          if (closingIdx >= 0 && afterLastOpen.slice(closingIdx + 3).trim() === '') {
+            var before = trimmed.slice(0, lastOpenIdx).replace(/\s+$/, '');
+            var after = trimmed.slice(lastOpenIdx);
+            var lastLineBefore = before.slice(before.lastIndexOf('\n') + 1);
+            var endsWithRefDef = refDefNameRe.test(lastLineBefore);
+            result = before + (endsWithRefDef ? '\n' : '\n\n') + defsToAppend + '\n' + after + '\n';
+            inserted = true;
+          }
+        }
+        if (!inserted) {
+          var lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1);
+          var endsWithRefDef = refDefNameRe.test(lastLine);
+          result = trimmed + (endsWithRefDef ? '\n' : '\n\n') + defsToAppend + '\n';
+        }
       }
     }
     return result;
@@ -2772,6 +3368,7 @@
 
     while ((match = inlineLinkRe.exec(body)) !== null) {
       if (insideCodeBlock(match.index)) continue;
+      if (normalizeUrl(match[1]) === normalizeUrl(match[2])) continue;
       var normUrl = normalizeUrl(match[2]);
       if (!urlGroups[normUrl]) urlGroups[normUrl] = [];
       urlGroups[normUrl].push({
@@ -2886,9 +3483,25 @@
 
     if (newDefs.length > 0) {
       var trimmed = result.replace(/\s+$/, '');
-      var lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1);
-      var endsWithRefDef = /^\s{0,3}\[([^\]]+)\]:\s/.test(lastLine);
-      result = trimmed + (endsWithRefDef ? '\n' : '\n\n') + newDefs.join('\n');
+      var lastOpenIdx = trimmed.lastIndexOf('<!--');
+      var insertedDefs = false;
+      if (lastOpenIdx >= 0) {
+        var afterLastOpen = trimmed.slice(lastOpenIdx);
+        var closingIdx = afterLastOpen.indexOf('-->');
+        if (closingIdx >= 0 && afterLastOpen.slice(closingIdx + 3).trim() === '') {
+          var before = trimmed.slice(0, lastOpenIdx).replace(/\s+$/, '');
+          var after = trimmed.slice(lastOpenIdx);
+          var lastLineBefore = before.slice(before.lastIndexOf('\n') + 1);
+          var endsWithRefDef = /^\s{0,3}\[([^\]]+)\]:\s/.test(lastLineBefore);
+          result = before + (endsWithRefDef ? '\n' : '\n\n') + newDefs.join('\n') + '\n' + after;
+          insertedDefs = true;
+        }
+      }
+      if (!insertedDefs) {
+        var lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1);
+        var endsWithRefDef = /^\s{0,3}\[([^\]]+)\]:\s/.test(lastLine);
+        result = trimmed + (endsWithRefDef ? '\n' : '\n\n') + newDefs.join('\n');
+      }
     }
 
     return serializeWithFrontmatter(parsed.frontmatter, result);
@@ -2905,6 +3518,7 @@
         this._liveWysiwygListMarkerData = preprocessListMarkers(markdown);
         this._liveWysiwygTableSepData = preprocessTableSeparators(markdown);
         this._liveWysiwygCodeBlockData = preprocessCodeBlocks(markdown);
+        this._liveWysiwygHrData = preprocessHorizontalRules(markdown);
       }
       return origSetValue.apply(this, arguments);
     };
@@ -2916,6 +3530,7 @@
         var newListData = preprocessListMarkers(cleanBody);
         this._liveWysiwygTableSepData = preprocessTableSeparators(cleanBody);
         this._liveWysiwygCodeBlockData = preprocessCodeBlocks(cleanBody);
+        this._liveWysiwygHrData = preprocessHorizontalRules(cleanBody);
         if (newLinkData.refDefinitions) {
           this._liveWysiwygLinkData = newLinkData;
         }
@@ -2937,6 +3552,12 @@
         }
         if (this._liveWysiwygCodeBlockData) {
           md = postprocessCodeBlocks(md, this._liveWysiwygCodeBlockData);
+        }
+        if (this._liveWysiwygRawHtmlData) {
+          md = postprocessRawHtml(md, this._liveWysiwygRawHtmlData);
+        }
+        if (this._liveWysiwygHrData) {
+          md = postprocessHorizontalRules(md, this._liveWysiwygHrData);
         }
         if (this._liveWysiwygLinkData) {
           md = dryDuplicateInlineLinks(md, this._liveWysiwygLinkData);
@@ -2973,6 +3594,12 @@
       }
       if (this._liveWysiwygCodeBlockData) {
         body = postprocessCodeBlocks(body, this._liveWysiwygCodeBlockData);
+      }
+      if (this._liveWysiwygRawHtmlData) {
+        body = postprocessRawHtml(body, this._liveWysiwygRawHtmlData);
+      }
+      if (this._liveWysiwygHrData) {
+        body = postprocessHorizontalRules(body, this._liveWysiwygHrData);
       }
       if (this._liveWysiwygLinkData) {
         body = dryDuplicateInlineLinks(body, this._liveWysiwygLinkData);
@@ -3545,6 +4172,7 @@
                        body.slice(pos.start, pos.end) + spanMarkerEnd +
                        body.slice(pos.end);
       ea.innerHTML = editor._markdownToHtml(markedBody);
+      if (typeof populateRawHtmlBlocks === 'function') populateRawHtmlBlocks(ea);
       if (typeof enhanceCodeBlocks === 'function') enhanceCodeBlocks(ea);
       if (typeof enhanceChecklists === 'function') enhanceChecklists(ea);
       if (typeof enhanceAdmonitions === 'function') enhanceAdmonitions(ea);
@@ -3981,6 +4609,7 @@
                      body.slice(pos.start, pos.end) + spanMarkerEnd +
                      body.slice(pos.end);
     ea.innerHTML = editor._markdownToHtml(markedBody);
+    if (typeof populateRawHtmlBlocks === 'function') populateRawHtmlBlocks(ea);
     if (typeof enhanceCodeBlocks === 'function') enhanceCodeBlocks(ea);
     if (typeof enhanceChecklists === 'function') enhanceChecklists(ea);
     if (typeof enhanceAdmonitions === 'function') enhanceAdmonitions(ea);
@@ -4082,6 +4711,7 @@
       this._liveWysiwygFrontmatter = parsed.frontmatter;
       var ret = origSetValue.call(this, parsed.body, isInitialSetup);
       if (this.editableArea) {
+        populateRawHtmlBlocks(this.editableArea);
         enhanceCodeBlocks(this.editableArea);
         enhanceChecklists(this.editableArea);
         enhanceAdmonitions(this.editableArea);
@@ -4261,6 +4891,7 @@
       if (!isInitialSetup && savedScroll !== null) {
         if (mode === 'wysiwyg') {
           var editableArea = this.editableArea;
+          populateRawHtmlBlocks(editableArea);
           enhanceCodeBlocks(editableArea);
           enhanceChecklists(editableArea);
           enhanceAdmonitions(editableArea);
@@ -4398,6 +5029,7 @@
           if (this.markdownLineNumbersDiv) this.markdownLineNumbersDiv.scrollTop = this.markdownArea.scrollTop;
         }
       } else if (mode === 'wysiwyg' && this.editableArea) {
+        populateRawHtmlBlocks(this.editableArea);
         enhanceCodeBlocks(this.editableArea);
         enhanceChecklists(this.editableArea);
         enhanceAdmonitions(this.editableArea);
@@ -4946,6 +5578,9 @@
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygCodeBlockData) {
             markdownContent = postprocessCodeBlocks(markdownContent, wysiwygEditor._liveWysiwygCodeBlockData);
           }
+          if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygHrData) {
+            markdownContent = postprocessHorizontalRules(markdownContent, wysiwygEditor._liveWysiwygHrData);
+          }
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygLinkData) {
             markdownContent = dryDuplicateInlineLinks(markdownContent, wysiwygEditor._liveWysiwygLinkData);
             markdownContent = collapseRedundantReferenceToShortcut(markdownContent);
@@ -5421,6 +6056,7 @@
           }
           enhanceCodeBlocks(ea);
           enhanceBasicPreBlocks(ea);
+          populateRawHtmlBlocks(ea);
           enhanceAdmonitions(ea);
           requestAnimationFrame(function () {
             var codeEl = pre.querySelector('code') || pre;
@@ -5871,6 +6507,17 @@
       };
     })();
 
+    (function patchMarkdownToHtmlForRawHtml() {
+      var proto = MarkdownWYSIWYG.prototype;
+      var origMdToHtml = proto._markdownToHtml;
+      if (!origMdToHtml) return;
+      proto._markdownToHtml = function (markdown) {
+        var md = markdown || '';
+        var rawResult = preprocessRawHtml(md);
+        this._liveWysiwygRawHtmlData = rawResult;
+        return origMdToHtml.call(this, rawResult.markdown);
+      };
+    })();
 
     (function patchHtmlToMarkdownEmojiToShortcode() {
       var MARKER = "\uFFFF\uFFFF\uFFFF";
@@ -5917,6 +6564,7 @@
       var md = wysiwygEditor.markdownArea.value;
       if (md) {
         wysiwygEditor.editableArea.innerHTML = wysiwygEditor._markdownToHtml(md);
+        populateRawHtmlBlocks(wysiwygEditor.editableArea);
       }
     }
 

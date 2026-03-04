@@ -62,9 +62,9 @@ Repeated presses expand the selection through a context-aware hierarchy:
 
 - Clicking the **Inline Code** toolbar button toggles inline code off if the cursor is on existing inline code or the selection spans multiple inline code elements.
 
-## Emoji <img alt="😍" class="emojione" src="[https://cdnjs.cloudflare.com/ajax/libs/emojione/2.2.7/assets/svg/1f60d.svg](https://cdnjs.cloudflare.com/ajax/libs/emojione/2.2.7/assets/svg/1f60d.svg)" title=":heart_eyes:" data-emoji-shortcode=":heart_eyes:">
+## Emoji :heart_eyes:
 
-Emoji shortcodes (e.g. `:heart_eyes:`, `:white_check_mark:`) are rendered as images matching MkDocs output. Unicode emoji already present in the document are preserved as-is.
+Emoji :100: shortcodes (e.g. `:heart_eyes:`, `:white_check_mark:`) or 💯 unicode is supported. Unicode emoji already present in the document are preserved as-is.
 
 ### Shortcode Completion
 

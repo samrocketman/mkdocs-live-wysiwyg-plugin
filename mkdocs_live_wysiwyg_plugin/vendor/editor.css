@@ -1044,3 +1044,72 @@
 .md-admonition-placement-half.active:hover {
  background: #2d5a8a;
 }
+
+/* Link settings dropdown - matches admonition/code settings style */
+.md-link-settings-dropdown {
+ position: fixed;
+ width: 220px;
+ background: #1e1e1e;
+ border: 1px solid #444;
+ border-radius: 4px;
+ box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+ z-index: 10000;
+ padding: 6px 0;
+ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+ font-size: 12px;
+ color: #c9d1d9;
+}
+
+.md-link-settings-row {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ padding: 5px 10px;
+}
+
+.md-link-settings-label {
+ flex-shrink: 0;
+ margin-right: 8px;
+}
+
+.md-link-settings-input {
+ flex: 1;
+ min-width: 0;
+ background: #333;
+ color: #c9d1d9;
+ border: 1px solid #555;
+ border-radius: 3px;
+ padding: 4px 8px;
+ font-family: inherit;
+ font-size: inherit;
+}
+
+.md-link-settings-input:focus {
+ outline: none;
+ border-color: #3a7bd5;
+}
+
+.md-link-settings-input::placeholder {
+ color: #888;
+}
+
+.md-link-settings-apply-row {
+ justify-content: flex-end;
+ padding-top: 8px;
+}
+
+.md-link-settings-apply {
+ background: #264f78;
+ color: #fff;
+ border: 1px solid #3a7bd5;
+ border-radius: 3px;
+ padding: 4px 12px;
+ cursor: pointer;
+ font-family: inherit;
+ font-size: inherit;
+ transition: background 0.1s, color 0.1s;
+}
+
+.md-link-settings-apply:hover {
+ background: #2d5a8a;
+}

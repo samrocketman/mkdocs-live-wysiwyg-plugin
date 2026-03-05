@@ -1648,9 +1648,9 @@ class MarkdownWYSIWYG {
     }
 
     _handleToolbarClick(buttonConfig, buttonElement) {
-        if (buttonConfig.id === 'table' || buttonConfig.id === 'image' || buttonConfig.id === 'admonition') {
+        if (buttonConfig.id === 'table' || buttonConfig.id === 'image' || buttonConfig.id === 'admonition' || buttonConfig.id === 'link') {
             if (typeof this[buttonConfig.action] === 'function') {
-                // Focus is handled inside the action (_insertImageAction, _insertTableAction)
+                // Focus is handled inside the action (_insertImageAction, _insertTableAction, _insertLink)
                 // before showing the popup/grid, to save the correct range.
                 this[buttonConfig.action](buttonElement);
             }
@@ -2146,7 +2146,9 @@ class MarkdownWYSIWYG {
         this._finalizeUpdate(textarea.value);
     }
 
-    _insertLink() {
+    _insertLink(buttonElement) {
+        // Link insertion/editing is patched by live-wysiwyg-integration.js to show a dropdown menu.
+        // Fallback when patch is not applied (e.g. integration not loaded):
         if (this.currentMode === 'wysiwyg') {
             this.editableArea.focus();
             const selection = window.getSelection();

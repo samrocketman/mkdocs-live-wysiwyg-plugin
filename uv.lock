@@ -224,7 +224,7 @@ wheels = [
 
 [[package]]
 name = "mkdocs-live-wysiwyg-plugin"
-version = "0.1.36"
+version = "0.1.37"
 source = { editable = "." }
 dependencies = [
     { name = "mkdocs" },

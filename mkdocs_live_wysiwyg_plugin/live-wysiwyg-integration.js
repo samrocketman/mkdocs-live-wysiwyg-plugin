@@ -2737,21 +2737,18 @@
           var decoded = typeof ph === 'object' ? ph.content : ph;
           var newlinesAfter = typeof ph === 'object' ? ph.newlinesAfter : null;
           var after = protected_.substring(lineEnd);
+          var afterStripped = after.replace(/^\n+/, '');
+          var nextIsHtmlComment = /^\s*<span\s[^>]*data-live-wysiwyg-html-comment/.test(afterStripped) || /^\s*<!--/.test(afterStripped);
+          if (nextIsHtmlComment && newlinesAfter != null && newlinesAfter > 1) {
+            newlinesAfter = 1;
+          }
           if (decoded && /^\s*<!--[\s\S]*?-->\s*$/.test(decoded.trim())) {
             if (newlinesAfter != null && newlinesAfter >= 1) {
               after = '\n'.repeat(newlinesAfter) + after.replace(/^\n+/, '');
             } else {
               after = after.replace(/^\n+/, '\n');
             }
-            var insertStart = lineStart;
-            if (lineStart >= 2 && protected_.charAt(lineStart - 1) === '\n' && protected_.charAt(lineStart - 2) === '\n') {
-              var prevLineStart = protected_.lastIndexOf('\n', lineStart - 3) + 1;
-              var prevLine = protected_.substring(prevLineStart, lineStart - 2);
-              if (/^(\s*)([-*+]|\d+\.)\s/.test(prevLine)) {
-                insertStart = lineStart - 1;
-              }
-            }
-            protected_ = protected_.substring(0, insertStart) + decoded + after;
+            protected_ = protected_.substring(0, lineStart) + decoded + after;
           } else if (newlinesAfter != null) {
             after = newlinesAfter >= 1 ? '\n'.repeat(newlinesAfter) + after.replace(/^\n+/, '') : after.replace(/^\n+/, '');
             protected_ = protected_.substring(0, lineStart) + decoded + after;
@@ -3256,6 +3253,34 @@
   }
 
   /**
+   * Move ref definitions from the end of the document to the beginning.
+   * When ref defs are at the end after a comment placeholder span, marked may parse them
+   * as paragraph content (with URLs autolinked), causing them to appear in the HTML.
+   * Placing them at the start ensures they are parsed as metadata and never rendered.
+   * Preserves frontmatter: ref defs are inserted after the frontmatter block if present.
+   */
+  function moveRefDefsFromEndToStart(markdown) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+    var refDefRe = /^\s{0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/;
+    var lines = markdown.split('\n');
+    var i = lines.length - 1;
+    var refDefLines = [];
+    while (i >= 0 && refDefRe.test(lines[i])) {
+      refDefLines.unshift(lines[i]);
+      i--;
+    }
+    while (i >= 0 && /^\s*$/.test(lines[i])) i--;
+    if (refDefLines.length === 0) return markdown;
+    var bodyContent = lines.slice(0, i + 1).join('\n');
+    var parsed = parseFrontmatter(bodyContent);
+    var refDefBlock = refDefLines.join('\n') + '\n\n';
+    if (parsed.frontmatter) {
+      return parsed.frontmatter + '\n' + refDefBlock + parsed.body;
+    }
+    return refDefBlock + parsed.body;
+  }
+
+  /**
    * Restore ref definitions between HTML comment pairs when serializing to markdown.
    * extractRefDefsFromCommentBlocks moves ref defs to the end for marked parsing; this
    * restores the original structure (ref defs between comments) and removes extra newlines.
@@ -3279,13 +3304,21 @@
     while (startCommentIdx >= 0 && /^\s*$/.test(lines[startCommentIdx])) startCommentIdx--;
     if (startCommentIdx < 0 || !commentRe.test(lines[startCommentIdx])) return markdown;
     var before = lines.slice(0, startCommentIdx + 1);
-    var restored = before.concat(refDefLines).concat([lines[endCommentIdx]]);
+    var otherBetween = lines.slice(startCommentIdx + 1, endCommentIdx);
+    var afterEndLines = lines.slice(endCommentIdx + 1);
+    var afterEndIdx = afterEndLines.length - 1;
+    while (afterEndIdx >= 0 && (refDefRe.test(afterEndLines[afterEndIdx]) || /^\s*$/.test(afterEndLines[afterEndIdx]))) {
+      afterEndIdx--;
+    }
+    var afterEnd = afterEndLines.slice(0, afterEndIdx + 1);
+    var restored = before.concat(refDefLines).concat(otherBetween).concat([lines[endCommentIdx]]).concat(afterEnd);
     return restored.join('\n');
   }
 
   function preprocessRawHtml(markdown) {
     if (!markdown || typeof markdown !== 'string') return { markdown: markdown, comments: [], tags: [] };
     markdown = extractRefDefsFromCommentBlocks(markdown);
+    markdown = moveRefDefsFromEndToStart(markdown);
     var comments = [];
     var tags = [];
 
@@ -3323,6 +3356,10 @@
 
       var blockOpenMatch = line.match(/^(\s*)<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/);
       if (blockOpenMatch && !/\/\s*>$/.test(blockOpenMatch[0])) {
+        if (line.indexOf(RAW_HTML_COMMENT_ATTR) >= 0) {
+          result.push(line);
+          continue;
+        }
         var bTagName = blockOpenMatch[2].toLowerCase();
         if (!_isHtmlTagKnownToMarkdown('<' + bTagName + '>') && _rawHtmlVoidTags.indexOf(bTagName) < 0) {
           var blockLines = [line];
@@ -3957,20 +3994,24 @@
     var origSwitchToMode = proto.switchToMode;
     if (!origSetValue || !origSwitchToMode) return;
     proto.setValue = function (markdown, isInitialSetup) {
+      var mdToUse = markdown;
       if (markdown) {
-        this._liveWysiwygLinkData = preprocessMarkdownLinks(markdown);
-        this._liveWysiwygListMarkerData = preprocessListMarkers(markdown);
-        this._liveWysiwygTableSepData = preprocessTableSeparators(markdown);
-        this._liveWysiwygCodeBlockData = preprocessCodeBlocks(markdown);
-        this._liveWysiwygHrData = preprocessHorizontalRules(markdown);
+        var mdWithRefsExtracted = extractRefDefsFromCommentBlocks(markdown);
+        this._liveWysiwygLinkData = preprocessMarkdownLinks(mdWithRefsExtracted);
+        this._liveWysiwygListMarkerData = preprocessListMarkers(mdWithRefsExtracted);
+        this._liveWysiwygTableSepData = preprocessTableSeparators(mdWithRefsExtracted);
+        this._liveWysiwygCodeBlockData = preprocessCodeBlocks(mdWithRefsExtracted);
+        this._liveWysiwygHrData = preprocessHorizontalRules(mdWithRefsExtracted);
+        mdToUse = mdWithRefsExtracted;
       }
-      return origSetValue.apply(this, arguments);
+      return origSetValue.apply(this, [mdToUse, isInitialSetup]);
     };
     proto.switchToMode = function (mode, isInitialSetup) {
       if (mode === 'wysiwyg' && !isInitialSetup && this.markdownArea && this.markdownArea.value) {
         var body = parseFrontmatter(this.markdownArea.value).body;
         var cleanBody = stripCursorSpanHtml(body);
-        var newLinkData = preprocessMarkdownLinks(cleanBody);
+        var bodyWithRefsExtracted = extractRefDefsFromCommentBlocks(cleanBody);
+        var newLinkData = preprocessMarkdownLinks(bodyWithRefsExtracted);
         var newListData = preprocessListMarkers(cleanBody);
         this._liveWysiwygTableSepData = preprocessTableSeparators(cleanBody);
         this._liveWysiwygCodeBlockData = preprocessCodeBlocks(cleanBody);

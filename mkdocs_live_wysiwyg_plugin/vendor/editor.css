@@ -923,6 +923,28 @@
  margin-right: 8px;
 }
 
+.md-admonition-type-select {
+ flex: 1;
+ min-width: 0;
+ background: #333;
+ color: #c9d1d9;
+ border: 1px solid #555;
+ border-radius: 3px;
+ padding: 2px 6px;
+ font-family: inherit;
+ font-size: inherit;
+ cursor: pointer;
+}
+
+.md-admonition-type-select:hover {
+ background: #444;
+}
+
+.md-admonition-type-select:focus {
+ outline: none;
+ border-color: #3a7bd5;
+}
+
 .md-admonition-settings-toggle {
  background: #333;
  color: #888;

@@ -17,6 +17,41 @@ Repeated presses expand the selection through a context-aware hierarchy:
 6. Continues expanding up through **parent heading levels** (H4 -> H3 -> H2 -> H1).
 7. Finally selects the **entire document**.
 
+## Markdown Auto-Conversions
+
+Typing markdown syntax in the WYSIWYG editor automatically converts it to the corresponding formatted element. The cursor is placed inside the new element so you can keep typing.
+
+### Block-Level
+
+| You type | Result |
+|----------|--------|
+| `# ` through `###### ` | Heading 1 through Heading 6 |
+| `> ` | Block quote |
+| `- ` or `* ` | Unordered list |
+| `- [ ] ` or `* [ ] ` | Checklist (unchecked) |
+| `- [x] ` or `* [x] ` | Checklist (checked) |
+| `[ ] ` or `[x] ` in a single-item empty list | Converts list to checklist |
+| `1. ` (any number) | Ordered list |
+| `---`, `***`, or `___` | Horizontal rule (always inserts `---`) |
+| `!!! ` or `!!! type ` | Admonition (note or specified type) |
+| `??? ` or `??? type ` | Collapsible admonition (note or specified type) |
+
+Block-level conversions trigger when you type the pattern at the start of an empty paragraph. For headings and lists, any remaining text after the prefix is preserved. Admonition types include: note, danger, warning, tip, hint, important, caution, error, attention, abstract, info, success, question, failure, bug, example, quote. Type `!!! ` then backspace to revert to the literal, then type a type name and space (e.g. `!!! danger `) to create that admonition type.
+
+- **Backspace** on an empty converted element (heading, blockquote, admonition, list item, or the paragraph after a horizontal rule) reverts it to the original literal characters, including the trailing space where you typed one (e.g. `## ` restores `## `, not `##`). The cursor is placed at the end of the restored text.
+
+### Inline
+
+| You type | Result |
+|----------|--------|
+| `**text**` or `__text__` | **Bold** |
+| `*text*` or `_text_` | *Italic* |
+| `~~text~~` | ~~Strikethrough~~ |
+| `` `text` `` | `Inline code` |
+| `[text](url)` | [Link](url) |
+
+Inline conversions trigger when you type the closing delimiter. The wrapped text must not be empty and must not start or end with a space. The cursor is placed immediately after the formatted element.
+
 ## Code Blocks
 
 - Typing **three backticks** automatically inserts a basic code block.
@@ -36,6 +71,7 @@ Repeated presses expand the selection through a context-aware hierarchy:
 
 ## Admonitions
 
+- The **gear button** on an admonition opens settings: change **Type** (note, danger, warning, etc.), placement (standalone/inline), collapsible, collapsed, and hide title. Switching type preserves all content, title, and other settings.
 - **Enter** (3×) at the end of admonition body content exits onto a new paragraph. Trailing empty paragraphs are cleaned up.
 - **Backspace** on an admonition with an empty body deletes the entire admonition.
 - Exiting a list inside an admonition requires only a single enter press to exit the admonition if the list is at the end.

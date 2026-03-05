@@ -1256,6 +1256,8 @@
     if (adDiv.classList.contains('end')) classes += ' end';
     details.className = classes;
     details.setAttribute('contenteditable', 'true');
+    var literal = adDiv.getAttribute('data-md-literal');
+    if (literal) details.setAttribute('data-md-literal', literal);
 
     var titleEl = adDiv.querySelector(':scope > .admonition-title');
     var summary = document.createElement('summary');
@@ -1281,6 +1283,8 @@
     if (detailsEl.classList.contains('end')) classes += ' end';
     div.className = classes;
     div.setAttribute('contenteditable', 'true');
+    var literal = detailsEl.getAttribute('data-md-literal');
+    if (literal) div.setAttribute('data-md-literal', literal);
 
     var summaryEl = detailsEl.querySelector(':scope > summary');
     var titleP = document.createElement('p');
@@ -1331,12 +1335,63 @@
       var hasEnd = adEl.classList.contains('end');
       var hideTitle = adEl.hasAttribute('data-hide-title');
       var placement = hasInline ? (hasEnd ? 'inline-end' : 'inline') : 'standalone';
-      return { isCollapsible: isCollapsible, isCollapsed: isCollapsed, placement: placement, hideTitle: hideTitle };
+      var type = getAdmonitionType(adEl) || 'note';
+      return { isCollapsible: isCollapsible, isCollapsed: isCollapsed, placement: placement, hideTitle: hideTitle, type: type };
+    }
+
+    function getDefaultTitleForType(type) {
+      for (var i = 0; i < ADMONITION_TYPES.length; i++) {
+        if (ADMONITION_TYPES[i].id === type) return ADMONITION_TYPES[i].label;
+      }
+      return type ? (type.charAt(0).toUpperCase() + type.slice(1)) : 'Note';
+    }
+
+    function setAdmonitionType(adEl, newType) {
+      var oldType = getAdmonitionType(adEl) || 'note';
+      var titleEl = adEl.querySelector(':scope > .admonition-title') || adEl.querySelector(':scope > summary');
+      if (titleEl && !adEl.hasAttribute('data-hide-title')) {
+        var currentTitle = (titleEl.textContent || '').trim();
+        var oldDefault = getDefaultTitleForType(oldType);
+        if (currentTitle === oldDefault) {
+          titleEl.textContent = getDefaultTitleForType(newType);
+        }
+      }
+      for (var i = 0; i < ADMONITION_TYPE_IDS.length; i++) {
+        adEl.classList.remove(ADMONITION_TYPE_IDS[i]);
+      }
+      adEl.classList.add(newType);
+      var prefix = adEl.nodeName === 'DETAILS' ? (adEl.hasAttribute('open') && !adEl.hasAttribute('data-default-collapsed') ? '???+ ' : '??? ') : '!!! ';
+      adEl.setAttribute('data-md-literal', prefix + newType + ' ');
     }
 
     function buildUI() {
       dropdown.innerHTML = '';
       var state = readState();
+
+      var typeRow = document.createElement('div');
+      typeRow.className = 'md-admonition-settings-row';
+      var typeLabel = document.createElement('span');
+      typeLabel.className = 'md-admonition-settings-label';
+      typeLabel.textContent = 'Type';
+      var typeSelect = document.createElement('select');
+      typeSelect.className = 'md-admonition-type-select';
+      for (var ti = 0; ti < ADMONITION_TYPES.length; ti++) {
+        var opt = document.createElement('option');
+        opt.value = ADMONITION_TYPES[ti].id;
+        opt.textContent = ADMONITION_TYPES[ti].label;
+        if (ADMONITION_TYPES[ti].id === state.type) opt.selected = true;
+        typeSelect.appendChild(opt);
+      }
+      typeSelect.addEventListener('change', function () {
+        var newType = typeSelect.value;
+        if (newType === state.type) return;
+        setAdmonitionType(adEl, newType);
+        state.type = newType;
+        syncAndRebuild();
+      });
+      typeRow.appendChild(typeLabel);
+      typeRow.appendChild(typeSelect);
+      dropdown.appendChild(typeRow);
 
       var placementGroup = document.createElement('div');
       placementGroup.className = 'md-admonition-placement-group';
@@ -3047,9 +3102,9 @@
     var m;
 
     var codeSpans = [];
-    var csRe = /`[^`\n]+`/g;
     var csm;
-    while ((csm = csRe.exec(line)) !== null) {
+    var csReDouble = /``(?:[^`]|`(?!`))*``/g;
+    while ((csm = csReDouble.exec(line)) !== null) {
       codeSpans.push({ start: csm.index, end: csm.index + csm[0].length });
     }
     function isInsideCodeSpan(pos) {
@@ -3057,6 +3112,10 @@
         if (pos >= codeSpans[k].start && pos < codeSpans[k].end) return true;
       }
       return false;
+    }
+    var csReSingle = /`[^`\n]+`/g;
+    while ((csm = csReSingle.exec(line)) !== null) {
+      if (!isInsideCodeSpan(csm.index)) codeSpans.push({ start: csm.index, end: csm.index + csm[0].length });
     }
 
     while ((m = tagRe.exec(line)) !== null) {
@@ -3351,8 +3410,8 @@
       var blank = body.slice(fm.index, fm.index + fm[0].length).replace(/[^\n]/g, ' ');
       bodyNoFences = bodyNoFences.slice(0, fm.index) + blank + bodyNoFences.slice(fm.index + fm[0].length);
     }
-    var inlineCodeRe = /`[^`]+`/g;
-    while ((fm = inlineCodeRe.exec(bodyNoFences)) !== null) {
+    var inlineCodeReDouble = /``(?:[^`]|`(?!`))*``/g;
+    while ((fm = inlineCodeReDouble.exec(bodyNoFences)) !== null) {
       codeRanges.push({ start: fm.index, end: fm.index + fm[0].length });
     }
     function insideCodeBlock(idx) {
@@ -3360,6 +3419,10 @@
         if (idx >= codeRanges[fi].start && idx < codeRanges[fi].end) return true;
       }
       return false;
+    }
+    var inlineCodeReSingle = /`[^`]+`/g;
+    while ((fm = inlineCodeReSingle.exec(bodyNoFences)) !== null) {
+      if (!insideCodeBlock(fm.index)) codeRanges.push({ start: fm.index, end: fm.index + fm[0].length });
     }
 
     var inlineLinkRe = /\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
@@ -4299,9 +4362,16 @@
         var p = node.parentNode;
         while (p) { if (p.nodeName === 'PRE') { inPre = true; break; } p = p.parentNode; }
         if (!inPre) {
+          var inner = (node.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+          if (inner.indexOf('`') >= 0) {
+            md += '`` ';
+            walkChildren(node);
+            md += ' ``';
+          } else {
           md += '`';
           walkChildren(node);
           md += '`';
+          }
           return;
         }
       }
@@ -5920,9 +5990,16 @@
           }
         });
 
-        function doConvert(anchorNode, openingIdx, closingIdx, sel) {
+        function doConvert(anchorNode, openingIdx, closingIdx, sel, isDouble) {
           var text = anchorNode.textContent;
-          var inner = text.substring(openingIdx + 1, closingIdx);
+          var inner, literal;
+          if (isDouble) {
+            inner = text.substring(3, closingIdx - 2);
+            literal = '`` ' + inner + ' ``';
+          } else {
+            inner = text.substring(openingIdx + 1, closingIdx);
+            literal = '`' + inner + '`';
+          }
           if (inner.length === 0) return false;
           if (inner.charAt(0) === ' ' || inner.charAt(inner.length - 1) === ' ') return false;
 
@@ -5931,6 +6008,7 @@
 
           var codeEl = document.createElement('code');
           codeEl.textContent = inner;
+          codeEl.setAttribute('data-md-literal', literal);
 
           var parentNode = anchorNode.parentNode;
           var afterNode = document.createTextNode('\u200B' + after);
@@ -5978,11 +6056,23 @@
           var closingIdx = anchorOffset - 1;
           if (closingIdx < 0 || text.charAt(closingIdx) !== '`') return;
           if (closingIdx > 0 && text.charAt(closingIdx - 1) === '`') {
+            if (pendingBacktick && pendingBacktick.node === anchorNode && pendingBacktick.offset === 0) {
+              pendingBacktick = { node: anchorNode, offset: 1, isDouble: true };
+              return;
+            }
+            if (pendingBacktick && pendingBacktick.isDouble && pendingBacktick.node === anchorNode &&
+                text.substring(0, 3) === '`` ' && closingIdx >= 6 && text.substring(closingIdx - 2, closingIdx + 1) === ' ``') {
+              clearPending();
+              if (doConvert(anchorNode, 0, closingIdx, sel, true)) return;
+              return;
+            }
             clearPending();
             return;
           }
 
-          if (pendingBacktick && pendingBacktick.node === anchorNode) {
+          if (pendingBacktick && pendingBacktick.isDouble && pendingBacktick.node === anchorNode) return;
+
+          if (pendingBacktick && pendingBacktick.node === anchorNode && !pendingBacktick.isDouble) {
             var pIdx = pendingBacktick.offset;
             if (pIdx >= 0 && pIdx < closingIdx && text.charAt(pIdx) === '`') {
               clearPending();
@@ -6045,6 +6135,7 @@
             anc = anc.parentNode;
           }
           var pre = document.createElement('pre');
+          pre.setAttribute('data-md-literal', '```');
           var code = document.createElement('code');
           code.textContent = '\n';
           pre.appendChild(code);
@@ -6433,7 +6524,735 @@
 
     })();
 
+    (function markdownAutoConversions() {
+      var ea = wysiwygEditor.editableArea;
+      if (!ea || ea.dataset.liveWysiwygMdAutoAttached) return;
+      ea.dataset.liveWysiwygMdAutoAttached = '1';
 
+      function isInsidePreOrCode(node) {
+        var anc = node.nodeType === 3 ? node.parentNode : node;
+        while (anc && anc !== ea) {
+          if (anc.nodeName === 'PRE' || anc.nodeName === 'CODE') return true;
+          anc = anc.parentNode;
+        }
+        return false;
+      }
+
+      function getContainingBlock(node) {
+        var cur = node.nodeType === 3 ? node.parentNode : node;
+        while (cur) {
+          if (cur === ea) return ea;
+          var tag = cur.nodeName;
+          if (tag === 'P' || tag === 'DIV' || tag === 'LI' || /^H[1-6]$/.test(tag)) return cur;
+          cur = cur.parentNode;
+        }
+        return null;
+      }
+
+      function isFirstTextInBlock(textNode, block) {
+        var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null, false);
+        var n = walker.nextNode();
+        while (n && n !== textNode && !n.textContent.replace(/[\u200B\u200C\u200D\uFEFF]/g, '')) {
+          n = walker.nextNode();
+        }
+        return n === textNode;
+      }
+
+      function placeCursorIn(node, sel, atZws) {
+        var target = node;
+        if (target.nodeType !== 3) {
+          target = node.firstChild;
+          if (!target || target.nodeType !== 3) {
+            target = document.createTextNode('\u200B');
+            node.insertBefore(target, node.firstChild);
+          }
+        }
+        var pos = atZws && target.textContent.charAt(0) === '\u200B' ? 1 : 0;
+        var range = document.createRange();
+        range.setStart(target, pos);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+
+      function placeCursorAtEnd(node, sel) {
+        var target = node.nodeType === 3 ? node : node.firstChild;
+        if (!target || target.nodeType !== 3) return;
+        var range = document.createRange();
+        range.setStart(target, target.textContent.length);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+
+      function placeCursorAfter(el, sel) {
+        var afterNode = document.createTextNode('\u200B');
+        if (el.nextSibling) {
+          el.parentNode.insertBefore(afterNode, el.nextSibling);
+        } else {
+          el.parentNode.appendChild(afterNode);
+        }
+        var range = document.createRange();
+        range.setStart(afterNode, 1);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+
+      // ── Block-level conversions (triggered on space) ──
+
+      var ZWS_RE = /[\u200B\u200C\u200D\uFEFF]/g;
+
+      function isInvisible(ch) {
+        return ch === '\u200B' || ch === '\u200C' || ch === '\u200D' || ch === '\uFEFF';
+      }
+
+      function countPrefixLen(raw, patternLen) {
+        var consumed = 0;
+        for (var i = 0; i < raw.length && consumed < patternLen; i++) {
+          if (!isInvisible(raw.charAt(i))) consumed++;
+        }
+        return i;
+      }
+
+      function handleBlockConversions(anchorNode, anchorOffset, sel, spaceAlreadyInserted) {
+        var block = getContainingBlock(anchorNode);
+        if (!block) return false;
+        var tag = block.nodeName;
+        if (tag !== 'P' && tag !== 'DIV' && block !== ea) return false;
+        if (!isFirstTextInBlock(anchorNode, block)) return false;
+
+        var raw = anchorNode.textContent.substring(0, anchorOffset);
+        var beforeCursor = raw.replace(ZWS_RE, '');
+
+        var hm, olm, adMatch;
+        var ADMONITION_TYPE_IDS = ['note', 'warning', 'danger', 'tip', 'hint', 'important', 'caution', 'error', 'attention', 'abstract', 'info', 'success', 'question', 'failure', 'bug', 'example', 'quote'];
+        if (spaceAlreadyInserted) {
+          hm = beforeCursor.match(/^(#{1,6}) $/);
+          if (hm) return doHeading(anchorNode, block, hm[1].length, countPrefixLen(raw, hm[0].length), sel, hm[0]);
+          if (beforeCursor === '> ') return doBlockquote(anchorNode, block, countPrefixLen(raw, 2), sel, '> ');
+          adMatch = beforeCursor.match(/^(!!!|\?\?\?\+?)\s+(\w+)\s$/);
+          if (adMatch && ADMONITION_TYPE_IDS.indexOf(adMatch[2].toLowerCase()) >= 0) {
+            return doAdmonition(anchorNode, block, countPrefixLen(raw, adMatch[0].length), sel, adMatch[1].indexOf('?') >= 0, beforeCursor, adMatch[2].toLowerCase());
+          }
+          adMatch = beforeCursor.match(/^(!!!|\?\?\?\+?)\s$/);
+          if (adMatch) return doAdmonition(anchorNode, block, countPrefixLen(raw, adMatch[0].length), sel, adMatch[1].indexOf('?') >= 0, beforeCursor, 'note');
+          if (beforeCursor === '- ' || beforeCursor === '* ') return doList(anchorNode, block, countPrefixLen(raw, 2), sel, 'ul', beforeCursor);
+          if (beforeCursor === '- [ ] ' || beforeCursor === '* [ ] ' || beforeCursor === '+ [ ] ') return doList(anchorNode, block, countPrefixLen(raw, 6), sel, 'ul', beforeCursor, true, false);
+          if (/^[-*+] \[[xX]\] $/.test(beforeCursor)) return doList(anchorNode, block, countPrefixLen(raw, 6), sel, 'ul', beforeCursor, true, true);
+          olm = beforeCursor.match(/^(\d+)\. $/);
+          if (olm) return doList(anchorNode, block, countPrefixLen(raw, olm[0].length), sel, 'ol', olm[0]);
+        } else {
+          hm = beforeCursor.match(/^(#{1,6})$/);
+          if (hm) return doHeading(anchorNode, block, hm[1].length, countPrefixLen(raw, hm[0].length), sel, hm[0] + ' ');
+          if (beforeCursor === '>') return doBlockquote(anchorNode, block, countPrefixLen(raw, 1), sel, '> ');
+          adMatch = beforeCursor.match(/^(!!!|\?\?\?\+?)\s+(\w+)$/);
+          if (adMatch && ADMONITION_TYPE_IDS.indexOf(adMatch[2].toLowerCase()) >= 0) {
+            return doAdmonition(anchorNode, block, countPrefixLen(raw, adMatch[0].length), sel, adMatch[1].indexOf('?') >= 0, beforeCursor + ' ', adMatch[2].toLowerCase());
+          }
+          adMatch = beforeCursor.match(/^(!!!|\?\?\?\+?)$/);
+          if (adMatch) return doAdmonition(anchorNode, block, countPrefixLen(raw, adMatch[0].length), sel, adMatch[1].indexOf('?') >= 0, adMatch[1] + ' ', 'note');
+          if (beforeCursor === '-' || beforeCursor === '*') return doList(anchorNode, block, countPrefixLen(raw, 1), sel, 'ul', beforeCursor + ' ');
+          if (beforeCursor === '- [ ]' || beforeCursor === '* [ ]' || beforeCursor === '+ [ ]') return doList(anchorNode, block, countPrefixLen(raw, 5), sel, 'ul', beforeCursor + ' ', true, false);
+          if (/^[-*+] \[[xX]\]$/.test(beforeCursor)) return doList(anchorNode, block, countPrefixLen(raw, 5), sel, 'ul', beforeCursor + ' ', true, true);
+          olm = beforeCursor.match(/^(\d+)\.$/);
+          if (olm) return doList(anchorNode, block, countPrefixLen(raw, olm[0].length), sel, 'ol', olm[0] + ' ');
+        }
+        return false;
+      }
+
+      function stripPrefix(textNode, prefixLen) {
+        var rest = textNode.textContent.substring(prefixLen);
+        textNode.textContent = rest.replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '') ? rest : '\u200B';
+      }
+
+      function doHeading(textNode, block, level, prefixLen, sel, literal) {
+        stripPrefix(textNode, prefixLen);
+        var h = document.createElement('H' + level);
+        if (literal) h.setAttribute('data-md-literal', literal);
+        if (block === ea) {
+          h.textContent = textNode.textContent;
+          ea.replaceChild(h, textNode);
+        } else {
+          while (block.firstChild) h.appendChild(block.firstChild);
+          block.parentNode.replaceChild(h, block);
+        }
+        placeCursorIn(h, sel, true);
+        return true;
+      }
+
+      function doBlockquote(textNode, block, prefixLen, sel, literal) {
+        stripPrefix(textNode, prefixLen);
+        var bq = document.createElement('blockquote');
+        if (literal) bq.setAttribute('data-md-literal', literal);
+        var p = document.createElement('p');
+        if (block === ea) {
+          p.textContent = textNode.textContent;
+          bq.appendChild(p);
+          ea.replaceChild(bq, textNode);
+        } else {
+          while (block.firstChild) p.appendChild(block.firstChild);
+          bq.appendChild(p);
+          block.parentNode.replaceChild(bq, block);
+        }
+        placeCursorIn(p, sel, true);
+        return true;
+      }
+
+      function doAdmonition(textNode, block, prefixLen, sel, collapsible, literal, type) {
+        stripPrefix(textNode, prefixLen);
+        type = type || 'note';
+        var title = type.charAt(0).toUpperCase() + type.slice(1);
+        var bodyP = document.createElement('p');
+        bodyP.textContent = '\u200B';
+
+        var el;
+        if (collapsible) {
+          el = document.createElement('details');
+          el.setAttribute('open', '');
+          el.className = type;
+          el.setAttribute('contenteditable', 'true');
+          var summary = document.createElement('summary');
+          summary.textContent = title;
+          el.appendChild(summary);
+          el.appendChild(bodyP);
+        } else {
+          el = document.createElement('div');
+          el.className = 'admonition ' + type;
+          el.setAttribute('contenteditable', 'true');
+          var titleP = document.createElement('p');
+          titleP.className = 'admonition-title';
+          titleP.textContent = title;
+          el.appendChild(titleP);
+          el.appendChild(bodyP);
+        }
+        if (literal) el.setAttribute('data-md-literal', literal);
+        if (block === ea) {
+          ea.replaceChild(el, textNode);
+        } else {
+          block.parentNode.replaceChild(el, block);
+        }
+        enhanceAdmonitions(ea);
+        placeCursorIn(bodyP, sel, true);
+        return true;
+      }
+
+      function doList(textNode, block, prefixLen, sel, listType, literal, isChecklist, checklistChecked) {
+        stripPrefix(textNode, prefixLen);
+        if (block === ea) {
+          var p = document.createElement('p');
+          p.textContent = textNode.textContent;
+          ea.replaceChild(p, textNode);
+          block = p;
+        }
+        placeCursorIn(block, sel, true);
+        document.execCommand(listType === 'ul' ? 'insertUnorderedList' : 'insertOrderedList', false, null);
+        var node = (sel.anchorNode && sel.anchorNode.nodeType === 3) ? sel.anchorNode.parentNode : sel.anchorNode;
+        var list = node && (node.closest ? node.closest('ul, ol') : (function (n) { while (n && n !== ea) { if (n.nodeName === 'UL' || n.nodeName === 'OL') return n; n = n.parentNode; } return null; })(node));
+        if (list && literal) list.setAttribute('data-md-literal', literal);
+        if (list && isChecklist) {
+          var firstLi = list.querySelector('li');
+          if (firstLi && !getDirectCheckboxOfLi(firstLi)) {
+            var cb = createInteractiveCheckbox(!!checklistChecked);
+            firstLi.insertBefore(cb, firstLi.firstChild);
+            var space = document.createTextNode(' ');
+            firstLi.insertBefore(space, cb.nextSibling);
+            var pos = getPositionAfterCheckboxSpaces(firstLi);
+            if (pos) {
+              var range = document.createRange();
+              range.setStart(pos.node, pos.offset);
+              range.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(range);
+            } else {
+              placeCursorIn(firstLi, sel, true);
+            }
+          }
+        }
+        return true;
+      }
+
+      // ── Convert single-item empty list to checklist on [ ] or [x] ──
+
+      function handleListToChecklist(anchorNode, anchorOffset, sel) {
+        var node = anchorNode.nodeType === 3 ? anchorNode.parentNode : anchorNode;
+        var li = null;
+        while (node && node !== ea) {
+          if (node.nodeName === 'LI') { li = node; break; }
+          node = node.parentNode;
+        }
+        if (!li) return false;
+        var list = li.parentNode;
+        if (!list || list.nodeName !== 'UL' || list.childNodes.length !== 1) return false;
+        if (getDirectCheckboxOfLi(li)) return false;
+        var text = (li.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+        var isChecked = false;
+        var literal = null;
+        var marker = (list.getAttribute('data-md-literal') || '- ').replace(/\s*$/, '');
+        if (text === '[ ] ') { literal = marker + ' [ ] '; }
+        else if (text === '[x] ' || text === '[X] ') { literal = marker + ' [x] '; isChecked = true; }
+        else return false;
+        while (li.firstChild) li.removeChild(li.firstChild);
+        var cb = createInteractiveCheckbox(isChecked);
+        li.appendChild(cb);
+        var spaceAndZws = document.createTextNode(' \u200B');
+        li.appendChild(spaceAndZws);
+        if (literal) list.setAttribute('data-md-literal', literal);
+        var range = document.createRange();
+        range.setStart(spaceAndZws, 2);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return true;
+      }
+
+      // ── Horizontal rule (---, ***, ___) ──
+
+      function handleHorizontalRule(anchorNode, anchorOffset, sel, ch) {
+        if (ch !== '-' && ch !== '*' && ch !== '_') return false;
+        var text = anchorNode.textContent;
+        if (anchorOffset < 3) return false;
+        var seg = text.substring(anchorOffset - 3, anchorOffset);
+        if (seg !== '---' && seg !== '***' && seg !== '___') return false;
+
+        var lineStart = text.lastIndexOf('\n', anchorOffset - 3) + 1;
+        if (text.substring(lineStart, anchorOffset - 3).replace(ZWS_RE, '').trim()) return false;
+
+        var block = getContainingBlock(anchorNode);
+        if (!block || (block.nodeName !== 'P' && block.nodeName !== 'DIV' && block !== ea)) return false;
+        var clean = block.textContent.replace(/[\u200B\u200C\u200D\uFEFF]/g, '').trim();
+        if (clean !== '---' && clean !== '***' && clean !== '___') return false;
+
+        var container = block === ea ? ea : block.parentNode;
+        var toRemove = block === ea ? anchorNode : block;
+        var hr = document.createElement('hr');
+        hr.setAttribute('data-md-literal', clean);
+        container.insertBefore(hr, toRemove);
+        container.removeChild(toRemove);
+
+        var pAfter = document.createElement('p');
+        pAfter.innerHTML = '&#8203;';
+        container.insertBefore(pAfter, hr.nextSibling);
+        placeCursorIn(pAfter, sel, true);
+        return true;
+      }
+
+      // ── Inline: bold **text**/__text__, italic *text*/_text_ ──
+
+      function handleAsteriskOrUnderscore(anchorNode, anchorOffset, sel, ch) {
+        var text = anchorNode.textContent;
+        var before = text.substring(0, anchorOffset);
+        var double = ch + ch;
+        var single = ch;
+
+        if (before.length >= 5 && before.slice(-2) === double) {
+          var inner = before.slice(0, -2);
+          var openIdx = inner.lastIndexOf(double);
+          if (openIdx >= 0) {
+            var content = inner.substring(openIdx + 2);
+            if (content.length > 0 && content.charAt(0) !== ' ' && content.charAt(content.length - 1) !== ' ') {
+              return doInlineWrap(anchorNode, openIdx, anchorOffset, content, 'strong', sel, double + content + double);
+            }
+          }
+        }
+
+        if (before.length >= 3 && before.slice(-1) === single && (before.length < 2 || before.charAt(before.length - 2) !== single)) {
+          var inner = before.slice(0, -1);
+          for (var i = inner.length - 1; i >= 0; i--) {
+            if (inner.charAt(i) === single) {
+              if (i > 0 && inner.charAt(i - 1) === single) { i--; continue; }
+              if (i < inner.length - 1 && inner.charAt(i + 1) === single) continue;
+              var content = inner.substring(i + 1);
+              if (content.length > 0 && content.charAt(0) !== ' ' && content.charAt(content.length - 1) !== ' ') {
+                return doInlineWrap(anchorNode, i, anchorOffset, content, 'em', sel, single + content + single);
+              }
+              break;
+            }
+          }
+        }
+        return false;
+      }
+
+      // ── Inline: strikethrough ~~text~~ ──
+
+      function handleTilde(anchorNode, anchorOffset, sel) {
+        var text = anchorNode.textContent;
+        var before = text.substring(0, anchorOffset);
+        if (before.length >= 5 && before.slice(-2) === '~~') {
+          var inner = before.slice(0, -2);
+          var openIdx = inner.lastIndexOf('~~');
+          if (openIdx >= 0) {
+            var content = inner.substring(openIdx + 2);
+            if (content.length > 0 && content.charAt(0) !== ' ' && content.charAt(content.length - 1) !== ' ') {
+              return doInlineWrap(anchorNode, openIdx, anchorOffset, content, 'del', sel, '~~' + content + '~~');
+            }
+          }
+        }
+        return false;
+      }
+
+      // ── Inline: markdown link [text](url) ──
+
+      function handleCloseParen(anchorNode, anchorOffset, sel) {
+        var text = anchorNode.textContent;
+        var before = text.substring(0, anchorOffset);
+        if (before.length < 5) return false;
+
+        var bracketClose = before.lastIndexOf('](');
+        if (bracketClose < 1) return false;
+
+        var url = before.substring(bracketClose + 2, before.length - 1);
+        if (!url || /\s/.test(url)) return false;
+
+        var bracketOpen = before.lastIndexOf('[', bracketClose - 1);
+        if (bracketOpen < 0) return false;
+
+        var linkText = before.substring(bracketOpen + 1, bracketClose);
+        if (!linkText || linkText.indexOf('[') >= 0 || linkText.indexOf(']') >= 0) return false;
+
+        var beforeLink = text.substring(0, bracketOpen);
+        var afterLink = text.substring(anchorOffset);
+
+        var a = document.createElement('a');
+        a.href = url;
+        a.textContent = linkText;
+        a.setAttribute('data-md-literal', '[' + linkText + '](' + url + ')');
+
+        var parentNode = anchorNode.parentNode;
+        var afterNode = document.createTextNode('\u200B' + afterLink);
+
+        if (beforeLink) {
+          anchorNode.textContent = beforeLink;
+          parentNode.insertBefore(a, anchorNode.nextSibling);
+          parentNode.insertBefore(afterNode, a.nextSibling);
+        } else {
+          parentNode.insertBefore(a, anchorNode);
+          parentNode.insertBefore(afterNode, a.nextSibling);
+          parentNode.removeChild(anchorNode);
+        }
+        var range = document.createRange();
+        range.setStart(afterNode, 1);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return true;
+      }
+
+      // ── Shared inline DOM helper ──
+
+      function doInlineWrap(textNode, startIdx, endIdx, content, tagName, sel, literal) {
+        var text = textNode.textContent;
+        var before = text.substring(0, startIdx);
+        var after = text.substring(endIdx);
+
+        var el = document.createElement(tagName);
+        el.textContent = content;
+        if (literal) el.setAttribute('data-md-literal', literal);
+
+        var parentNode = textNode.parentNode;
+        var afterNode = document.createTextNode('\u200B' + after);
+
+        if (before) {
+          textNode.textContent = before;
+          parentNode.insertBefore(el, textNode.nextSibling);
+          parentNode.insertBefore(afterNode, el.nextSibling);
+        } else {
+          parentNode.insertBefore(el, textNode);
+          parentNode.insertBefore(afterNode, el.nextSibling);
+          parentNode.removeChild(textNode);
+        }
+
+        var range = document.createRange();
+        range.setStart(afterNode, 1);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return true;
+      }
+
+      function isEmptyBlock(node) {
+        var text = (node.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '');
+        return !text && !node.querySelector('img, table');
+      }
+
+      function handleRevertOnBackspace(sel) {
+        if (!sel || !sel.isCollapsed || !sel.rangeCount) return false;
+        var node = sel.anchorNode;
+        if (!node) return false;
+        if (node.nodeType === 3) node = node.parentNode;
+        if (!ea.contains(node)) return false;
+
+        // Inline element revert: cursor at start, at end, or immediately after (CODE, STRONG, EM, DEL, A)
+        var anchorNode = sel.anchorNode;
+        var anchorOffset = sel.anchorOffset;
+        var inlineEl = null;
+        var atRevertPosition = false;
+        var INLINE_REVERT_TAGS = { CODE: 1, STRONG: 1, EM: 1, DEL: 1, A: 1, B: 1 };
+
+        var n = anchorNode;
+        var anc = n.nodeType === 3 ? n.parentNode : n;
+        while (anc && anc !== ea) {
+          if (INLINE_REVERT_TAGS[anc.nodeName]) {
+            if (anc.nodeName === 'CODE' && anc.parentNode && anc.parentNode.nodeName === 'PRE') break;
+            inlineEl = anc;
+            var atStart = (n === anc && anchorOffset === 0) || (n.parentNode === anc && anchorOffset === 0);
+            var atEnd = (n === anc && anchorOffset === anc.childNodes.length) ||
+              (n.parentNode === anc && anchorOffset === (n.textContent || '').length);
+            if (atStart || atEnd) atRevertPosition = true;
+            break;
+          }
+          if (anc.nodeName === 'PRE') break;
+          anc = anc.parentNode;
+        }
+        if (!inlineEl && anchorNode && anchorNode.nodeType === 3) {
+          var prev = anchorNode.previousSibling;
+          if (prev && INLINE_REVERT_TAGS[prev.nodeName] &&
+              !(prev.nodeName === 'CODE' && prev.parentNode && prev.parentNode.nodeName === 'PRE')) {
+            inlineEl = prev;
+            var txt = anchorNode.textContent || '';
+            var afterZws = (anchorOffset === 1 && txt.length >= 1 && /[\u200B\u200C\u200D\uFEFF]/.test(txt.charAt(0)));
+            if (anchorOffset === 0 || afterZws) atRevertPosition = true;
+          }
+        }
+        if (inlineEl && atRevertPosition) {
+          var inlineText = (inlineEl.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+          literal = inlineEl.getAttribute('data-md-literal');
+          if (!literal) {
+            if (inlineEl.nodeName === 'CODE') {
+              literal = inlineText.length > 0
+                ? (inlineText.indexOf('`') >= 0 ? '`` ' + inlineText + ' ``' : '`' + inlineText + '`')
+                : '``';
+            }
+            else if (inlineEl.nodeName === 'A' || inlineEl.nodeName === 'a') literal = '[' + inlineText + '](' + (inlineEl.getAttribute('href') || '') + ')';
+            else if (inlineEl.nodeName === 'STRONG' || inlineEl.nodeName === 'B') literal = '**' + inlineText + '**';
+            else if (inlineEl.nodeName === 'EM') literal = '*' + inlineText + '*';
+            else if (inlineEl.nodeName === 'DEL') literal = '~~' + inlineText + '~~';
+            else literal = inlineText;
+          }
+          var inlineParent = inlineEl.parentNode;
+          var newText = document.createTextNode(literal);
+          inlineParent.replaceChild(newText, inlineEl);
+          var nextTn = newText.nextSibling;
+          if (nextTn && nextTn.nodeType === 3) {
+            var nextTxt = nextTn.textContent || '';
+            var stripped = nextTxt.replace(/^[\u200B\u200C\u200D\uFEFF]+/, '');
+            if (stripped !== nextTxt) {
+              nextTn.textContent = stripped;
+            }
+          }
+          var range = document.createRange();
+          range.setStart(newText, literal.length);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return true;
+        }
+
+        if (isInsidePreOrCode(node)) return false;
+
+        // Checklist revert: cursor in space after checkbox (single-item list)
+        var prev = anchorNode && anchorNode.nodeType === 3 ? anchorNode.previousSibling : null;
+        if (prev && prev.nodeName === 'INPUT' && prev.type === 'checkbox') {
+          var li = anchorNode.parentNode;
+          if (li && li.nodeName === 'LI') {
+            var list = li.parentNode;
+            if (list && list.nodeName === 'UL' && list.childNodes.length === 1) {
+              if (isEmptyBlock(li)) {
+                literal = list.getAttribute('data-md-literal') || '- [ ] ';
+                var parent = list.parentNode;
+                var newP = document.createElement('p');
+                newP.style.whiteSpace = 'pre-wrap';
+                newP.textContent = literal;
+                parent.replaceChild(newP, list);
+                placeCursorAtEnd(newP, sel);
+                return true;
+              }
+            }
+          }
+        }
+
+        var block = getContainingBlock(node);
+        if (!block) return false;
+
+        var parent, literal, newP;
+
+        if (/^H[1-6]$/.test(block.nodeName)) {
+          if (!isEmptyBlock(block)) return false;
+          literal = block.getAttribute('data-md-literal') || (Array(parseInt(block.nodeName.charAt(1), 10) + 1).join('#') + ' ');
+          newP = document.createElement('p');
+          newP.style.whiteSpace = 'pre-wrap';
+          newP.textContent = literal;
+          parent = block.parentNode;
+          parent.replaceChild(newP, block);
+          placeCursorAtEnd(newP, sel);
+          return true;
+        }
+
+        var bq = block.nodeName === 'BLOCKQUOTE' ? block : (block.parentNode && block.parentNode.nodeName === 'BLOCKQUOTE' ? block.parentNode : null);
+        if (bq) {
+          var children = bq.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6, ul, ol, pre');
+          var allEmpty = true;
+          for (var i = 0; i < children.length; i++) {
+            if (!isEmptyBlock(children[i])) { allEmpty = false; break; }
+          }
+          if (!allEmpty) return false;
+          literal = bq.getAttribute('data-md-literal') || '> ';
+          newP = document.createElement('p');
+          newP.style.whiteSpace = 'pre-wrap';
+          newP.textContent = literal;
+          parent = bq.parentNode;
+          parent.replaceChild(newP, bq);
+          placeCursorAtEnd(newP, sel);
+          return true;
+        }
+
+        var ad = block.classList && block.classList.contains('admonition') ? block : null;
+        if (!ad && block.parentNode && block.parentNode.classList && block.parentNode.classList.contains('admonition')) ad = block.parentNode;
+        if (ad) {
+          var titleEl = ad.querySelector('.admonition-title');
+          if (titleEl && (block === titleEl || titleEl.contains(node))) return false;
+          var bodyBlocks = [];
+          for (var j = 0; j < ad.childNodes.length; j++) {
+            var c = ad.childNodes[j];
+            if (c !== titleEl && (!c.classList || !c.classList.contains('md-admonition-settings-btn'))) bodyBlocks.push(c);
+          }
+          for (var k = 0; k < bodyBlocks.length; k++) {
+            if (!isEmptyBlock(bodyBlocks[k])) return false;
+          }
+          literal = ad.getAttribute('data-md-literal') || '!!! ';
+          newP = document.createElement('p');
+          newP.style.whiteSpace = 'pre-wrap';
+          newP.textContent = literal;
+          parent = ad.parentNode;
+          parent.replaceChild(newP, ad);
+          placeCursorAtEnd(newP, sel);
+          return true;
+        }
+
+        var detailsEl = block.nodeName === 'DETAILS' && block.querySelector('summary') ? block : null;
+        if (!detailsEl && block.parentNode && block.parentNode.nodeName === 'DETAILS') detailsEl = block.parentNode;
+        if (detailsEl) {
+          var summaryEl = detailsEl.querySelector(':scope > summary');
+          if (summaryEl && (block === summaryEl || summaryEl.contains(node))) return false;
+          var bodyNodes = [];
+          for (var m = 0; m < detailsEl.childNodes.length; m++) {
+            if (detailsEl.childNodes[m].nodeName !== 'SUMMARY') bodyNodes.push(detailsEl.childNodes[m]);
+          }
+          for (var n = 0; n < bodyNodes.length; n++) {
+            if (!isEmptyBlock(bodyNodes[n])) return false;
+          }
+          literal = detailsEl.getAttribute('data-md-literal') || '??? ';
+          newP = document.createElement('p');
+          newP.style.whiteSpace = 'pre-wrap';
+          newP.textContent = literal;
+          parent = detailsEl.parentNode;
+          parent.replaceChild(newP, detailsEl);
+          placeCursorAtEnd(newP, sel);
+          return true;
+        }
+
+        if (block.nodeName === 'LI') {
+          var list = block.parentNode;
+          if (!list || (list.nodeName !== 'UL' && list.nodeName !== 'OL')) return false;
+          if (list.childNodes.length !== 1) return false;
+          if (!isEmptyBlock(block)) return false;
+          literal = list.getAttribute('data-md-literal') || (list.nodeName === 'UL' ? '- ' : '1. ');
+          newP = document.createElement('p');
+          newP.style.whiteSpace = 'pre-wrap';
+          newP.textContent = literal;
+          parent = list.parentNode;
+          parent.replaceChild(newP, list);
+          placeCursorAtEnd(newP, sel);
+          return true;
+        }
+
+        if (block.nodeName === 'P' && block.previousElementSibling && block.previousElementSibling.nodeName === 'HR') {
+          if (!isEmptyBlock(block)) return false;
+          var hr = block.previousElementSibling;
+          literal = hr.getAttribute('data-md-literal') || '---';
+          newP = document.createElement('p');
+          newP.textContent = literal;
+          parent = hr.parentNode;
+          parent.insertBefore(newP, hr);
+          parent.removeChild(hr);
+          parent.removeChild(block);
+          placeCursorAtEnd(newP, sel);
+          return true;
+        }
+
+        return false;
+      }
+
+      // ── keydown: intercept space for block conversions, backspace for revert ──
+
+      ea.addEventListener('keydown', function (e) {
+        if (wysiwygEditor.currentMode !== 'wysiwyg') return;
+        var sel = window.getSelection();
+
+        if (e.key === 'Backspace' && !e.defaultPrevented) {
+          if (handleRevertOnBackspace(sel)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if (wysiwygEditor._finalizeUpdate) wysiwygEditor._finalizeUpdate(ea.innerHTML);
+            return;
+          }
+        }
+
+        if (e.key !== ' ' || e.defaultPrevented) return;
+        if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
+        var anchorNode = sel.anchorNode;
+        var anchorOffset = sel.anchorOffset;
+        if (!anchorNode || anchorNode.nodeType !== 3) return;
+        if (isInsidePreOrCode(anchorNode)) return;
+        var converted = handleBlockConversions(anchorNode, anchorOffset, sel, false);
+        if (converted) {
+          e.preventDefault();
+          if (wysiwygEditor._finalizeUpdate) wysiwygEditor._finalizeUpdate(ea.innerHTML);
+        }
+      }, true);
+
+      // ── Main input listener ──
+
+      ea.addEventListener('input', function (e) {
+        if (wysiwygEditor.currentMode !== 'wysiwyg') return;
+        if (e.inputType !== 'insertText' || !e.data) return;
+
+        var sel = window.getSelection();
+        if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
+        var anchorNode = sel.anchorNode;
+        var anchorOffset = sel.anchorOffset;
+        if (!anchorNode || anchorNode.nodeType !== 3) return;
+        if (isInsidePreOrCode(anchorNode)) return;
+
+        var ch = e.data;
+        var converted = false;
+
+        if (ch === ' ') {
+          converted = handleListToChecklist(anchorNode, anchorOffset, sel);
+          if (!converted) converted = handleBlockConversions(anchorNode, anchorOffset, sel, true);
+        }
+
+        if (!converted && (ch === '-' || ch === '*' || ch === '_')) {
+          converted = handleHorizontalRule(anchorNode, anchorOffset, sel, ch);
+        }
+
+        if (!converted && (ch === '*' || ch === '_')) {
+          converted = handleAsteriskOrUnderscore(anchorNode, anchorOffset, sel, ch);
+        }
+
+        if (!converted && ch === '~') {
+          converted = handleTilde(anchorNode, anchorOffset, sel);
+        }
+
+        if (!converted && ch === ')') {
+          converted = handleCloseParen(anchorNode, anchorOffset, sel);
+        }
+
+        if (converted && wysiwygEditor._finalizeUpdate) {
+          wysiwygEditor._finalizeUpdate(ea.innerHTML);
+        }
+      });
+    })();
 
     (function patchMarkdownToHtmlShortcodeToEmoji() {
       var FALLBACK = {"white_check_mark":"\u2705","check_mark":"\u2714","heart_eyes":"\ud83d\ude0d","thumbsup":"\ud83d\udc4d","heart":"\u2764","smile":"\ud83d\ude04","fire":"\ud83d\udd25","star":"\u2b50","warning":"\u26a0","x":"\u274c"};
@@ -6486,6 +7305,7 @@
           return ph + idx + ph;
         };
         var protected_ = md.replace(/\`\`\`[\s\S]*?\`\`\`/g, protectBlock);
+        protected_ = protected_.replace(/``(?:[^`]|`(?!`))*``/g, protectBlock);
         protected_ = protected_.replace(/`[^`\n]+`/g, protectBlock);
         // Protect emoji img tags (raw HTML) so shortcode replacement does not run inside
         // attribute values (e.g. title=":white_check_mark:") - that causes recursive nesting.
@@ -6527,6 +7347,12 @@
       if (!origNodeToMarkdown) return;
       var shortcodePattern = /^:[a-z0-9_+-]+:$/;
       proto._nodeToMarkdownRecursive = function (node, options) {
+        if (node.nodeName === "CODE" && !this._findParentElement(node, 'PRE')) {
+          var codeContent = (node.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '').trim();
+          if (options && options.inTableCell) codeContent = codeContent.replace(/\|/g, '\\|');
+          if (codeContent.indexOf('`') >= 0) return '`` ' + codeContent + ' ``';
+          return '`' + codeContent + '`';
+        }
         if (node.nodeName === "IMG" && node.getAttribute) {
           var sc = node.getAttribute("data-emoji-shortcode");
           if (sc && shortcodePattern.test(sc)) return sc;
@@ -6663,19 +7489,23 @@
 
           if (content === '' || content === '\n') {
             e.preventDefault();
-            var nextSib = blockContainer.nextSibling;
+            var preEl = blockContainer.nodeName === 'PRE' ? blockContainer : blockContainer.querySelector('pre');
+            var literal = (preEl && preEl.getAttribute('data-md-literal')) || '```';
             var parentNode = blockContainer.parentNode;
+            var nextSib = blockContainer.nextSibling;
             parentNode.removeChild(blockContainer);
             var p = document.createElement('p');
-            var br = document.createElement('br');
-            p.appendChild(br);
+            p.style.whiteSpace = 'pre-wrap';
+            p.textContent = literal;
             if (nextSib) {
               parentNode.insertBefore(p, nextSib);
             } else {
               parentNode.appendChild(p);
             }
             var range = document.createRange();
-            range.setStart(p, 0);
+            var textNode = p.firstChild;
+            if (!textNode || textNode.nodeType !== 3) textNode = p;
+            range.setStart(textNode, (textNode.textContent || '').length);
             range.collapse(true);
             sel.removeAllRanges();
             sel.addRange(range);

@@ -224,7 +224,7 @@ wheels = [
 
 [[package]]
 name = "mkdocs-live-wysiwyg-plugin"
-version = "0.1.9"
+version = "0.1.36"
 source = { editable = "." }
 dependencies = [
     { name = "mkdocs" },
@@ -236,6 +236,11 @@ dev = [
     { name = "pytest" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "mkdocs", specifier = ">=1.5" },
@@ -243,6 +248,9 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "packaging"

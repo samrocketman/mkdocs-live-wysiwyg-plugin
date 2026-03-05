@@ -51,11 +51,21 @@ Read-only selection handling and edit-mode selection handling (WYSIWYG ↔ Markd
 
 ### Step 2: Build Searchable Text
 
-`buildSearchable(text)` takes a markdown string (the actual body or the pseudo-markdown) and produces a whitespace-normalized, formatting-stripped version with a position map back to the original.
+`buildSearchable(text)` takes a markdown string (the actual body or the pseudo-markdown) and produces a whitespace-normalized, formatting-stripped version with a position map back to the original. This allows selections that span across block boundaries (lists, blockquotes, headings, etc.) to match, since `range.toString()` returns plain text without structural markers.
 
-**Stripping rules:**
+**Stripping rules (at line start):**
 
-- Heading markers (`# ` at line start)
+- Heading markers (`# ` through `###### `)
+- Blockquote markers (`> `, including nested `> > `)
+- Unordered list markers (`- `, `+ `, `* `)
+- Ordered list markers (`1. `, `2. `, etc.)
+- Indented list markers (`  - `, `  + `, `  * `, `  N. `, `    - `, etc., for nested lists)
+- Indent (4 spaces, for code blocks / nested content)
+- Admonition lines (`!!! type` or `??? type` / `???+ type` — entire line skipped)
+
+**Stripping rules (anywhere):**
+
+- HTML comments (`<!-- ... -->`) — skipped entirely so invisible content does not block matches
 - Backticks (inline code delimiters)
 - `**` (bold markers)
 - All whitespace collapsed to single spaces
@@ -70,7 +80,13 @@ Read-only selection handling and edit-mode selection handling (WYSIWYG ↔ Markd
 2. Collapse all whitespace to single spaces
 3. Trim
 
-### Step 4: Search and Map Back
+### Step 4: Body Source for Search
+
+**Critical:** Both `applyPendingReadModeSelection` and `readonly_to_edit_mode_text_selection` must use `markdownArea.value` when available, not `editor.getValue()`.
+
+When in WYSIWYG mode, `getValue()` returns `_htmlToMarkdown(editableArea)` — the serialized DOM. The raw HTML handling patches replace raw HTML blocks with placeholders (e.g. `\u0000__RAWHTMLBLOCK_0__\u0000`). Searching for the user's selected text in that serialized output fails because the actual text may be inside a placeholder. `markdownArea.value` holds the source markdown used to render the editor (including raw HTML), so the search runs against the correct content.
+
+### Step 5: Search and Map Back
 
 `readonly_to_edit_mode_text_selection(editor)` orchestrates the search in tiers:
 
@@ -123,6 +139,10 @@ Once positions in the markdown body are determined:
 
 The core insight is that most inline text in rendered HTML is an exact substring of the markdown source — the markdown just has *extra* characters (formatting markers). By stripping those extras from both the markdown body and the pseudo-markdown, and normalizing whitespace, we can match `range.toString()` output against either representation. When we find a match in the pseudo-markdown, we extract the *formatted* substring (with `#`, `**`, `` ` `` intact) and search for it in the actual body — a high-precision match since it includes the formatting.
 
+**Cross-element selection:** When the user selects text spanning multiple blocks (e.g., from the end of one list item to the start of another, or across a heading and paragraph), `range.toString()` returns concatenated plain text without list markers, blockquote prefixes, or other structural syntax. `buildSearchable` strips these block-level markers at line boundaries so the searchable text aligns with what the user selected.
+
+**Raw HTML:** HTML comments (`<!-- ... -->`) are invisible in the rendered page but appear in the markdown source. `buildSearchable` skips them entirely so selections that traverse across comments (e.g., from a heading through a comment to a list item) match correctly.
+
 ## Relationship to Edit-Mode Selection
 
 The **edit-mode selection system** (WYSIWYG ↔ Markdown toggle) is completely separate and must remain so:
@@ -133,3 +153,11 @@ The **edit-mode selection system** (WYSIWYG ↔ Markdown toggle) is completely s
 - Uses `restoreSelectionFromSemantic` as a fallback
 
 None of these mechanisms are used or affected by the read-only selection heuristics.
+
+## Integration with Raw HTML Handling
+
+The raw HTML preservation patches (`preprocessRawHtml`, `_nodeToMarkdownRecursive` placeholders) interact with selection in two ways:
+
+1. **Markdown → WYSIWYG (edit-mode selection):** Cursor span markers (`<span data-live-wysiwyg-cursor></span>`) must be converted to placeholders *before* `preprocessRawHtml` runs. Otherwise `_preprocessLineTags` wraps them as raw HTML, and the cursor marker patch never sees them. The raw HTML patch therefore replaces cursor spans with `LIVEWYSIWYG_CURSOR_9X7K2` / `LIVEWYSIWYG_CURSOR_END_9X7K2` at the start of its `_markdownToHtml` wrapper.
+
+2. **WYSIWYG → Markdown (serialization):** Cursor spans must be stripped during `_nodeToMarkdownRecursive` and `_serializeElementAsHtml`. When a cursor span was wrapped by raw HTML preprocessing, its matching close-tag comment (`<!--live-wysiwyg-raw-close:...-->`) must also be suppressed — otherwise `</span>` leaks into the markdown output.

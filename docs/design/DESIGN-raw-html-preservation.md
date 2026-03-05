@@ -20,7 +20,11 @@ The approach follows the established preprocessor/postprocessor pattern used by 
 
 ### Phase 1: Preprocessing (markdown -> annotated markdown)
 
-`preprocessRawHtml(markdown)` scans markdown line-by-line, skipping fenced code blocks (including indented fences inside list items) and admonition syntax lines. For each non-protected line it runs three passes in order:
+`preprocessRawHtml(markdown)` first runs `extractRefDefsFromCommentBlocks`, then scans markdown line-by-line, skipping fenced code blocks (including indented fences inside list items) and admonition syntax lines. For each non-protected line it runs three passes in order:
+
+#### 0. Reference definitions between HTML comments (`extractRefDefsFromCommentBlocks`)
+
+Reference definitions between HTML comment pairs (e.g. `<!-- prettier-ignore-start -->` ... `<!-- prettier-ignore-end -->`) are not parsed by `marked` because the comment placeholders create a block context where ref defs are ignored. Before comment replacement, ref definitions between such pairs are extracted and moved to the end of the document so `marked` can resolve shortcut links like `[catalog import][catalog-import]`. The non-ref-def content between the comments is preserved; only ref def lines are moved.
 
 #### 1a. Block-Level Raw HTML Capture (NEW)
 
@@ -59,9 +63,11 @@ becomes:
 <span data-live-wysiwyg-html-comment="BASE64" style="display:none"></span>
 ```
 
-The `data-live-wysiwyg-html-comment` attribute contains the base64-encoded original comment. For block-level comments (sole content on a line), the base64 includes the leading whitespace, preserving indentation. The `style="display:none"` keeps it invisible in the WYSIWYG.
+The `data-live-wysiwyg-html-comment` attribute contains the base64-encoded original comment. For block-level comments (sole content on a line), the base64 includes the leading whitespace, preserving indentation. Trailing whitespace (including newlines after `-->`) is trimmed before encoding to avoid newline accumulation. The `style="display:none"` keeps it invisible in the WYSIWYG.
 
-For multi-line comments, the line-walker accumulates lines from `<!--` to `-->`, joins them, and base64-encodes the full comment (with leading whitespace for block-level) into a single `<span>` placeholder.
+**Adjacent comment collapse:** When multiple block-level HTML comments span adjacent lines (with only blank lines between), they are collapsed into a single placeholder. The combined block is base64-encoded as one unit (e.g. `<!-- comment1 -->\n<!-- comment2 -->`). Trailing whitespace (including newlines after the last `-->`) is trimmed before encoding. This avoids extra block-level spacing from the DOM structure and preserves the exact newline layout when serializing back to markdown.
+
+For multi-line comments (one `<!--` spanning to `-->` on a later line), the line-walker accumulates lines from `<!--` to `-->`, joins them, and base64-encodes the full comment (with leading whitespace for block-level) into a single `<span>` placeholder.
 
 #### 1c. Inline Raw HTML Tags (`_preprocessLineTags`)
 
@@ -133,7 +139,7 @@ When encountering any element with `data-live-wysiwyg-raw-html`:
 
 ### Phase 5: Postprocessing
 
-`postprocessRawHtml(markdown, rawHtmlData)` runs after `_htmlToMarkdown` and before final output. Currently a passthrough; available for future edge-case corrections.
+`postprocessRawHtml(markdown, rawHtmlData)` runs after `_htmlToMarkdown` and before final output. It calls `restoreRefDefsToCommentBlocks` to reverse the extraction done in Phase 1: ref definitions that were moved to the end for `marked` parsing are restored between their original HTML comment pairs (e.g. between `<!-- prettier-ignore-start -->` and `<!-- prettier-ignore-end -->`), preserving the original document structure and avoiding extra newlines.
 
 ## Data Flow
 
@@ -156,7 +162,7 @@ WYSIWYG DOM                  -- user edits markdown content normally (raw HTML b
 _htmlToMarkdown()            -- patched serializer: blocks→decoded blob, inline→decoded tags
        |
        v
-postprocessRawHtml()         -- passthrough (future edge-case fixes)
+postprocessRawHtml()         -- restore ref defs between comment pairs
        |
        v
 Final markdown (zero diff)
@@ -168,7 +174,7 @@ All changes are in `live-wysiwyg-integration.js`:
 
 1. **`preprocessRawHtml(markdown)`** -- returns `{ markdown, comments, tags }`.
 2. **`populateRawHtmlBlocks(editableArea)`** -- decodes block placeholders and renders visual preview (called before all enhancement functions).
-3. **`postprocessRawHtml(markdown, rawHtmlData)`** -- currently passthrough.
+3. **`postprocessRawHtml(markdown, rawHtmlData)`** -- calls `restoreRefDefsToCommentBlocks` to restore ref defs between HTML comment pairs.
 4. **`patchMarkdownToHtmlForRawHtml`** -- patches `_markdownToHtml` to run `preprocessRawHtml` before all other markdown-to-HTML patches (emoji, cursor markers). Stores the result as `this._liveWysiwygRawHtmlData`.
 5. **`patchSetValueAndSwitchToModeForLinkPrePost` `switchToMode`** -- calls `postprocessRawHtml` when switching to markdown mode.
 6. **`patchGetValueForListMarkers` `getValue`** -- calls `postprocessRawHtml` before returning final markdown.
@@ -180,7 +186,9 @@ All changes are in `live-wysiwyg-integration.js`:
 - **`_isHtmlTagKnownToMarkdown(tag)`** -- returns `true` for tags that markdown natively generates (should not be annotated).
 - **`_countBlockTagDepth(line, tagName)`** -- counts open/close tags of a specific element on a single line. Open tags increment depth, close tags decrement, self-closing tags are neutral. Used by the block capture to track nesting.
 - **`_isInsideRawHtmlBlock(el)`** -- walks up the DOM tree to check if an element is inside a `data-live-wysiwyg-raw-html-block` container. Used by `enhanceAdmonitions` to skip enhancement of content inside raw HTML blocks.
-- **`_preprocessLineComments(line, lines, idx, comments, result)`** -- handles single-line and multi-line HTML comment detection and replacement. Includes leading whitespace in base64 for block-level comments.
+- **`_preprocessLineComments(line, lines, idx, comments, result)`** -- handles single-line and multi-line HTML comment detection and replacement. For block-level comments, collapses adjacent comment lines (with only blank lines between) into one placeholder. Trailing whitespace is trimmed before encoding. Includes leading whitespace in base64 for block-level comments.
+- **`extractRefDefsFromCommentBlocks(markdown)`** -- moves ref definitions from between HTML comment pairs to the end of the document so `marked` can parse shortcut links.
+- **`restoreRefDefsToCommentBlocks(markdown)`** -- restores ref definitions between their original HTML comment pairs when serializing back to markdown.
 - **`_preprocessLineTags(line, tags, result)`** -- scans a line for all raw HTML tags (open, close, self-closing) and annotates them. Protects inline code spans from processing. Skips markdown autolinks (`<https://...>`, `<user@example.com>`).
 - **`_serializeElementAsHtml(node)`** -- recursively reconstructs an element's HTML string (tag name, attributes, children). Used by the inline raw HTML serializer to preserve non-annotated child elements inside annotated tags. Strips internal `data-live-wysiwyg-*` attributes from output.
 - **`populateRawHtmlBlocks(editableArea)`** -- post-DOM-insertion function that decodes block placeholders, sets innerHTML, marks as non-editable, and applies visual styling.
@@ -200,7 +208,9 @@ All changes are in `live-wysiwyg-integration.js`:
 - **Self-closing tags** (`<custom-widget/>`): detected and encoded as single units with `data-live-wysiwyg-raw-html`. No close-tag sidecar needed.
 - **Inline HTML within paragraphs** (`<span class="x">text</span>`): both the open `<span>` and close `</span>` are annotated within the same line. The serializer outputs them verbatim around the text content.
 - **HTML comments after reference links**: comments at the end of the document (common for linter directives) are preserved at their exact line positions.
+- **Reference definitions between HTML comments**: ref defs between pairs like `<!-- prettier-ignore-start -->` and `<!-- prettier-ignore-end -->` are extracted to the end for `marked` parsing, then restored between the comments during postprocessing. `postprocessMarkdownLinks` uses a single newline (not `\n\n`) when inserting ref defs after an HTML comment line to avoid extra blank lines.
 - **HTML comments within markdown blocks**: e.g., `<!-- TODO -->` between paragraphs. The placeholder `<span>` is a block-level break point.
+- **Adjacent block comments**: All block-level comments (sole content on a line) collapse when adjacent (with only blank lines between). Trailing whitespace after the last `-->` is trimmed before base64 encoding.
 - **Nested raw HTML**: e.g., `<div><div>markdown</div></div>`. The depth tracker correctly handles nested tags of the same type.
 - **Raw HTML that matches known elements** (e.g., `<div class="admonition note">`): block capture takes priority; WYSIWYG enhancements are skipped inside raw HTML blocks.
 - **Indented raw HTML**: the preprocessor captures leading whitespace in the base64 encoding. For block capture, the entire block including indentation is encoded.
@@ -231,10 +241,11 @@ var onlyWhitespace = /^[ \t]*$/.test(prefixText);
 var originalForEncode = (onlyWhitespace && lastIdx === 0) ? prefixText + fullTag : fullTag;
 ```
 
-For comments, the same pattern applies in `_preprocessLineComments`:
+For comments, the same pattern applies in `_preprocessLineComments`. When multiple block-level comments are adjacent (with only blank lines between), they are collapsed into one encoded block. Trailing whitespace (including newlines after the last `-->`) is trimmed before encoding.
 
 ```javascript
 var isBlockComment = !before.trim() && !after.trim();
+// When block-level: collect adjacent comment lines, encode as one, trim trailing newlines
 var originalForEncode = isBlockComment ? before + comment : comment;
 ```
 
@@ -262,9 +273,11 @@ The tag regex in `_preprocessLineTags` skips any "tag" whose content starts with
 
 When `marked` converts a bare URL into `<a href="url">url</a>`, the serializer detects that the link text matches the href and outputs just the bare URL text instead of wrapping it as `[url](url)`.
 
-### Reference link definitions and trailing HTML comments
+### Reference link definitions and HTML comments
 
-Reference link definitions are re-appended by `postprocessMarkdownLinks`. When the document ends with HTML comments, ref defs are inserted BEFORE the last trailing HTML comment.
+Reference definitions between HTML comment pairs (e.g. `<!-- prettier-ignore-start -->` ... `<!-- prettier-ignore-end -->`) are extracted by `extractRefDefsFromCommentBlocks` before `marked` parses, then restored by `restoreRefDefsToCommentBlocks` in `postprocessRawHtml` when serializing. This allows shortcut links to render on initial load.
+
+Reference link definitions are re-appended by `postprocessMarkdownLinks` when missing from the serialized output. When inserting before HTML comments, a single newline is used (not `\n\n`) when the preceding line is an HTML comment, to avoid extra blank lines.
 
 `postprocessMarkdownLinks` checks each ref def individually by name (case-insensitive) against the result, only appending ref defs that are not already present.
 

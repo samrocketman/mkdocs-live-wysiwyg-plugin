@@ -2093,6 +2093,199 @@
     };
   })();
 
+  (function patchInsertLink() {
+    var proto = MarkdownWYSIWYG.prototype;
+    var origInsertLink = proto._insertLink;
+    if (!origInsertLink) return;
+
+    var _activeLinkDropdown = null;
+    function dismissLinkDropdown() {
+      if (_activeLinkDropdown) {
+        if (_activeLinkDropdown.el.parentNode) _activeLinkDropdown.el.parentNode.removeChild(_activeLinkDropdown.el);
+        if (_activeLinkDropdown.closeHandler) document.removeEventListener('mousedown', _activeLinkDropdown.closeHandler, true);
+        if (_activeLinkDropdown.scrollHandler) window.removeEventListener('scroll', _activeLinkDropdown.scrollHandler, true);
+        _activeLinkDropdown = null;
+      }
+    }
+
+    function findAnchorInSelection(editableArea) {
+      var sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return null;
+      var node = sel.getRangeAt(0).commonAncestorContainer;
+      if (node.nodeType === 3) node = node.parentNode;
+      while (node && node !== editableArea) {
+        if (node.nodeName === 'A' && node.getAttribute('href')) return node;
+        node = node.parentNode;
+      }
+      return null;
+    }
+
+    function createLinkDropdown(anchorBtn, editor) {
+      dismissLinkDropdown();
+      dismissAdmonitionSettingsDropdown();
+      dismissActiveSettingsDropdown();
+      dismissActiveLangDropdown();
+
+      var ea = editor.editableArea;
+      var ma = editor.markdownArea;
+      var isWysiwyg = editor.currentMode === 'wysiwyg';
+
+      var savedRange = editor.savedRangeInfo;
+      if (isWysiwyg && savedRange instanceof Range && ea.contains(savedRange.commonAncestorContainer)) {
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(savedRange);
+      } else if (!isWysiwyg && ma && savedRange && typeof savedRange.start === 'number') {
+        ma.setSelectionRange(savedRange.start, savedRange.end);
+      }
+      var existingAnchor = isWysiwyg ? findAnchorInSelection(ea) : null;
+      var initialUrl = existingAnchor ? (existingAnchor.getAttribute('href') || '') : 'https://';
+      var initialText = '';
+      if (existingAnchor) {
+        initialText = (existingAnchor.textContent || '').trim();
+      } else if (isWysiwyg) {
+        var sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) initialText = sel.toString().trim();
+        if (!initialText && savedRange instanceof Range && ea.contains(savedRange.commonAncestorContainer)) {
+          initialText = savedRange.toString().trim();
+        }
+      } else if (ma) {
+        var start = savedRange && typeof savedRange.start === 'number' ? savedRange.start : ma.selectionStart;
+        var end = savedRange && typeof savedRange.end === 'number' ? savedRange.end : ma.selectionEnd;
+        if (start !== end) initialText = ma.value.substring(start, end).trim();
+      }
+
+      var dropdown = document.createElement('div');
+      dropdown.className = 'md-link-settings-dropdown';
+      dropdown.setAttribute('contenteditable', 'false');
+
+      var urlRow = document.createElement('div');
+      urlRow.className = 'md-link-settings-row';
+      var urlLabel = document.createElement('span');
+      urlLabel.className = 'md-link-settings-label';
+      urlLabel.textContent = 'URL';
+      var urlInput = document.createElement('input');
+      urlInput.className = 'md-link-settings-input';
+      urlInput.type = 'text';
+      urlInput.placeholder = 'https://';
+      urlInput.value = initialUrl;
+      urlRow.appendChild(urlLabel);
+      urlRow.appendChild(urlInput);
+      dropdown.appendChild(urlRow);
+
+      var textRow = document.createElement('div');
+      textRow.className = 'md-link-settings-row';
+      var textLabel = document.createElement('span');
+      textLabel.className = 'md-link-settings-label';
+      textLabel.textContent = 'Text';
+      var textInput = document.createElement('input');
+      textInput.className = 'md-link-settings-input';
+      textInput.type = 'text';
+      textInput.placeholder = 'link text';
+      textInput.value = initialText;
+      textRow.appendChild(textLabel);
+      textRow.appendChild(textInput);
+      dropdown.appendChild(textRow);
+
+      var applyRow = document.createElement('div');
+      applyRow.className = 'md-link-settings-row md-link-settings-apply-row';
+      var applyBtn = document.createElement('button');
+      applyBtn.type = 'button';
+      applyBtn.className = 'md-link-settings-apply';
+      applyBtn.textContent = existingAnchor ? 'Update' : 'Insert';
+      applyRow.appendChild(applyBtn);
+      dropdown.appendChild(applyRow);
+
+      function positionDropdown() {
+        var rect = anchorBtn.getBoundingClientRect();
+        var left = rect.right - 220;
+        if (left < 0) left = rect.left;
+        dropdown.style.top = (rect.bottom + 2) + 'px';
+        dropdown.style.left = left + 'px';
+      }
+
+      function doApply() {
+        var url = (urlInput.value || '').trim();
+        if (!url) return;
+        var text = (textInput.value || '').trim();
+        if (!text && !existingAnchor) text = 'link text';
+
+        if (isWysiwyg) {
+          ea.focus();
+          var sel = window.getSelection();
+          if (existingAnchor) {
+            existingAnchor.setAttribute('href', url);
+            if (text && text !== existingAnchor.textContent) {
+              existingAnchor.textContent = text;
+            }
+          } else {
+            var rangeToUse = null;
+            if (savedRange instanceof Range && ea.contains(savedRange.commonAncestorContainer)) {
+              sel.removeAllRanges();
+              sel.addRange(savedRange);
+              rangeToUse = savedRange;
+            } else if (sel && sel.rangeCount > 0 && ea.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+              rangeToUse = sel.getRangeAt(0);
+            }
+            if (rangeToUse) {
+              var linkTextNode = document.createTextNode(text || 'link text');
+              rangeToUse.deleteContents();
+              rangeToUse.insertNode(linkTextNode);
+              rangeToUse.selectNodeContents(linkTextNode);
+              sel.removeAllRanges();
+              sel.addRange(rangeToUse);
+            }
+            document.execCommand('createLink', false, url);
+          }
+          if (editor._finalizeUpdate) editor._finalizeUpdate(ea.innerHTML);
+        } else {
+          ma.focus();
+          var start = savedRange && typeof savedRange.start === 'number' ? savedRange.start : ma.selectionStart;
+          var end = savedRange && typeof savedRange.end === 'number' ? savedRange.end : ma.selectionEnd;
+          var prefix = '[';
+          var suffix = '](' + url + ')';
+          var replacement = prefix + text + suffix;
+          ma.value = ma.value.substring(0, start) + replacement + ma.value.substring(end);
+          ma.setSelectionRange(start + prefix.length, start + prefix.length + text.length);
+          if (editor._finalizeUpdate) editor._finalizeUpdate(ma.value);
+        }
+        dismissLinkDropdown();
+      }
+
+      applyBtn.addEventListener('mousedown', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        doApply();
+      });
+
+      urlInput.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); doApply(); }
+      });
+      textInput.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); doApply(); }
+      });
+
+      document.body.appendChild(dropdown);
+      positionDropdown();
+      requestAnimationFrame(function () { urlInput.focus(); urlInput.select(); });
+
+      var closeHandler = function (ev) {
+        if (dropdown.contains(ev.target) || ev.target === anchorBtn) return;
+        dismissLinkDropdown();
+      };
+      var scrollHandler = function () { positionDropdown(); };
+      document.addEventListener('mousedown', closeHandler, true);
+      window.addEventListener('scroll', scrollHandler, true);
+
+      _activeLinkDropdown = { el: dropdown, closeHandler: closeHandler, scrollHandler: scrollHandler };
+    }
+
+    proto._insertLink = function (buttonElement) {
+      if (!buttonElement) buttonElement = this.toolbar && this.toolbar.querySelector('.md-toolbar-button-link');
+      createLinkDropdown(buttonElement || document.body, this);
+    };
+  })();
+
   (function patchAdmonitionHtmlToMarkdown() {
     var proto = MarkdownWYSIWYG.prototype;
     var orig = proto._nodeToMarkdownRecursive;
@@ -2102,12 +2295,27 @@
       if (node.nodeName === 'INPUT' && node.type === 'checkbox') {
         return (node.checked ? '[x]' : '[ ]');
       }
+      if (node.nodeType === 1 && node.hasAttribute && (node.hasAttribute('data-live-wysiwyg-cursor') || node.hasAttribute('data-live-wysiwyg-cursor-end'))) {
+        return '';
+      }
       if (node.nodeType === 8) {
         if (node._liveWysiwygConsumed) return '';
         var commentData = (node.data || '').trim();
         if (commentData.indexOf(RAW_HTML_CLOSE_PREFIX) === 0) {
-          var b64 = commentData.substring(RAW_HTML_CLOSE_PREFIX.length);
-          return _b64Decode(b64) + '\n';
+          var prev = node.previousSibling;
+          if (prev && prev.nodeType === 1 && prev.getAttribute) {
+            var prevRaw = prev.getAttribute(RAW_HTML_ATTR);
+            if (prevRaw) {
+              var prevDecoded = _b64Decode(prevRaw);
+              if (prevDecoded && prevDecoded.indexOf('data-live-wysiwyg-cursor') >= 0) return '';
+            }
+          }
+          var closePayload = commentData.substring(RAW_HTML_CLOSE_PREFIX.length);
+          var pipeIdx = closePayload.indexOf('|');
+          var closeB64 = pipeIdx >= 0 ? closePayload.substring(0, pipeIdx) : closePayload;
+          var closeNewlines = pipeIdx >= 0 ? parseInt(closePayload.substring(pipeIdx + 1), 10) : 1;
+          if (isNaN(closeNewlines) || closeNewlines < 0) closeNewlines = 1;
+          return _b64Decode(closeB64) + '\n'.repeat(closeNewlines);
         }
         return '';
       }
@@ -2115,22 +2323,27 @@
         var rawBlockB64 = node.getAttribute(RAW_HTML_BLOCK_ATTR);
         if (rawBlockB64) {
           var decoded = _b64Decode(rawBlockB64);
+          var blockNewlinesAfter = parseInt(node.getAttribute(RAW_HTML_NEWLINES_AFTER_ATTR), 10);
+          if (isNaN(blockNewlinesAfter) || blockNewlinesAfter < 0) blockNewlinesAfter = 1;
           if (!this._rawHtmlPlaceholders) this._rawHtmlPlaceholders = [];
           var idx = this._rawHtmlPlaceholders.length;
-          this._rawHtmlPlaceholders.push(decoded);
+          this._rawHtmlPlaceholders.push({ content: decoded, newlinesAfter: blockNewlinesAfter });
           return '\u0000__RAWHTMLBLOCK_' + idx + '__\u0000\n';
         }
         var commentB64 = node.getAttribute(RAW_HTML_COMMENT_ATTR);
         if (commentB64) {
           var decoded = _b64Decode(commentB64);
+          var newlinesAfter = parseInt(node.getAttribute(RAW_HTML_NEWLINES_AFTER_ATTR), 10);
+          if (isNaN(newlinesAfter) || newlinesAfter < 1) newlinesAfter = 1;
           if (!this._rawHtmlPlaceholders) this._rawHtmlPlaceholders = [];
           var idx = this._rawHtmlPlaceholders.length;
-          this._rawHtmlPlaceholders.push(decoded);
+          this._rawHtmlPlaceholders.push({ content: decoded, newlinesAfter: newlinesAfter });
           return '\u0000__RAWHTMLBLOCK_' + idx + '__\u0000\n';
         }
         var rawTagB64 = node.getAttribute(RAW_HTML_ATTR);
         if (rawTagB64) {
           var originalOpenTag = _b64Decode(rawTagB64);
+          if (originalOpenTag && originalOpenTag.indexOf('data-live-wysiwyg-cursor') >= 0) return '';
           var childMd = '';
           for (var ri = 0; ri < node.childNodes.length; ri++) {
             var rChild = node.childNodes[ri];
@@ -2156,7 +2369,13 @@
             if (nextSib.nodeType === 8) {
               var nd = (nextSib.data || '').trim();
               if (nd.indexOf(RAW_HTML_CLOSE_PREFIX) === 0) {
-                closeTag = _b64Decode(nd.substring(RAW_HTML_CLOSE_PREFIX.length));
+                var closePayload = nd.substring(RAW_HTML_CLOSE_PREFIX.length);
+                var pipeIdx = closePayload.indexOf('|');
+                var closeB64 = pipeIdx >= 0 ? closePayload.substring(0, pipeIdx) : closePayload;
+                closeTag = _b64Decode(closeB64);
+                var closeNewlines = pipeIdx >= 0 ? parseInt(closePayload.substring(pipeIdx + 1), 10) : 1;
+                if (isNaN(closeNewlines) || closeNewlines < 0) closeNewlines = 1;
+                closeTag = closeTag + '\n'.repeat(closeNewlines);
                 nextSib._liveWysiwygConsumed = true;
                 break;
               }
@@ -2164,7 +2383,7 @@
             if (nextSib.nodeType === 1 || (nextSib.nodeType === 3 && nextSib.textContent.trim())) break;
             nextSib = nextSib.nextSibling;
           }
-          return originalOpenTag + '\n' + childMd + (closeTag ? closeTag + '\n' : '');
+          return originalOpenTag + '\n' + childMd + (closeTag || '');
         }
       }
       // #text: preserve multiple spaces (upstream collapses with /  +/g)
@@ -2514,9 +2733,35 @@
         var lineEnd = protected_.indexOf('\n', rawIdx + rawPh.length);
         if (lineEnd === -1) lineEnd = protected_.length;
         if (/^\s*$/.test(beforePh)) {
-          protected_ = protected_.substring(0, lineStart) + rawHtmlBlocks[ri] + protected_.substring(lineEnd);
+          var ph = rawHtmlBlocks[ri];
+          var decoded = typeof ph === 'object' ? ph.content : ph;
+          var newlinesAfter = typeof ph === 'object' ? ph.newlinesAfter : null;
+          var after = protected_.substring(lineEnd);
+          if (decoded && /^\s*<!--[\s\S]*?-->\s*$/.test(decoded.trim())) {
+            if (newlinesAfter != null && newlinesAfter >= 1) {
+              after = '\n'.repeat(newlinesAfter) + after.replace(/^\n+/, '');
+            } else {
+              after = after.replace(/^\n+/, '\n');
+            }
+            var insertStart = lineStart;
+            if (lineStart >= 2 && protected_.charAt(lineStart - 1) === '\n' && protected_.charAt(lineStart - 2) === '\n') {
+              var prevLineStart = protected_.lastIndexOf('\n', lineStart - 3) + 1;
+              var prevLine = protected_.substring(prevLineStart, lineStart - 2);
+              if (/^(\s*)([-*+]|\d+\.)\s/.test(prevLine)) {
+                insertStart = lineStart - 1;
+              }
+            }
+            protected_ = protected_.substring(0, insertStart) + decoded + after;
+          } else if (newlinesAfter != null) {
+            after = newlinesAfter >= 1 ? '\n'.repeat(newlinesAfter) + after.replace(/^\n+/, '') : after.replace(/^\n+/, '');
+            protected_ = protected_.substring(0, lineStart) + decoded + after;
+          } else {
+            protected_ = protected_.substring(0, lineStart) + decoded + after;
+          }
         } else {
-          protected_ = protected_.substring(0, rawIdx) + rawHtmlBlocks[ri] + protected_.substring(rawIdx + rawPh.length);
+          var phInline = rawHtmlBlocks[ri];
+          var decodedInline = typeof phInline === 'object' ? phInline.content : phInline;
+          protected_ = protected_.substring(0, rawIdx) + decodedInline + protected_.substring(rawIdx + rawPh.length);
         }
       }
       return protected_.trim();
@@ -2865,11 +3110,13 @@
   var RAW_HTML_ATTR = 'data-live-wysiwyg-raw-html';
   var RAW_HTML_CLOSE_PREFIX = 'live-wysiwyg-raw-close:';
   var RAW_HTML_COMMENT_ATTR = 'data-live-wysiwyg-html-comment';
+  var RAW_HTML_NEWLINES_AFTER_ATTR = 'data-live-wysiwyg-newlines-after';
   var RAW_HTML_BLOCK_ATTR = 'data-live-wysiwyg-raw-html-block';
 
   function _serializeElementAsHtml(node) {
     if (node.nodeType === 3) return node.textContent;
     if (node.nodeType !== 1) return '';
+    if (node.hasAttribute && (node.hasAttribute('data-live-wysiwyg-cursor') || node.hasAttribute('data-live-wysiwyg-cursor-end'))) return '';
     var tag = node.nodeName.toLowerCase();
     var attrs = '';
     if (node.attributes) {
@@ -2960,8 +3207,85 @@
     return mdTags.indexOf(name) >= 0;
   }
 
+  /**
+   * Ref definitions between HTML comments (e.g. <!-- prettier-ignore-start --> ... <!-- prettier-ignore-end -->)
+   * are not parsed by marked because the comment placeholders create a block context where ref defs are ignored.
+   * Extract such ref defs and move them to the end of the document so marked can resolve shortcut links.
+   */
+  function extractRefDefsFromCommentBlocks(markdown) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+    var refDefRe = /^\s{0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/;
+    var commentRe = /^\s*<!--\s*[\s\S]*?-->\s*$/;
+    var lines = markdown.split('\n');
+    var extracted = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (commentRe.test(line)) {
+        var blockStart = i;
+        i++;
+        var between = [];
+        while (i < lines.length && !commentRe.test(lines[i])) {
+          between.push(lines[i]);
+          i++;
+        }
+        if (i < lines.length && commentRe.test(lines[i])) {
+          var refDefLines = [];
+          var otherLines = [];
+          for (var j = 0; j < between.length; j++) {
+            if (refDefRe.test(between[j])) {
+              refDefLines.push(between[j]);
+            } else {
+              otherLines.push(between[j]);
+            }
+          }
+          if (refDefLines.length > 0) {
+            extracted = extracted.concat(refDefLines);
+            lines = lines.slice(0, blockStart + 1).concat(otherLines).concat(lines.slice(i));
+            i = blockStart + 1 + otherLines.length;
+          }
+        }
+        i++;
+      } else {
+        i++;
+      }
+    }
+    if (extracted.length === 0) return markdown;
+    var suffix = (lines.length > 0 && lines[lines.length - 1] !== '') ? '\n\n' : '\n';
+    return lines.join('\n') + suffix + extracted.join('\n');
+  }
+
+  /**
+   * Restore ref definitions between HTML comment pairs when serializing to markdown.
+   * extractRefDefsFromCommentBlocks moves ref defs to the end for marked parsing; this
+   * restores the original structure (ref defs between comments) and removes extra newlines.
+   */
+  function restoreRefDefsToCommentBlocks(markdown) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+    var refDefRe = /^\s{0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/;
+    var commentRe = /^\s*<!--\s*[\s\S]*?-->\s*$/;
+    var lines = markdown.split('\n');
+    var i = lines.length - 1;
+    var refDefLines = [];
+    while (i >= 0 && refDefRe.test(lines[i])) {
+      refDefLines.unshift(lines[i]);
+      i--;
+    }
+    while (i >= 0 && /^\s*$/.test(lines[i])) i--;
+    if (refDefLines.length === 0 || i < 1) return markdown;
+    var endCommentIdx = i;
+    if (!commentRe.test(lines[endCommentIdx])) return markdown;
+    var startCommentIdx = endCommentIdx - 1;
+    while (startCommentIdx >= 0 && /^\s*$/.test(lines[startCommentIdx])) startCommentIdx--;
+    if (startCommentIdx < 0 || !commentRe.test(lines[startCommentIdx])) return markdown;
+    var before = lines.slice(0, startCommentIdx + 1);
+    var restored = before.concat(refDefLines).concat([lines[endCommentIdx]]);
+    return restored.join('\n');
+  }
+
   function preprocessRawHtml(markdown) {
     if (!markdown || typeof markdown !== 'string') return { markdown: markdown, comments: [], tags: [] };
+    markdown = extractRefDefsFromCommentBlocks(markdown);
     var comments = [];
     var tags = [];
 
@@ -3018,7 +3342,22 @@
             var fullBlock = blockLines.join('\n');
             var encoded = _b64Encode(fullBlock);
             var blockIndent = blockOpenMatch[1] || '';
-            result.push(blockIndent + '<div ' + RAW_HTML_BLOCK_ATTR + '="' + encoded + '"></div>');
+            var lastBlockLine = blockLines[blockLines.length - 1];
+            var lastCloseIdx = lastBlockLine.lastIndexOf('>');
+            var afterCloseOnLine = lastCloseIdx >= 0 ? lastBlockLine.substring(lastCloseIdx + 1) : '';
+            var blockNewlinesAfter;
+            if (/[^\s]/.test(afterCloseOnLine)) {
+              blockNewlinesAfter = 0;
+            } else {
+              var jBlock = i + blockLines.length;
+              var blanksBlock = 0;
+              while (jBlock < lines.length && /^\s*$/.test(lines[jBlock])) {
+                blanksBlock++;
+                jBlock++;
+              }
+              blockNewlinesAfter = blanksBlock + 1;
+            }
+            result.push(blockIndent + '<div ' + RAW_HTML_BLOCK_ATTR + '="' + encoded + '" ' + RAW_HTML_NEWLINES_AFTER_ATTR + '="' + blockNewlinesAfter + '"></div>');
             continue;
           }
         }
@@ -3030,7 +3369,7 @@
         continue;
       }
 
-      var tagProcessed = _preprocessLineTags(line, tags, result);
+      var tagProcessed = _preprocessLineTags(line, lines, i, tags, result);
       if (tagProcessed) {
         continue;
       }
@@ -3040,6 +3379,8 @@
 
     return { markdown: result.join('\n'), comments: comments, tags: tags };
   }
+
+  var _blockCommentRe = /^\s*<!--[\s\S]*?-->\s*$/;
 
   function _preprocessLineComments(line, lines, idx, comments, result) {
     var commentStart = line.indexOf('<!--');
@@ -3051,16 +3392,38 @@
       var comment = line.substring(commentStart, commentEnd + 3);
       var after = line.substring(commentEnd + 3);
       var isBlockComment = !before.trim() && !after.trim();
-      var originalForEncode = isBlockComment ? before + comment : comment;
-      var encoded = _b64Encode(originalForEncode);
-      var idx_ = comments.length;
-      comments.push({ original: comment, leading: isBlockComment ? before : '', lineIdx: idx });
-      var placeholder = '<span ' + RAW_HTML_COMMENT_ATTR + '="' + encoded + '" style="display:none"></span>';
       if (isBlockComment) {
+        var blockLines = [line];
+        var j = idx + 1;
+        while (j < lines.length && _blockCommentRe.test(lines[j])) {
+          blockLines.push(lines[j]);
+          j++;
+        }
+        var blanks = 0;
+        while (j < lines.length && /^\s*$/.test(lines[j])) {
+          blanks++;
+          j++;
+        }
+        var newlinesAfter = blanks + 1;
+        var collapsedBlock = blockLines.join('\n').replace(/\s+$/, '');
+        var encoded = _b64Encode(collapsedBlock);
+        comments.push({ original: collapsedBlock, leading: before, lineIdx: idx });
+        var placeholder = '<span ' + RAW_HTML_COMMENT_ATTR + '="' + encoded + '" ' + RAW_HTML_NEWLINES_AFTER_ATTR + '="' + newlinesAfter + '" style="display:none"></span>';
         result.push(before + placeholder + after);
-      } else {
-        result.push(before + placeholder + after);
+        return j - 1;
       }
+      var blanks = 0;
+      var k = idx + 1;
+      while (k < lines.length && /^\s*$/.test(lines[k])) {
+        blanks++;
+        k++;
+      }
+      var newlinesAfterInline = blanks + 1;
+      var originalForEncode = comment.replace(/\s+$/, '');
+      var encoded = _b64Encode(originalForEncode);
+      comments.push({ original: comment, leading: '', lineIdx: idx });
+      var placeholder = '<span ' + RAW_HTML_COMMENT_ATTR + '="' + encoded + '" ' + RAW_HTML_NEWLINES_AFTER_ATTR + '="' + newlinesAfterInline + '" style="display:none"></span>';
+      result.push(before + placeholder + after);
       return idx;
     }
 
@@ -3081,11 +3444,19 @@
     var commentText = fullComment.substring(commentStart, endPos + 3);
     var afterComment = fullComment.substring(endPos + 3);
     var isBlockComment = !leading.trim();
-    var originalForEncode = isBlockComment ? leading + commentText : commentText;
+    var originalForEncode = (isBlockComment ? leading + commentText : commentText).replace(/\s+$/, '');
+
+    var blanksMulti = 0;
+    var kMulti = j + 1;
+    while (kMulti < lines.length && /^\s*$/.test(lines[kMulti])) {
+      blanksMulti++;
+      kMulti++;
+    }
+    var newlinesAfterMulti = blanksMulti + 1;
 
     var encoded = _b64Encode(originalForEncode);
     comments.push({ original: commentText, leading: isBlockComment ? leading : '', lineIdx: idx });
-    var placeholder = '<span ' + RAW_HTML_COMMENT_ATTR + '="' + encoded + '" style="display:none"></span>';
+    var placeholder = '<span ' + RAW_HTML_COMMENT_ATTR + '="' + encoded + '" ' + RAW_HTML_NEWLINES_AFTER_ATTR + '="' + newlinesAfterMulti + '" style="display:none"></span>';
     var afterLines = afterComment.split('\n');
     result.push(leading + placeholder + afterLines[0]);
     for (var k = 1; k < afterLines.length; k++) {
@@ -3094,7 +3465,7 @@
     return j;
   }
 
-  function _preprocessLineTags(line, tags, result) {
+  function _preprocessLineTags(line, lines, idx, tags, result) {
     var tagRe = /<(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*?)(\/?)>/g;
     var out = '';
     var lastIdx = 0;
@@ -3146,9 +3517,16 @@
         tags.push({ original: originalForEncode, type: 'selfclose' });
         out += fullTag.replace(/\/?>$/, ' ' + RAW_HTML_ATTR + '="' + encoded + '"/>');
       } else if (isClose) {
+        var restOfLine = line.substring(m.index + fullTag.length);
+        var newlinesAfterTag = 0;
+        if (/^\s*$/.test(restOfLine)) {
+          var jTag = idx + 1;
+          while (jTag < lines.length && /^\s*$/.test(lines[jTag])) jTag++;
+          newlinesAfterTag = 1 + (jTag - idx - 1);
+        }
         var encoded = _b64Encode(originalForEncode);
         tags.push({ original: originalForEncode, type: 'close' });
-        out += fullTag + '<!--' + RAW_HTML_CLOSE_PREFIX + encoded + '-->';
+        out += fullTag + '<!--' + RAW_HTML_CLOSE_PREFIX + encoded + '|' + newlinesAfterTag + '-->';
       } else {
         var encoded = _b64Encode(originalForEncode);
         tags.push({ original: originalForEncode, type: 'open' });
@@ -3165,6 +3543,7 @@
 
   function postprocessRawHtml(markdown, rawHtmlData) {
     if (!markdown || typeof markdown !== 'string') return markdown;
+    markdown = restoreRefDefsToCommentBlocks(markdown);
     if (!rawHtmlData) return markdown;
     return markdown;
   }
@@ -3367,7 +3746,9 @@
             var after = trimmed.slice(lastOpenIdx);
             var lastLineBefore = before.slice(before.lastIndexOf('\n') + 1);
             var endsWithRefDef = refDefNameRe.test(lastLineBefore);
-            result = before + (endsWithRefDef ? '\n' : '\n\n') + defsToAppend + '\n' + after + '\n';
+            var endsWithHtmlComment = /^\s*<!--[\s\S]*?-->\s*$/.test(lastLineBefore);
+            var sep = endsWithRefDef ? '\n' : (endsWithHtmlComment ? '\n' : '\n\n');
+            result = before + sep + defsToAppend + '\n' + after + '\n';
             inserted = true;
           }
         }
@@ -3604,6 +3985,9 @@
       var result = origSwitchToMode.apply(this, arguments);
       if (mode === 'markdown') {
         var md = this.markdownArea.value;
+        if (this._liveWysiwygRawHtmlData) {
+          md = postprocessRawHtml(md, this._liveWysiwygRawHtmlData);
+        }
         if (this._liveWysiwygLinkData) {
           md = postprocessMarkdownLinks(md, this._liveWysiwygLinkData);
         }
@@ -3615,9 +3999,6 @@
         }
         if (this._liveWysiwygCodeBlockData) {
           md = postprocessCodeBlocks(md, this._liveWysiwygCodeBlockData);
-        }
-        if (this._liveWysiwygRawHtmlData) {
-          md = postprocessRawHtml(md, this._liveWysiwygRawHtmlData);
         }
         if (this._liveWysiwygHrData) {
           md = postprocessHorizontalRules(md, this._liveWysiwygHrData);
@@ -3646,6 +4027,9 @@
         this._liveWysiwygFrontmatter = parsed.frontmatter;
       }
       var body = parsed.body;
+      if (this._liveWysiwygRawHtmlData) {
+        body = postprocessRawHtml(body, this._liveWysiwygRawHtmlData);
+      }
       if (this._liveWysiwygLinkData) {
         body = postprocessMarkdownLinks(body, this._liveWysiwygLinkData);
       }
@@ -3657,9 +4041,6 @@
       }
       if (this._liveWysiwygCodeBlockData) {
         body = postprocessCodeBlocks(body, this._liveWysiwygCodeBlockData);
-      }
-      if (this._liveWysiwygRawHtmlData) {
-        body = postprocessRawHtml(body, this._liveWysiwygRawHtmlData);
       }
       if (this._liveWysiwygHrData) {
         body = postprocessHorizontalRules(body, this._liveWysiwygHrData);
@@ -4190,7 +4571,7 @@
     var contextBefore = pendingReadModeSelection.contextBefore || '';
     var contextAfter = pendingReadModeSelection.contextAfter || '';
     pendingReadModeSelection = null;
-    var md = editor.currentMode === 'markdown'
+    var md = (editor.markdownArea && editor.markdownArea.value)
       ? editor.markdownArea.value
       : (editor.getValue ? editor.getValue() : '');
     var parsed = parseFrontmatter(md || '');
@@ -4560,14 +4941,63 @@
     var len = text.length;
     var lastWasSpace = false;
 
+    function atLineStart() { return i === 0 || text[i - 1] === '\n'; }
+
     while (i < len) {
-      if (i === 0 || text[i - 1] === '\n') {
+      if (atLineStart()) {
         var j = i;
         while (j < len && text[j] === '#') j++;
         if (j > i && j - i <= 6 && j < len && text[j] === ' ') {
           i = j + 1;
           continue;
         }
+        while (i < len && text[i] === '>' && i + 1 < len && text[i + 1] === ' ') { i += 2; }
+        if (i < len && (text[i] === '-' || text[i] === '+' || text[i] === '*') && i + 1 < len && text[i + 1] === ' ') {
+          i += 2;
+          continue;
+        }
+        if (i < len && /\d/.test(text[i])) {
+          var k = i;
+          while (k < len && /\d/.test(text[k])) k++;
+          if (k > i && k < len && text[k] === '.' && k + 1 < len && text[k + 1] === ' ') {
+            i = k + 2;
+            continue;
+          }
+        }
+        if (i + 3 < len && text[i] === ' ' && text[i + 1] === ' ' && (text[i + 2] === '-' || text[i + 2] === '+' || text[i + 2] === '*') && text[i + 3] === ' ') {
+          i += 4;
+          continue;
+        }
+        if (i + 3 < len && text[i] === ' ' && text[i + 1] === ' ' && /\d/.test(text[i + 2])) {
+          var k2 = i + 2;
+          while (k2 < len && /\d/.test(text[k2])) k2++;
+          if (k2 > i + 2 && k2 < len && text[k2] === '.' && k2 + 1 < len && text[k2 + 1] === ' ') {
+            i = k2 + 2;
+            continue;
+          }
+        }
+        if (i + 5 < len && text[i] === ' ' && text[i + 1] === ' ' && text[i + 2] === ' ' && text[i + 3] === ' ' && (text[i + 4] === '-' || text[i + 4] === '+' || text[i + 4] === '*') && text[i + 5] === ' ') {
+          i += 6;
+          continue;
+        }
+        if (i + 3 < len && text[i] === ' ' && text[i + 1] === ' ' && text[i + 2] === ' ' && text[i + 3] === ' ') {
+          i += 4;
+          continue;
+        }
+        if (i + 3 < len && text[i] === '!' && text[i + 1] === '!' && text[i + 2] === '!' && text[i + 3] === ' ') {
+          while (i < len && text[i] !== '\n') i++;
+          continue;
+        }
+        if (i + 3 < len && text[i] === '?' && text[i + 1] === '?' && text[i + 2] === '?' && (text[i + 3] === ' ' || (text[i + 3] === '+' && i + 4 < len && text[i + 4] === ' '))) {
+          while (i < len && text[i] !== '\n') i++;
+          continue;
+        }
+      }
+      if (i + 3 < len && text[i] === '<' && text[i + 1] === '!' && text[i + 2] === '-' && text[i + 3] === '-') {
+        i += 4;
+        while (i + 2 < len && !(text[i] === '-' && text[i + 1] === '-' && text[i + 2] === '>')) i++;
+        if (i + 2 < len) i += 3;
+        continue;
       }
       if (text[i] === '`') { i++; continue; }
       if (text[i] === '*' && i + 1 < len && text[i + 1] === '*') { i += 2; continue; }
@@ -4605,7 +5035,7 @@
     };
     if (applyPendingReadModeSelection(editor)) return true;
 
-    var mdRaw = editor.currentMode === 'markdown'
+    var mdRaw = (editor.markdownArea && editor.markdownArea.value)
       ? editor.markdownArea.value
       : (editor.getValue ? editor.getValue() : '');
     var parsed = parseFrontmatter(mdRaw || '');
@@ -5682,6 +6112,29 @@
         ma.dataset.liveWysiwygBlurAttached = '1';
         ma.addEventListener('blur', function () {
           capturedMarkdownSelection = { start: ma.selectionStart, end: ma.selectionEnd };
+        });
+      }
+    })();
+
+    (function () {
+      var linkBtn = wysiwygEditor.toolbar && wysiwygEditor.toolbar.querySelector('.md-toolbar-button-link');
+      if (linkBtn && !linkBtn.dataset.liveWysiwygLinkMousedownAttached) {
+        linkBtn.dataset.liveWysiwygLinkMousedownAttached = '1';
+        linkBtn.addEventListener('mousedown', function () {
+          if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor.editableArea) {
+            var ea = wysiwygEditor.editableArea;
+            if (document.activeElement === ea) {
+              var sel = window.getSelection();
+              if (sel && sel.rangeCount > 0 && ea.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+                wysiwygEditor.savedRangeInfo = sel.getRangeAt(0).cloneRange();
+              }
+            }
+          } else if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
+            var ma = wysiwygEditor.markdownArea;
+            if (document.activeElement === ma) {
+              wysiwygEditor.savedRangeInfo = { start: ma.selectionStart, end: ma.selectionEnd };
+            }
+          }
         });
       }
     })();
@@ -7331,8 +7784,11 @@
       var proto = MarkdownWYSIWYG.prototype;
       var origMdToHtml = proto._markdownToHtml;
       if (!origMdToHtml) return;
+      var spanPattern = new RegExp('<span\\s+data-live-wysiwyg-cursor\\s*></span>', 'g');
+      var spanEndPattern = new RegExp('<span\\s+data-live-wysiwyg-cursor-end\\s*></span>', 'g');
       proto._markdownToHtml = function (markdown) {
         var md = markdown || '';
+        md = md.replace(spanPattern, 'LIVEWYSIWYG_CURSOR_9X7K2').replace(spanEndPattern, 'LIVEWYSIWYG_CURSOR_END_9X7K2');
         var rawResult = preprocessRawHtml(md);
         this._liveWysiwygRawHtmlData = rawResult;
         return origMdToHtml.call(this, rawResult.markdown);

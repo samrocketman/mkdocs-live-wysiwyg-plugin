@@ -7894,7 +7894,8 @@
       widthStyle.id = 'live-wysiwyg-width-overrides';
       widthStyle.textContent =
         '.live-edit-controls.live-edit-editing .live-edit-source{margin-left:-10px!important;margin-right:-10px!important;padding-left:1px!important;padding-right:1px!important;width:calc(100% + 20px)!important}' +
-        '.live-edit-controls.live-edit-editing .live-edit-wysiwyg-wrapper{margin-left:-10px!important;margin-right:-10px!important}';
+        '.live-edit-controls.live-edit-editing .live-edit-wysiwyg-wrapper{margin-left:-10px!important;margin-right:-10px!important;width:calc(100% + 20px)!important}' +
+        '.live-edit-controls.live-edit-editing .live-edit-wysiwyg-wrapper .md-wysiwyg-editor-wrapper{border-left:none!important;border-right:none!important;border-radius:0!important}';
       document.head.appendChild(widthStyle);
     }
 

@@ -85,7 +85,7 @@ Inline conversions trigger when you type the closing delimiter. The wrapped text
 ## Block Quotes
 
 - **Enter** (3×) at the end of a block quote exits onto a new paragraph.
-- Exiting a list or admonition inside a block quote grants credit—only one more Enter is needed to exit the block quote (if the line is blank).
+- Exiting a list, admonition, or code block inside a block quote lands inside the block quote (not outside it). Each nested exit grants credit—only one more Enter is needed to exit the block quote (if the line is blank). If the block quote is inside an admonition, exiting the block quote grants admonition credit—one more Enter exits the admonition.
 - Code blocks and admonitions can be inserted inside block quotes and vice versa (indefinite nesting).
 - Content inside block quotes does not inherit block quote italic/color styling.
 

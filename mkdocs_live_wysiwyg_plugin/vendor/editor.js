@@ -99,7 +99,6 @@ class MarkdownWYSIWYG {
         this._boundListeners.closeTableGridOnClickOutside = this._closeTableGridOnClickOutside.bind(this);
         this._boundListeners.onEditableAreaClickForTable = this._handleEditableAreaClickForTable.bind(this);
         this._boundListeners.closeContextualTableToolbarOnClickOutside = this._closeContextualTableToolbarOnClickOutside.bind(this);
-        this._boundListeners.syncScrollMarkdown = this._syncScrollMarkdown.bind(this);
 
         this.toolbarButtonListeners = [];
         if (this.options.showToolbar) {
@@ -840,6 +839,9 @@ class MarkdownWYSIWYG {
 
         this.editableArea = document.createElement('div');
         this.editableArea.classList.add('md-editable-area');
+        if (getComputedStyle(document.documentElement).getPropertyValue('--md-default-bg-color').trim()) {
+            this.editableArea.classList.add('md-typeset');
+        }
         this.editableArea.setAttribute('contenteditable', 'true');
         this.editableArea.setAttribute('spellcheck', 'false');
         this.contentAreaContainer.appendChild(this.editableArea);
@@ -935,13 +937,13 @@ class MarkdownWYSIWYG {
             lineNumbersHtml += `<div>${i}</div>`;
         }
         this.markdownLineNumbersDiv.innerHTML = lineNumbersHtml || '<div>1</div>';
-        this._syncScrollMarkdown();
+        this._autoResizeMarkdownArea();
     }
 
-    _syncScrollMarkdown() {
-        if (this.markdownLineNumbersDiv && this.markdownArea) {
-            this.markdownLineNumbersDiv.scrollTop = this.markdownArea.scrollTop;
-        }
+    _autoResizeMarkdownArea() {
+        if (!this.markdownArea) return;
+        this.markdownArea.style.height = 'auto';
+        this.markdownArea.style.height = this.markdownArea.scrollHeight + 'px';
     }
 
 
@@ -1335,7 +1337,6 @@ class MarkdownWYSIWYG {
         this.markdownArea.addEventListener('keyup', this._boundListeners.updateMarkdownToolbar);
         this.markdownArea.addEventListener('click', this._boundListeners.updateMarkdownToolbar);
         this.markdownArea.addEventListener('focus', this._boundListeners.updateMarkdownToolbar);
-        this.markdownArea.addEventListener('scroll', this._boundListeners.syncScrollMarkdown);
     }
 
     _listIndentOutdentByDOM(outdent) {
@@ -2550,9 +2551,9 @@ class MarkdownWYSIWYG {
                 if (options && options.inTableCell) { // Represent as HTML for complex cells
                     return node.outerHTML;
                 }
-                const imgSrc = node.getAttribute('src') || '';
+                const imgSrc = node.getAttribute('data-orig-src') || node.getAttribute('src') || '';
                 const imgAlt = node.getAttribute('alt') || '';
-                return `![${imgAlt}](${imgSrc})\n\n`; // Image as a block with newlines
+                return `![${imgAlt}](${imgSrc})\n\n`;
 
             case 'B': case 'STRONG': return `**${this._processInlineContainerRecursive(node, options).trim()}**`;
             case 'I': case 'EM': return `*${this._processInlineContainerRecursive(node, options).trim()}*`;
@@ -2842,7 +2843,6 @@ class MarkdownWYSIWYG {
             this.markdownArea.removeEventListener('keyup', this._boundListeners.updateMarkdownToolbar);
             this.markdownArea.removeEventListener('click', this._boundListeners.updateMarkdownToolbar);
             this.markdownArea.removeEventListener('focus', this._boundListeners.updateMarkdownToolbar);
-            this.markdownArea.removeEventListener('scroll', this._boundListeners.syncScrollMarkdown);
         }
 
         if (this.wysiwygTabButton) {

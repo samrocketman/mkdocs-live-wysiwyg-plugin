@@ -1,160 +1,183 @@
-/* MkDocs admonition styling for WYSIWYG editor */
-/* No custom icons - uses built-in theme icons. padding-left keeps editable text clear of icon. */
+/* MkDocs admonition styling for WYSIWYG editor.
+   When Material .md-typeset is on the editable area, Material's own admonition
+   CSS applies and only editor-specific overrides are needed.  All visual
+   styling is in the :not(.md-typeset) fallback section for standalone use. */
+
+/* ===================================================================
+   Editor-specific overrides — always apply
+   =================================================================== */
+
+/* Admonitions need position:relative for the settings gear button */
 .md-editable-area .admonition,
-.live-edit-wysiwyg-wrapper .admonition {
-  margin: 1em 0;
-  padding: 0.75rem 1rem;
-  border-radius: 4px;
-  border-left: 4px solid #6ab0de;
-  background-color: #f7f9fc;
+.md-editable-area details[class] {
+  position: relative;
 }
 
-/* padding-left reserves space for built-in theme icon so editable text doesn't overlap */
-.md-editable-area .admonition .admonition-title,
-.live-edit-wysiwyg-wrapper .admonition .admonition-title {
-  font-weight: bold;
-  margin: 0 0 0.5em 0;
-  padding: 0 0 0 1.75rem;
+/* Details: override native markers and set cursor for editing */
+.md-editable-area details[class] > summary {
+  cursor: text;
+  list-style: none;
 }
 
-/* Move the built-in theme icon up 0.5em and left 0.5em (transform preserves theme styling) */
-.md-editable-area .admonition .admonition-title::before,
-.live-edit-wysiwyg-wrapper .admonition .admonition-title::before {
-  transform: translate(-0.5em, -0.5em);
+.md-editable-area details[class] > summary::-webkit-details-marker {
+  display: none;
 }
 
-.md-editable-area .admonition.note,
-.live-edit-wysiwyg-wrapper .admonition.note {
-  border-left-color: #6ab0de;
-  background-color: #f0f7ff;
+.md-editable-area details[class] > summary::marker {
+  display: none;
+  content: '';
 }
 
-.md-editable-area .admonition.warning,
-.live-edit-wysiwyg-wrapper .admonition.warning {
-  border-left-color: #f0ad4e;
-  background-color: #fff8e6;
-}
-
-.md-editable-area .admonition.danger,
-.live-edit-wysiwyg-wrapper .admonition.danger {
-  border-left-color: #d9534f;
-  background-color: #fff0f0;
-}
-
-.md-editable-area .admonition.tip,
-.live-edit-wysiwyg-wrapper .admonition.tip {
-  border-left-color: #5cb85c;
-  background-color: #f0fff4;
-}
-
-.md-editable-area .admonition.important,
-.live-edit-wysiwyg-wrapper .admonition.important {
-  border-left-color: #f0ad4e;
-  background-color: #fffbf0;
-}
-
-.md-editable-area .admonition.caution,
-.live-edit-wysiwyg-wrapper .admonition.caution {
-  border-left-color: #f0ad4e;
-  background-color: #fff8e6;
-}
-
-.md-editable-area .admonition.error,
-.live-edit-wysiwyg-wrapper .admonition.error {
-  border-left-color: #d9534f;
-  background-color: #fff0f0;
-}
-
-.md-editable-area .admonition.attention,
-.live-edit-wysiwyg-wrapper .admonition.attention {
-  border-left-color: #f0ad4e;
-  background-color: #fff8e6;
-}
-
-.md-editable-area .admonition.hint,
-.live-edit-wysiwyg-wrapper .admonition.hint {
-  border-left-color: #5cb85c;
-  background-color: #f0fff4;
-}
-
-/* New admonition types from Material for MkDocs */
-.md-editable-area .admonition.abstract,
-.live-edit-wysiwyg-wrapper .admonition.abstract {
-  border-left-color: #00b0ff;
-  background-color: #e8f5ff;
-}
-
-.md-editable-area .admonition.info,
-.live-edit-wysiwyg-wrapper .admonition.info {
-  border-left-color: #00b8d4;
-  background-color: #e0f7fa;
-}
-
-.md-editable-area .admonition.success,
-.live-edit-wysiwyg-wrapper .admonition.success {
-  border-left-color: #00c853;
-  background-color: #e8f5e9;
-}
-
-.md-editable-area .admonition.question,
-.live-edit-wysiwyg-wrapper .admonition.question {
-  border-left-color: #64dd17;
-  background-color: #f1f8e9;
-}
-
-.md-editable-area .admonition.failure,
-.live-edit-wysiwyg-wrapper .admonition.failure {
-  border-left-color: #ff5252;
-  background-color: #ffebee;
-}
-
-.md-editable-area .admonition.bug,
-.live-edit-wysiwyg-wrapper .admonition.bug {
-  border-left-color: #f50057;
-  background-color: #fce4ec;
-}
-
-.md-editable-area .admonition.example,
-.live-edit-wysiwyg-wrapper .admonition.example {
-  border-left-color: #7c4dff;
-  background-color: #ede7f6;
-}
-
-.md-editable-area .admonition.quote,
-.live-edit-wysiwyg-wrapper .admonition.quote {
-  border-left-color: #9e9e9e;
-  background-color: #f5f5f5;
-}
-
-/* Inline admonition placement */
-.md-editable-area .admonition.inline,
-.live-edit-wysiwyg-wrapper .admonition.inline {
+/* Inline admonition placement (editor feature, not in Material) */
+.md-editable-area .admonition.inline {
   float: left;
   width: 40%;
   margin-right: 1em;
   margin-top: 0;
 }
 
-.md-editable-area .admonition.inline.end,
-.live-edit-wysiwyg-wrapper .admonition.inline.end {
+.md-editable-area .admonition.inline.end {
   float: right;
   margin-right: 0;
   margin-left: 1em;
 }
 
-/* Collapsible admonitions (<details>) — base styles */
-.md-editable-area details[class],
-.live-edit-wysiwyg-wrapper details[class] {
+.md-editable-area details[class].inline {
+  float: left;
+  width: 40%;
+  margin-right: 1em;
+  margin-top: 0;
+}
+
+.md-editable-area details[class].inline.end {
+  float: right;
+  margin-right: 0;
+  margin-left: 1em;
+}
+
+/* ===================================================================
+   Fallback styles — only when Material .md-typeset is NOT present
+   =================================================================== */
+
+/* --- Base admonition --- */
+.md-editable-area:not(.md-typeset) .admonition {
   margin: 1em 0;
   padding: 0.75rem 1rem;
   border-radius: 4px;
   border-left: 4px solid #6ab0de;
-  background-color: #f7f9fc;
+  background-color: var(--md-admonition-bg-color, #f7f9fc);
+  color: var(--md-admonition-fg-color, inherit);
   position: relative;
 }
 
-.md-editable-area details[class] > summary,
-.live-edit-wysiwyg-wrapper details[class] > summary {
+.md-editable-area:not(.md-typeset) .admonition .admonition-title {
+  font-weight: bold;
+  margin: 0 0 0.5em 0;
+  padding: 0 0 0 1.75rem;
+}
+
+.md-editable-area:not(.md-typeset) .admonition .admonition-title::before {
+  transform: translate(-0.5em, -0.5em);
+}
+
+/* --- Per-type admonition colors --- */
+.md-editable-area:not(.md-typeset) .admonition.note {
+  border-left-color: #6ab0de;
+  background-color: #f0f7ff;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.warning {
+  border-left-color: #f0ad4e;
+  background-color: #fff8e6;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.danger {
+  border-left-color: #d9534f;
+  background-color: #fff0f0;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.tip {
+  border-left-color: #5cb85c;
+  background-color: #f0fff4;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.important {
+  border-left-color: #f0ad4e;
+  background-color: #fffbf0;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.caution {
+  border-left-color: #f0ad4e;
+  background-color: #fff8e6;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.error {
+  border-left-color: #d9534f;
+  background-color: #fff0f0;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.attention {
+  border-left-color: #f0ad4e;
+  background-color: #fff8e6;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.hint {
+  border-left-color: #5cb85c;
+  background-color: #f0fff4;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.abstract {
+  border-left-color: #00b0ff;
+  background-color: #e8f5ff;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.info {
+  border-left-color: #00b8d4;
+  background-color: #e0f7fa;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.success {
+  border-left-color: #00c853;
+  background-color: #e8f5e9;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.question {
+  border-left-color: #64dd17;
+  background-color: #f1f8e9;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.failure {
+  border-left-color: #ff5252;
+  background-color: #ffebee;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.bug {
+  border-left-color: #f50057;
+  background-color: #fce4ec;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.example {
+  border-left-color: #7c4dff;
+  background-color: #ede7f6;
+}
+
+.md-editable-area:not(.md-typeset) .admonition.quote {
+  border-left-color: #9e9e9e;
+  background-color: #f5f5f5;
+}
+
+/* --- Base collapsible (<details>) --- */
+.md-editable-area:not(.md-typeset) details[class] {
+  margin: 1em 0;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  border-left: 4px solid #6ab0de;
+  background-color: var(--md-admonition-bg-color, #f7f9fc);
+  color: var(--md-admonition-fg-color, inherit);
+  position: relative;
+}
+
+.md-editable-area:not(.md-typeset) details[class] > summary {
   font-weight: bold;
   margin: 0 0 0.5em 0;
   padding: 0 0 0 1.75rem;
@@ -162,145 +185,103 @@
   list-style: none;
 }
 
-.md-editable-area details[class] > summary::before,
-.live-edit-wysiwyg-wrapper details[class] > summary::before {
+.md-editable-area:not(.md-typeset) details[class] > summary::before {
   transform: translate(-0.5em, -0.5em);
 }
 
-.md-editable-area details[class] > summary::-webkit-details-marker,
-.live-edit-wysiwyg-wrapper details[class] > summary::-webkit-details-marker {
+.md-editable-area:not(.md-typeset) details[class] > summary::-webkit-details-marker {
   display: none;
 }
 
-.md-editable-area details[class] > summary::marker,
-.live-edit-wysiwyg-wrapper details[class] > summary::marker {
+.md-editable-area:not(.md-typeset) details[class] > summary::marker {
   display: none;
   content: '';
 }
 
-/* Per-type colors for <details> */
-.md-editable-area details.note,
-.live-edit-wysiwyg-wrapper details.note {
+/* --- Per-type colors for <details> --- */
+.md-editable-area:not(.md-typeset) details.note {
   border-left-color: #6ab0de;
   background-color: #f0f7ff;
 }
 
-.md-editable-area details.warning,
-.live-edit-wysiwyg-wrapper details.warning {
+.md-editable-area:not(.md-typeset) details.warning {
   border-left-color: #f0ad4e;
   background-color: #fff8e6;
 }
 
-.md-editable-area details.danger,
-.live-edit-wysiwyg-wrapper details.danger {
+.md-editable-area:not(.md-typeset) details.danger {
   border-left-color: #d9534f;
   background-color: #fff0f0;
 }
 
-.md-editable-area details.tip,
-.live-edit-wysiwyg-wrapper details.tip {
+.md-editable-area:not(.md-typeset) details.tip {
   border-left-color: #5cb85c;
   background-color: #f0fff4;
 }
 
-.md-editable-area details.important,
-.live-edit-wysiwyg-wrapper details.important {
+.md-editable-area:not(.md-typeset) details.important {
   border-left-color: #f0ad4e;
   background-color: #fffbf0;
 }
 
-.md-editable-area details.caution,
-.live-edit-wysiwyg-wrapper details.caution {
+.md-editable-area:not(.md-typeset) details.caution {
   border-left-color: #f0ad4e;
   background-color: #fff8e6;
 }
 
-.md-editable-area details.error,
-.live-edit-wysiwyg-wrapper details.error {
+.md-editable-area:not(.md-typeset) details.error {
   border-left-color: #d9534f;
   background-color: #fff0f0;
 }
 
-.md-editable-area details.attention,
-.live-edit-wysiwyg-wrapper details.attention {
+.md-editable-area:not(.md-typeset) details.attention {
   border-left-color: #f0ad4e;
   background-color: #fff8e6;
 }
 
-.md-editable-area details.hint,
-.live-edit-wysiwyg-wrapper details.hint {
+.md-editable-area:not(.md-typeset) details.hint {
   border-left-color: #5cb85c;
   background-color: #f0fff4;
 }
 
-.md-editable-area details.abstract,
-.live-edit-wysiwyg-wrapper details.abstract {
+.md-editable-area:not(.md-typeset) details.abstract {
   border-left-color: #00b0ff;
   background-color: #e8f5ff;
 }
 
-.md-editable-area details.info,
-.live-edit-wysiwyg-wrapper details.info {
+.md-editable-area:not(.md-typeset) details.info {
   border-left-color: #00b8d4;
   background-color: #e0f7fa;
 }
 
-.md-editable-area details.success,
-.live-edit-wysiwyg-wrapper details.success {
+.md-editable-area:not(.md-typeset) details.success {
   border-left-color: #00c853;
   background-color: #e8f5e9;
 }
 
-.md-editable-area details.question,
-.live-edit-wysiwyg-wrapper details.question {
+.md-editable-area:not(.md-typeset) details.question {
   border-left-color: #64dd17;
   background-color: #f1f8e9;
 }
 
-.md-editable-area details.failure,
-.live-edit-wysiwyg-wrapper details.failure {
+.md-editable-area:not(.md-typeset) details.failure {
   border-left-color: #ff5252;
   background-color: #ffebee;
 }
 
-.md-editable-area details.bug,
-.live-edit-wysiwyg-wrapper details.bug {
+.md-editable-area:not(.md-typeset) details.bug {
   border-left-color: #f50057;
   background-color: #fce4ec;
 }
 
-.md-editable-area details.example,
-.live-edit-wysiwyg-wrapper details.example {
+.md-editable-area:not(.md-typeset) details.example {
   border-left-color: #7c4dff;
   background-color: #ede7f6;
 }
 
-.md-editable-area details.quote,
-.live-edit-wysiwyg-wrapper details.quote {
+.md-editable-area:not(.md-typeset) details.quote {
   border-left-color: #9e9e9e;
   background-color: #f5f5f5;
-}
-
-/* Inline placement for <details> */
-.md-editable-area details[class].inline,
-.live-edit-wysiwyg-wrapper details[class].inline {
-  float: left;
-  width: 40%;
-  margin-right: 1em;
-  margin-top: 0;
-}
-
-.md-editable-area details[class].inline.end,
-.live-edit-wysiwyg-wrapper details[class].inline.end {
-  float: right;
-  margin-right: 0;
-  margin-left: 1em;
-}
-
-/* Admonitions need position:relative for the gear button */
-.md-editable-area .admonition,
-.live-edit-wysiwyg-wrapper .admonition {
-  position: relative;
 }
 
 /* WYSIWYG toggle button icon */

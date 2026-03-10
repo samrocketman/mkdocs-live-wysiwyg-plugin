@@ -11,6 +11,10 @@ title: Example WYSIWYG site
   bar
 - baz
 
+1. Car
+2. Bus
+3. Train
+
 This is a test page for the mkdocs-live-wysiwyg-plugin.
 
 ```yaml title="Preview Example"
@@ -61,6 +65,7 @@ The WYSIWYG editor supports MkDocs admonitions. In Markdown mode, use:
 
 !!! note
     This is a note admonition.
+
     - [ ] Item 1
     - [x] Item 2
 

@@ -2417,11 +2417,13 @@ class MarkdownWYSIWYG {
                 const itemMarker = isOrdered ? `${listCounter}. ` : '- ';
                 let listItemContent = '';
                 let hasNestedList = false;
+                let blockChildCount = 0;
 
                 const contIndent = ' '.repeat(itemMarker.length);
                 Array.from(li.childNodes).forEach(childNode => {
                     if (childNode.nodeName === 'UL' || childNode.nodeName === 'OL') {
                         hasNestedList = true;
+                        blockChildCount++;
                         // Ensure a newline before nested list if there was preceding content in the LI
                         if (listItemContent.trim().length > 0 && !listItemContent.endsWith('\n')) {
                             listItemContent += '\n';
@@ -2429,6 +2431,7 @@ class MarkdownWYSIWYG {
                         listItemContent += this._listToMarkdownRecursive(childNode, indent + contIndent, childNode.nodeName, 1, options);
                     } else {
                         const isBlock = ['PRE', 'P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE'].includes(childNode.nodeName);
+                        if (isBlock) blockChildCount++;
                         if (isBlock && listItemContent.trim().length > 0 && !listItemContent.endsWith('\n\n')) {
                             listItemContent += '\n\n';
                         }
@@ -2455,8 +2458,7 @@ class MarkdownWYSIWYG {
                     });
                 }
                 const itemEnd = processedContent.trimEnd();
-                const isMultiLine = itemEnd.indexOf('\n') >= 0;
-                markdown += `${indent}${itemMarker}${itemEnd}\n${isMultiLine ? '\n' : ''}`; // Blank line after multi-line items for proper rendering
+                markdown += `${indent}${itemMarker}${itemEnd}\n${blockChildCount > 1 ? '\n' : ''}`;
                 if (isOrdered) listCounter++;
             }
         });

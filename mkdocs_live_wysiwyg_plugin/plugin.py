@@ -170,6 +170,25 @@ class LiveWysiwygPlugin(BasePlugin):
             f"const liveWysiwygEmojiMap = {json.dumps(emoji_map, ensure_ascii=True)};\n"
         )
 
+        # Build and inject image list for autocomplete (cached on plugin instance)
+        if not hasattr(self, "_image_list_cache"):
+            image_exts = {
+                ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
+                ".ico", ".bmp", ".tiff", ".tif", ".avif", ".apng",
+                ".jfif", ".pjpeg", ".pjp", ".cur",
+            }
+            self._image_list_cache = sorted(
+                f.src_path
+                for f in files
+                if Path(f.src_path).suffix.lower() in image_exts
+            )
+        preamble_parts.append(
+            f"const liveWysiwygImageList = {json.dumps(self._image_list_cache)};\n"
+        )
+        preamble_parts.append(
+            f"const liveWysiwygPageSrcPath = {json.dumps(page.file.src_path)};\n"
+        )
+
         preamble = "".join(preamble_parts)
 
         admonition_css = parent_dir / "admonition.css"

@@ -1222,6 +1222,41 @@
  background: #2d5a8a;
 }
 
+.md-image-autocomplete {
+ max-height: 200px;
+ overflow-y: auto;
+ border-top: 1px solid #333;
+}
+
+.md-image-ac-item {
+ display: flex;
+ flex-direction: column;
+ padding: 5px 10px;
+ cursor: pointer;
+ gap: 1px;
+}
+
+.md-image-ac-item:hover,
+.md-image-ac-item-selected {
+ background: #264f78;
+}
+
+.md-image-ac-item-name {
+ color: #c9d1d9;
+ font-size: 12px;
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis;
+}
+
+.md-image-ac-item-path {
+ color: #888;
+ font-size: 10px;
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis;
+}
+
 /* Image wrapper and gear in editable area */
 .md-image-wrapper {
  position: relative;

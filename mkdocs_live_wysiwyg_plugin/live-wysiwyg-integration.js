@@ -7309,10 +7309,129 @@
 
   var FOCUS_MODE_STYLE_ID = 'live-wysiwyg-focus-mode-styles';
 
+  var _themeColorsDetected = false;
+  function _detectThemeColors() {
+    var colors = {};
+    var cs = getComputedStyle(document.documentElement);
+
+    function _cssVar(name) {
+      var v = cs.getPropertyValue(name);
+      return v ? v.trim() : '';
+    }
+    function _luminance(r, g, b) {
+      var a = [r, g, b].map(function (v) {
+        v /= 255;
+        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
+    }
+    function _parseRgb(str) {
+      if (!str) return null;
+      var m = str.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+      return m ? { r: +m[1], g: +m[2], b: +m[3] } : null;
+    }
+    function _isLight(rgb) {
+      return rgb && _luminance(rgb.r, rgb.g, rgb.b) > 0.4;
+    }
+    function _darken(rgb, factor) {
+      var f = 1 - (factor || 0.15);
+      return 'rgb(' + Math.round(rgb.r * f) + ',' + Math.round(rgb.g * f) + ',' + Math.round(rgb.b * f) + ')';
+    }
+    function _lighten(rgb, factor) {
+      var f = factor || 0.15;
+      return 'rgb(' +
+        Math.round(rgb.r + (255 - rgb.r) * f) + ',' +
+        Math.round(rgb.g + (255 - rgb.g) * f) + ',' +
+        Math.round(rgb.b + (255 - rgb.b) * f) + ')';
+    }
+    function _alpha(rgb, a) {
+      return 'rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',' + a + ')';
+    }
+
+    var hasMdVars = !!_cssVar('--md-primary-fg-color');
+    if (hasMdVars) {
+      if (!_themeColorsDetected) {
+        _themeColorsDetected = true;
+        if (!_cssVar('--md-footer-bg-color')) {
+          var primary = _parseRgb(_cssVar('--md-primary-fg-color'));
+          if (primary) {
+            var root = document.documentElement;
+            root.style.setProperty('--md-footer-bg-color', _darken(primary, 0.1));
+          }
+        }
+        if (!_cssVar('--md-code-font-family')) {
+          document.documentElement.style.setProperty('--md-code-font-family',
+            getComputedStyle(document.body).fontFamily || 'monospace');
+        }
+      }
+      return colors;
+    }
+
+    var root = document.documentElement;
+    var navbar = document.body.children[0];
+    if (!navbar || navbar.nodeType !== 1) return colors;
+    var navCs = getComputedStyle(navbar);
+    var navBg = navCs.backgroundColor;
+    var navFg = navCs.color;
+    var navBgRgb = _parseRgb(navBg);
+    var navFgRgb = _parseRgb(navFg);
+
+    if (navBg && navBgRgb) {
+      colors['--md-primary-fg-color'] = navBg;
+      colors['--md-primary-fg-color--dark'] = _darken(navBgRgb, 0.15);
+      colors['--md-footer-bg-color'] = _darken(navBgRgb, 0.1);
+    }
+    if (navFg && navFgRgb) {
+      colors['--md-primary-bg-color'] = navFg;
+    }
+
+    var bodyCs = getComputedStyle(document.body);
+    var bodyBg = bodyCs.backgroundColor;
+    var bodyFg = bodyCs.color;
+    var bodyBgRgb = _parseRgb(bodyBg);
+    var bodyFgRgb = _parseRgb(bodyFg);
+
+    if (bodyBg && bodyBgRgb) {
+      colors['--md-default-bg-color'] = bodyBg;
+      colors['--md-default-bg-color--light'] = _isLight(bodyBgRgb)
+        ? _darken(bodyBgRgb, 0.04) : _lighten(bodyBgRgb, 0.06);
+      colors['--md-default-bg-color--lighter'] = _isLight(bodyBgRgb)
+        ? _darken(bodyBgRgb, 0.07) : _lighten(bodyBgRgb, 0.1);
+    }
+    if (bodyFg && bodyFgRgb) {
+      colors['--md-default-fg-color'] = bodyFg;
+      colors['--md-default-fg-color--light'] = _alpha(bodyFgRgb, 0.54);
+      colors['--md-default-fg-color--lighter'] = _alpha(bodyFgRgb, 0.32);
+      colors['--md-default-fg-color--lightest'] = _alpha(bodyFgRgb, 0.12);
+    }
+
+    var link = document.querySelector('a[href]');
+    if (link) {
+      var linkColor = getComputedStyle(link).color;
+      if (linkColor) {
+        colors['--md-accent-fg-color'] = linkColor;
+        colors['--md-typeset-a-color'] = linkColor;
+      }
+    }
+
+    colors['--md-text-font-family'] = bodyCs.fontFamily || 'inherit';
+    colors['--md-code-font-family'] = bodyCs.fontFamily || 'monospace';
+
+    if (!_themeColorsDetected) {
+      _themeColorsDetected = true;
+      for (var v in colors) {
+        if (colors.hasOwnProperty(v)) {
+          root.style.setProperty(v, colors[v]);
+        }
+      }
+    }
+    return colors;
+  }
+
   function _getFocusModeCSS() {
     return '' +
       '.live-wysiwyg-focus-overlay{' +
-        'position:fixed;inset:0;z-index:999;' +
+        'position:fixed;inset:0;z-index:999999999;' +
         'display:flex;flex-direction:column;' +
         'background-color:var(--md-default-bg-color,#fff);' +
         'color:var(--md-default-fg-color,#333);' +
@@ -7762,6 +7881,13 @@
       overlay.classList.add('live-wysiwyg-focus-toolbar-open');
     }
     _focusOverlay = overlay;
+
+    var themeColors = _detectThemeColors();
+    for (var varName in themeColors) {
+      if (themeColors.hasOwnProperty(varName)) {
+        overlay.style.setProperty(varName, themeColors[varName]);
+      }
+    }
 
     // --- Header (styled like md-header md-header--shadow) ---
     var header = document.createElement('div');
@@ -8480,7 +8606,7 @@
   function getButtonLabel(isWysiwygActive) {
     var text = isWysiwygActive ? 'Disable Editor' : 'Enable Editor';
     if (typeof liveWysiwygIconDataUrl !== 'undefined' && liveWysiwygIconDataUrl) {
-      return '<img src="' + liveWysiwygIconDataUrl + '" alt="" class="live-wysiwyg-btn-icon" aria-hidden="true"> ' + text;
+      return '<img src="' + liveWysiwygIconDataUrl + '" alt="" class="live-wysiwyg-btn-icon" aria-hidden="true" style="display:inline;width:1.2em;height:1.2em;vertical-align:middle;margin-right:.25em"> ' + text;
     }
     return text;
   }
@@ -8494,8 +8620,57 @@
     }
   }
 
+  function _ensureThemeOverrides() {
+    _detectThemeColors();
+    if (document.getElementById('live-wysiwyg-theme-overrides')) return;
+    var s = document.createElement('style');
+    s.id = 'live-wysiwyg-theme-overrides';
+    s.textContent =
+      '.live-edit-source{' +
+        'font-family:var(--md-code-font-family,monospace)!important;' +
+        'color:var(--md-default-fg-color,#333)!important;' +
+        'background:var(--md-default-bg-color,#fff)!important;' +
+        'border-color:var(--md-default-fg-color--lightest,#ccc)!important;' +
+      '}' +
+      'button.live-edit-button{' +
+        'background:rgba(255,255,255,0.12)!important;' +
+        'border:1px solid rgba(255,255,255,0.2)!important;' +
+        'color:var(--md-primary-bg-color,#fff)!important;' +
+        'transition:background .2s;' +
+      '}' +
+      'button.live-edit-button:hover{' +
+        'background:rgba(255,255,255,0.25)!important;' +
+      '}' +
+      'button.live-edit-save-button{' +
+        'background:#5cb85c!important;border-color:#4cae4c!important;color:#fff!important;' +
+      '}' +
+      'button.live-edit-save-button:hover{' +
+        'background:#4cae4c!important;' +
+      '}' +
+      'button.live-edit-cancel-button{' +
+        'background:#d9534f!important;border-color:#d43f3a!important;color:#fff!important;' +
+      '}' +
+      'button.live-edit-cancel-button:hover{' +
+        'background:#d43f3a!important;' +
+      '}' +
+      'div.live-edit-controls{' +
+        'background:linear-gradient(to bottom,var(--md-primary-fg-color,#fff2dc),var(--md-footer-bg-color,#f0c36d))!important;' +
+        'border-color:var(--md-primary-fg-color--dark,#f0c36d)!important;' +
+        'color:var(--md-primary-bg-color,inherit)!important;' +
+      '}' +
+      '.live-edit-label{' +
+        'color:var(--md-primary-bg-color,inherit)!important;' +
+      '}' +
+      '.live-edit-info-modal{' +
+        'background-color:var(--md-default-bg-color--light,#fff2dc)!important;' +
+        'border-color:var(--md-default-fg-color--lightest,#f0c36d)!important;' +
+      '}';
+    document.head.appendChild(s);
+  }
+
   function ensureToggleButton(textarea, isWysiwygActive) {
     if (toggleButton && toggleButton.parentNode) return;
+    _ensureThemeOverrides();
     var controls = getControlsElement(textarea);
     if (!controls) return;
     var label = controls.querySelector('.live-edit-label');
@@ -8696,6 +8871,8 @@
 
     textarea.parentNode.insertBefore(wysiwygContainer, textarea);
     textarea.style.display = 'none';
+
+    _ensureThemeOverrides();
 
     var widthStyle = document.getElementById('live-wysiwyg-width-overrides');
     if (!widthStyle) {

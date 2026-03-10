@@ -202,8 +202,53 @@ class LiveWysiwygPlugin(BasePlugin):
         with open(vendor_dir / "editor.js", "r", encoding="utf-8") as f:
             editor_js_content = f.read()
 
-        # Inject: marked.js, MkDocs admonition extension, editor CSS, admonition CSS, editor JS, integration script (all local)
+        live_edit_theme_css = (
+            '.live-edit-source{'
+              'font-family:var(--md-code-font-family,monospace)!important;'
+              'color:var(--md-default-fg-color,#333)!important;'
+              'background:var(--md-default-bg-color,#fff)!important;'
+              'border-color:var(--md-default-fg-color--lightest,#ccc)!important;'
+            '}'
+            'button.live-edit-button{'
+              'background:rgba(255,255,255,0.12)!important;'
+              'border:1px solid rgba(255,255,255,0.2)!important;'
+              'color:var(--md-primary-bg-color,#fff)!important;'
+              'transition:background .2s;'
+            '}'
+            'button.live-edit-button:hover{'
+              'background:rgba(255,255,255,0.25)!important;'
+            '}'
+            'button.live-edit-save-button{'
+              'background:#5cb85c!important;border-color:#4cae4c!important;color:#fff!important;'
+            '}'
+            'button.live-edit-save-button:hover{'
+              'background:#4cae4c!important;'
+            '}'
+            'button.live-edit-cancel-button{'
+              'background:#d9534f!important;border-color:#d43f3a!important;color:#fff!important;'
+            '}'
+            'button.live-edit-cancel-button:hover{'
+              'background:#d43f3a!important;'
+            '}'
+            'div.live-edit-controls{'
+              'background:linear-gradient(to bottom,var(--md-primary-fg-color,#fff2dc),var(--md-footer-bg-color,#f0c36d))!important;'
+              'border-color:var(--md-primary-fg-color--dark,#f0c36d)!important;'
+              'color:var(--md-primary-bg-color,inherit)!important;'
+            '}'
+            '.live-edit-label{'
+              'color:var(--md-primary-bg-color,inherit)!important;'
+            '}'
+            '.live-edit-info-modal{'
+              'background-color:var(--md-default-bg-color--light,#fff2dc)!important;'
+              'border-color:var(--md-default-fg-color--lightest,#f0c36d)!important;'
+            '}'
+        )
+
+        # Inject: theme overrides (first, before upstream CSS can paint),
+        # marked.js, MkDocs admonition extension, editor CSS, admonition CSS,
+        # editor JS, integration script (all local)
         assets = (
+            f'<style id="live-wysiwyg-theme-overrides">{live_edit_theme_css}</style>'
             f'<style>{editor_css_content}</style>'
             f'<style>{admonition_css_content}</style>'
             f'<script>{marked_js_content}</script>'

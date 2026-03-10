@@ -1841,7 +1841,7 @@
       if (dropdown) return dropdown;
       dropdown = document.createElement('div');
       dropdown.className = 'md-admonition-dropdown';
-      dropdown.style.cssText = 'display:none;position:absolute;z-index:10000;background:var(--md-default-bg-color, #fff);border:1px solid var(--md-default-fg-color--lighter, #ccc);border-radius:4px;box-shadow:var(--md-shadow-z2, 0 2px 8px rgba(0,0,0,0.15));min-width:160px;padding:4px 0;margin-top:2px;';
+      dropdown.style.cssText = 'display:none;position:absolute;z-index:99999;background:var(--md-default-bg-color, #fff);border:1px solid var(--md-default-fg-color--lighter, #ccc);border-radius:4px;box-shadow:var(--md-shadow-z2, 0 2px 8px rgba(0,0,0,0.15));min-width:160px;padding:4px 0;margin-top:2px;';
       for (var i = 0; i < ADMONITION_TYPES.length; i++) {
         (function (t) {
           var item = document.createElement('button');
@@ -3413,7 +3413,7 @@
         }
         var explicitH = node.getAttribute('data-attr-height') === '1';
         var isInline = node.getAttribute('data-inline') === '1';
-        var imgSuffix = this._findParentElement(node, 'A') ? '' : '\n\n';
+        var imgSuffix = (this._findParentElement(node, 'A') || isInline) ? '' : '\n\n';
         if (imgW || (imgH && sizeSyntax === 'attr' && explicitH) || isInline) {
           if (sizeSyntax === 'attr') {
             var attrParts = [];
@@ -7431,7 +7431,7 @@
   function _getFocusModeCSS() {
     return '' +
       '.live-wysiwyg-focus-overlay{' +
-        'position:fixed;inset:0;z-index:999999999;' +
+        'position:fixed;inset:0;z-index:99990;' +
         'display:flex;flex-direction:column;' +
         'background-color:var(--md-default-bg-color,#fff);' +
         'color:var(--md-default-fg-color,#333);' +
@@ -7500,6 +7500,14 @@
         'font-size:1.1rem;line-height:1;transition:opacity .25s;flex-shrink:0;' +
       '}' +
       '.live-wysiwyg-focus-close:hover{opacity:1;}' +
+
+      '.live-wysiwyg-focus-palette{' +
+        'background:none;border:none;cursor:pointer;padding:.4rem;' +
+        'color:var(--md-primary-bg-color,#fff);opacity:.7;' +
+        'font-size:1.1rem;line-height:1;transition:opacity .25s;flex-shrink:0;' +
+      '}' +
+      '.live-wysiwyg-focus-palette:hover{opacity:1;}' +
+      '.live-wysiwyg-focus-palette svg{width:1.2rem;height:1.2rem;fill:currentColor;}' +
 
       '.live-wysiwyg-focus-toolbar-drawer{' +
         'max-height:0;overflow:hidden;' +
@@ -7941,6 +7949,27 @@
     ellipsis.appendChild(topic2);
     titleDiv.appendChild(ellipsis);
     header.appendChild(titleDiv);
+
+    var paletteForm = document.querySelector('form.md-header__option[data-md-component="palette"]');
+    if (paletteForm) {
+      var paletteBtn = document.createElement('button');
+      paletteBtn.type = 'button';
+      paletteBtn.className = 'live-wysiwyg-focus-palette';
+      function _updatePaletteBtn() {
+        var visibleLabel = paletteForm.querySelector('label:not([hidden])');
+        if (visibleLabel) {
+          paletteBtn.innerHTML = visibleLabel.innerHTML;
+          paletteBtn.title = visibleLabel.title || 'Toggle color scheme';
+        }
+      }
+      _updatePaletteBtn();
+      paletteBtn.addEventListener('click', function () {
+        var visibleLabel = paletteForm.querySelector('label:not([hidden])');
+        if (visibleLabel) visibleLabel.click();
+        setTimeout(_updatePaletteBtn, 100);
+      });
+      header.appendChild(paletteBtn);
+    }
 
     var closeBtn = document.createElement('button');
     closeBtn.type = 'button';
@@ -8523,7 +8552,7 @@
     selectionEditPopup = document.createElement('div');
     selectionEditPopup.className = 'live-wysiwyg-selection-edit-popup';
     selectionEditPopup.innerHTML = '<button type="button" class="live-wysiwyg-selection-edit-btn" title="Edit selection">Edit</button>';
-    selectionEditPopup.style.cssText = 'position:fixed;z-index:9999;padding:4px 8px;background:#333;color:#fff;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-size:12px;font-family:inherit;opacity:0;transition:opacity 0.15s;pointer-events:none;visibility:hidden;';
+    selectionEditPopup.style.cssText = 'position:fixed;z-index:99999;padding:4px 8px;background:#333;color:#fff;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-size:12px;font-family:inherit;opacity:0;transition:opacity 0.15s;pointer-events:none;visibility:hidden;';
     var btn = selectionEditPopup.querySelector('button');
     btn.style.cssText = 'background:transparent;border:none;color:inherit;cursor:pointer;padding:0 4px;font-size:inherit;';
     btn.addEventListener('click', function (e) {
@@ -9641,7 +9670,7 @@
         if (matches.length === 0 && prefix.length === 0) return null;
         var pop = document.createElement("div");
         pop.className = "live-wysiwyg-emoji-autocomplete";
-        pop.style.cssText = "position:fixed;z-index:10000;background:var(--md-default-bg-color, #fff);border:1px solid var(--md-default-fg-color--lighter, #ccc);border-radius:6px;box-shadow:var(--md-shadow-z2, 0 4px 12px rgba(0,0,0,0.15));max-height:" + (matches.length > 12 ? "320px" : "240px") + ";overflow-y:auto;font-family:inherit;font-size:14px;";
+        pop.style.cssText = "position:fixed;z-index:99999;background:var(--md-default-bg-color, #fff);border:1px solid var(--md-default-fg-color--lighter, #ccc);border-radius:6px;box-shadow:var(--md-shadow-z2, 0 4px 12px rgba(0,0,0,0.15));max-height:" + (matches.length > 12 ? "320px" : "240px") + ";overflow-y:auto;font-family:inherit;font-size:14px;";
         if (matches.length === 0) {
           var noMatchRow = document.createElement("div");
           noMatchRow.className = "live-wysiwyg-emoji-no-matches";

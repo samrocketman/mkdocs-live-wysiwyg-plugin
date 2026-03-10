@@ -7541,6 +7541,15 @@
         'background-color:var(--md-primary-fg-color--dark,#0056b3);' +
         'border-color:var(--md-primary-fg-color--dark,#0056b3);' +
       '}' +
+      '.live-wysiwyg-focus-cancel-btn{' +
+        'background-color:var(--md-accent-fg-color,#007bff);color:#fff;' +
+        'border:1px solid var(--md-accent-fg-color,#007bff);' +
+        'border-radius:4px;padding:4px 14px;cursor:pointer;font-size:.75rem;' +
+      '}' +
+      '.live-wysiwyg-focus-cancel-btn:hover{' +
+        'background-color:var(--md-primary-fg-color--dark,#0056b3);' +
+        'border-color:var(--md-primary-fg-color--dark,#0056b3);' +
+      '}' +
       '.live-wysiwyg-focus-exit-btn{' +
         'background-color:var(--md-default-bg-color,#fff);' +
         'color:var(--md-default-fg-color,#333);' +
@@ -8066,6 +8075,19 @@
       }
     });
     drawerControls.appendChild(saveBtn);
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'live-wysiwyg-focus-cancel-btn';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', function () {
+      var upstreamCancel = document.querySelector('.live-edit-cancel-button');
+      if (upstreamCancel && !upstreamCancel.disabled) {
+        exitFocusMode();
+        upstreamCancel.click();
+      }
+    });
+    drawerControls.appendChild(cancelBtn);
 
     var exitBtn = document.createElement('button');
     exitBtn.type = 'button';

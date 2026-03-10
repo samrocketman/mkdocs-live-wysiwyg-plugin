@@ -1,0 +1,54 @@
+---
+description: Text selection handling differs between read-only mode and edit mode (WYSIWYG/Markdown) and must always be treated as separate codepaths
+alwaysApply: true
+---
+
+# Text Selection: Read-Only vs Edit Mode Are Separate
+
+The WYSIWYG plugin has **two independent selection systems**. Never mix their logic or let changes to one affect the other.
+
+## Read-Only → Edit Mode (`readonly_to_edit_mode_text_selection`)
+
+Selection is captured from the **rendered HTML page** before the editor exists, then mapped to the editor after it initializes.
+
+- **Capture**: `storeSelectionIfReadMode` stores `selectedText` + context from the DOM `Range` during `selectionchange` events. Uses `range.toString()` with `rangeToTextWithImgAlt` fallback for `<img>` elements.
+- **Pseudo-markdown**: `buildPseudoMarkdown` walks the read-only DOM and reconstructs a best-effort markdown document, converting known HTML elements (`<h1>`→`# `, `<strong>`→`**`, `<code>`→`` ` ``, `<img>`→shortcode, etc.), skipping `<script>`, `<style>`, headerlink anchors, and editor UI. Produces a string that closely mirrors the actual markdown body.
+- **Searchable text**: `buildSearchable` strips formatting markers and normalizes whitespace from any markdown string, producing a searchable text + position map back to the original. `normalizeForSearch` strips `¶` (headerlink pilcrow) and normalizes whitespace from the user's selected text.
+- **Resolution tiers**: (1) existing direct search via `applyPendingReadModeSelection`, (2) normalized search against the actual body's searchable text, (3) pseudo-markdown cross-reference: find in pseudo-md searchable, extract formatted substring, search in actual body.
+- **Disposal**: The pseudo-markdown and searchable structures are discarded once the selection is applied.
+
+Key functions: `storeSelectionIfReadMode`, `buildPseudoMarkdown`, `buildSearchable`, `normalizeForSearch`, `findInSearchable`, `readonly_to_edit_mode_text_selection`, `applyPendingReadModeSelection`.
+
+## Edit Mode: WYSIWYG ↔ Markdown (`switchToMode`)
+
+Selection is preserved across **WYSIWYG ↔ Markdown toggles** using cursor markers injected into the content.
+
+- **WYSIWYG → Markdown**: `injectMarkerAtCaretInEditable` inserts zero-width Unicode markers (`CURSOR_MARKER` / `CURSOR_MARKER_END`) into the DOM, then `_htmlToMarkdown` converts to markdown preserving marker positions as textarea `selectionStart`/`selectionEnd`.
+- **Markdown → WYSIWYG**: `CURSOR_SPAN_ATTR` / `CURSOR_SPAN_ATTR_END` HTML spans are spliced into the markdown at cursor positions, then `_markdownToHtml` converts to HTML. `findAndStripCursorMarkerPositions` resolves the spans to DOM Range positions.
+- **Markdown blur**: `capturedMarkdownSelection` stores `{ start, end }` offsets on textarea blur so selection survives focus loss.
+- **Semantic fallback**: `restoreSelectionFromSemantic` uses block-index + text-offset to restore WYSIWYG selections when marker-based restore fails.
+
+Key functions: `injectMarkerAtCaretInEditable`, `findAndStripCursorMarkerPositions`, `capturedMarkdownSelection`, `restoreSelectionFromSemantic`, `switchToMode`.
+
+## Focus Mode Transitions (`enterFocusMode` / `exitFocusMode`)
+
+Cursor position and text selection are preserved when **entering or exiting Focus Mode** in both WYSIWYG and Markdown modes. The DOM nodes are reparented (not recreated), so selection can survive if captured and restored correctly.
+
+- **Capture**: `_captureEditorSelection()` saves either `{ mode:'markdown', selectionStart, selectionEnd, scrollTop }` or `{ mode:'wysiwyg', rangeData:{startContainer,startOffset,endContainer,endOffset}, semantic, scrollTop }` before reparenting.
+- **Restore**: `_restoreEditorSelection(saved, scrollContainer)` applies the saved state after reparenting completes.
+  - **Markdown**: `setSelectionRange()` + `scrollTop` on the markdown editor container.
+  - **WYSIWYG**: First tries direct `Range` restore from saved node references (nodes survive reparenting). Falls back to `restoreSelectionFromSemantic` if nodes were invalidated. Restores `scrollTop` on the appropriate scroll container (`.live-wysiwyg-focus-main` in focus mode, `editableArea` in normal mode).
+
+Key functions: `_captureEditorSelection`, `_restoreEditorSelection`, `captureSemanticSelection`, `restoreSelectionFromSemantic`.
+
+## Rules
+
+1. **Do not merge these codepaths.** Read-only selection handling must remain self-contained in `readonly_to_edit_mode_text_selection` and its helpers. Edit-mode selection handling lives in `switchToMode` and its marker/semantic functions. Focus mode selection handling lives in `_captureEditorSelection` / `_restoreEditorSelection`.
+2. **Editing one must not break the other.** If modifying read-only selection logic, verify edit-mode toggle selection still works and vice versa. If modifying focus mode reparenting, verify selection preservation still works.
+3. **`<script>` and `<style>` elements** are embedded inside the `<article>` in the rendered page. All DOM text extraction for selection (context, visible text, content map) must skip these elements.
+4. **Hash non-text elements.** `<img>` and similar elements that don't render as plain text must be hashed, with the hash table mapping to known WYSIWYG equivalents (e.g., emoji shortcodes). Their markdown equivalent is written directly into the pseudo-markdown output.
+5. **The pseudo-markdown must know about markdown elements.** `buildPseudoMarkdown` must convert known HTML elements (headings, bold, italic, inline code, lists, blockquotes, etc.) into their markdown syntax so positions align with the actual markdown body.
+6. **Headerlink `¶` characters** appear in `range.toString()` but not in markdown. `normalizeForSearch` strips them before matching.
+7. **Focus mode must preserve cursor.** `enterFocusMode` and `exitFocusMode` must call `_captureEditorSelection` before reparenting and `_restoreEditorSelection` after. This applies to both WYSIWYG and Markdown modes.
+8. **Scroll position is part of cursor state.** When preserving selection across any transition (read-only→edit, WYSIWYG↔Markdown, normal↔focus), scroll position must also be saved and restored so the user's viewport does not jump.
+9. **Cookie-based cursor codepath for page reloads.** "Save-with-remain" and nav edit save both trigger full page reloads. The `live_wysiwyg_nav_edit_cursor` cookie stores cursor state. When the cookie is present after a reload, it provides exact cursor position and supersedes the read-only-to-edit-mode heuristics (Boundary 1). The cookie is consumed after restoration.

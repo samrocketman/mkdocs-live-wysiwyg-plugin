@@ -1,0 +1,33 @@
+# Image Insertion, Resize, and Settings
+
+Protects the image insertion dropdown, in-WYSIWYG resize, gear settings, and markdown round-trip from regressions.
+
+## Invariants
+
+1. **`resolveImageSrc` resolves relative to parent directory.** Image URLs are resolved via `new URL('..', document.baseURI)` to match MkDocs' file-relative path convention. Original relative paths are preserved in `data-orig-src`.
+
+2. **`data-orig-src` must round-trip.** `_nodeToMarkdownRecursive` must prefer `data-orig-src` over `src` to preserve the author's original relative path. Both the base handler in `editor.js` and the patched handler in `live-wysiwyg-integration.js` must honour this.
+
+3. **No custom size = standard markdown.** Images without explicit `width`/`height` always serialize as `![alt](src)`. Only sized images use `<img>` HTML or `{ width=N }` attr_list syntax.
+
+4. **Aspect ratio is always locked during resize.** `height = width / aspectRatio` where `aspectRatio = naturalWidth / naturalHeight`. No independent width/height adjustment. Minimum width is 20px.
+
+5. **Gear button and wrapper are invisible to markdown.** `_nodeToMarkdownRecursive` must skip `.md-image-settings-btn` buttons, `.md-image-resize-container`, `.md-image-dimension-label`, and unwrap `.md-image-wrapper` spans (emitting only the inner content). Same pattern as code block gear buttons.
+
+6. **`enhanceImages` runs alongside other enhance functions.** Must be called in every location where `enhanceCodeBlocks`, `enhanceChecklists`, and `enhanceAdmonitions` are called (setValue, switchToMode, paste, etc.).
+
+7. **Emoji images are excluded.** Images with `data-emoji-shortcode` attribute must not receive wrappers, gear buttons, or resize handles.
+
+8. **Raw HTML system does not interfere.** `img` is in `_isHtmlTagKnownToMarkdown`, so `<img>` tags are never captured by raw HTML preprocessing. Do not remove `img` from that list.
+
+9. **Document-load dimensions are captured once.** `data-initial-width` / `data-initial-height` are set by `enhanceImages()` on first enhancement and never overwritten, so "Restore Document Size" always returns to the as-loaded state.
+
+10. **Same-origin URLs are auto-converted to relative.** The image insertion dropdown detects same-origin absolute URLs and converts them to relative paths so they round-trip correctly through `resolveImageSrc`.
+
+11. **Focus mode compatibility.** Image dropdowns and gear dropdowns must use `position:fixed; z-index:10000` to render above the focus mode overlay.
+
+12. **Cross-dropdown dismissal.** Opening the image insert dropdown, gear dropdown, link dropdown, admonition settings, or code settings must dismiss any other active dropdown. Switching editor modes must dismiss image selection and all image dropdowns.
+
+13. **`{ width=N }` attr_list parsing.** The `_markdownToHtml` pre-processor regex converts `![alt](src){ width=N }` to `<img ... data-size-syntax="attr">` before `marked` runs. This regex must run before the raw HTML preprocessor.
+
+14. **In-memory rendering bypass.** During the double rendering check (7I in focus-nav-menu, gated by `_inMemoryRenderMode = true`): `resolveImageSrc` must be skipped — image path rewriting is already handled by the link rewriter. `data-orig-src` must not be consulted or generated. `enhanceImages` (wrappers, gear buttons, resize handles) must be skipped. These are DOM-only UI enhancements that the markdown serializer strips, and their code paths are untested without DOM insertion.

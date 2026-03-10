@@ -1,0 +1,16 @@
+---
+description: How to build and view the mkdocs-live-wysiwyg-plugin rendered site
+globs: mkdocs-live-wysiwyg-plugin/**
+alwaysApply: false
+---
+
+# Building the mkdocs-live-wysiwyg-plugin Site
+
+To build and view the rendered site, run these commands **from the `mkdocs-live-wysiwyg-plugin` directory**:
+
+```bash
+../techdocs-preview.sh add_plugins --upgrade .
+../techdocs-preview.sh build
+```
+
+Use this workflow any time you wish to view the rendered site. Do **not** use `mkdocs build` or `mkdocs serve` directly; use the techdocs-preview script instead.

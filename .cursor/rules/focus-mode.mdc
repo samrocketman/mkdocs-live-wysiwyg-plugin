@@ -1,0 +1,49 @@
+# Focus Mode Invariants
+
+This rule protects the Focus Mode feature from regressions during future refactoring. See `mkdocs-live-wysiwyg-plugin/docs/design/DESIGN-focus-mode.md` for the full design.
+
+## Architecture
+
+Focus Mode is a fullscreen overlay that **emulates the read-only Material theme page layout**. It uses a themed header bar (matching `md-header`), a three-column grid (matching `md-main__inner md-grid`), and sidebar widths matching `md-sidebar` (12.1rem each). The content area matches `md-content` width. The header dynamically shows the current H1/H2 heading as the user scrolls, using the same dual-topic slide transition as Material's `md-header__topic`. All logic lives in `live-wysiwyg-integration.js`.
+
+## Layout
+
+- **Header**: Styled like `md-header md-header--shadow` — `background-color: var(--md-primary-fg-color)`, `color: var(--md-primary-bg-color)`, `height: 2.4rem`. Contains hamburger toolbar toggle (left), dual-topic title area (center), and X close button (right).
+- **Three-column grid**: `max-width: 61rem` centered (matching `md-grid`). Left sidebar (12.1rem, blank), center content (flex-grow, matching `md-content`), right sidebar (12.1rem, dynamic TOC, sticky).
+- **Scroll container**: `.live-wysiwyg-focus-main` is the single scroll container for the entire grid area. The TOC uses `position:sticky` within it.
+
+## Invariants
+
+1. **Reparenting round-trip**: `enterFocusMode` reparents the toolbar into the drawer and the editor wrapper into the focus content area. `exitFocusMode` reverses both in order (toolbar first, then editor wrapper). Failing to restore either breaks the normal-mode layout.
+
+2. **Toolbar is one DOM element**: The `.md-toolbar` is moved, never duplicated. The collapsible drawer is a focus-mode-only container.
+
+3. **Cleanup completeness**: `exitFocusMode` must remove: the overlay, the injected `<style id="live-wysiwyg-focus-mode-styles">`, the Escape key listener, the MutationObserver, the scroll listener, and restore `document.body.style.overflow`. `destroyWysiwyg` must call `exitFocusMode` if `isFocusModeActive` is true. **Nav edit extension:** If `_navEditMode` is true when `exitFocusMode` or `destroyWysiwyg` runs, nav edit cleanup (`_exitNavEditMode`) must run first. This includes removing the read-only overlay, restoring contenteditable/readonly, removing Save/Discard/Undo/Redo buttons, clearing batch queue and undo/redo stacks, removing keyboard overrides, and removing all nav edit visual states (15 items total — see `focus-nav-menu.mdc`).
+
+4. **TOC uses Material theme classes**: The TOC panel uses `md-nav`, `md-nav--secondary`, `md-nav__list`, `md-nav__item`, `md-nav__link`, `md-nav__title`, `md-ellipsis` classes to inherit theme styling. Do not create custom TOC styling that diverges from Material.
+
+5. **CSS variables with fallbacks**: Every `color`, `background-color`, `border-color`, `font-family`, and `box-shadow` in focus mode CSS must use the `var(--md-*, fallback)` pattern. No hardcoded color values without a CSS variable wrapper.
+
+6. **Active heading**: Only one `md-nav__link--active` at a time. Scroll tracking uses `.live-wysiwyg-focus-main`, not `window`.
+
+7. **Focus mode state**: `isFocusModeActive` boolean is the single source of truth. All focus-mode-guarded code must check this flag.
+
+8. **Mode toggle reflects reality**: The WYSIWYG/Markdown toggle in the drawer always reflects `wysiwygEditor.currentMode`. The toolbar section in the drawer is hidden when in markdown mode.
+
+9. **Save delegates to upstream**: The focus mode save button triggers save by clicking `.live-edit-save-button`, never by directly submitting or modifying the form. **Nav menu override:** Two new save flows exist: (a) "Remain in Focus Mode on Save" triggers upstream save then controlled reload via cookie. (b) Nav edit mode Save triggers the 7-phase batch write sequence via the dedicated WebSocket. Upstream save delegation applies only to normal page content saves without "Remain in Focus Mode on Save" enabled and outside nav edit mode.
+
+10. **Auto-fullscreen is one-way and guarded**: Browser fullscreen triggers auto-entry only when the editor is enabled AND the page is in edit mode. If the editor is disabled, the fullscreen event is ignored. Exiting browser fullscreen does not auto-exit focus mode.
+
+11. **TOC is always visible**: The table of contents panel is a permanent fixture of focus mode. It must never be collapsed, hidden, or toggleable. **Nav edit mode:** TOC remains visible but is non-interactive — covered by the read-only overlay during nav edit mode. TOC links are non-clickable while the focus is on nav editing.
+
+12. **Layout must match read-only page**: The three-column grid must use `max-width:61rem` (matching `md-grid`), sidebar widths of `12.1rem` (matching `md-sidebar`), and the content area must be `flex-grow:1` (matching `md-content`). The header must use `--md-primary-fg-color` and `--md-primary-bg-color`. **Nav menu override:** When Material theme is detected, the left sidebar contains the nav menu (populated from `liveWysiwygNavData`). On non-Material themes, the sidebar remains blank.
+
+13. **Dynamic header headings**: As the user scrolls, the header title area must dynamically show the current H1 and H2 heading text, using the dual-topic slide transition (matching `md-header__topic` behavior).
+
+## Rules for New Features
+
+14. **New buttons must work in focus mode**: Any new toolbar button added to the editor is automatically available in focus mode (the toolbar is reparented, not duplicated). Any new floating UI, dropdown, or dialog must be verified to render correctly inside the focus overlay (z-index, positioning).
+
+15. **New functionality must consider focus mode**: When planning new editor features, ask the user in plan mode whether the feature should behave differently in focus mode, be hidden in focus mode, or have focus-mode-specific considerations.
+
+16. **Cursor and selection preserved across focus mode toggle**: `enterFocusMode` calls `_captureEditorSelection` before reparenting and `_restoreEditorSelection` after the overlay is built. `exitFocusMode` does the same before/after restoring the normal layout. Both WYSIWYG (direct Range + semantic fallback) and Markdown (selectionStart/selectionEnd) are handled. Scroll position is always saved and restored as part of cursor state. **Nav edit mode exception:** Entering nav edit mode captures cursor to `live_wysiwyg_nav_edit_cursor` cookie and clears the active selection. Cursor is restored from cookie on discard. On save (which triggers reload), cursor is restored from cookie after reconnection. Acceptable to not preserve cursor during nav menu edits — the cookie-based capture/restore handles the transitions.

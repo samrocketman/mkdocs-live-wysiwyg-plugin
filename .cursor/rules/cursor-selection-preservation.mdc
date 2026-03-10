@@ -1,0 +1,72 @@
+---
+description: Cursor position and text selection must always be preserved across every mode transition in the editor
+alwaysApply: true
+---
+
+# Cursor & Selection Preservation — Cardinal Rule
+
+Preserving the user's cursor position and text selection across **every** mode transition is one of the most important features of the editor. If a refactor, new feature, or bug fix changes how the editor transitions between states, it **must** verify that cursor/selection is preserved. A transition that loses the cursor is a regression.
+
+## The Four Transition Boundaries
+
+| # | Transition | Mechanism | Key Functions |
+|---|---|---|---|
+| 1 | **Read-only → Edit mode** | Pseudo-markdown heuristics match rendered-page selection to markdown source positions | `storeSelectionIfReadMode`, `readonly_to_edit_mode_text_selection`, `buildPseudoMarkdown`, `buildSearchable`, `findInSearchable` |
+| 2 | **WYSIWYG ↔ Markdown** | Zero-width Unicode markers / HTML cursor spans injected before conversion, resolved after | `injectMarkerAtCaretInEditable`, `findAndStripCursorMarkerPositions`, `capturedMarkdownSelection`, `restoreSelectionFromSemantic` |
+| 3 | **Normal ↔ Focus Mode** | DOM nodes reparented (not recreated); Range node refs saved before, restored after; semantic fallback | `_captureEditorSelection`, `_restoreEditorSelection`, `captureSemanticSelection`, `restoreSelectionFromSemantic` |
+| 4 | **Markdown blur/refocus** | `selectionStart`/`selectionEnd` captured on `blur` event | `capturedMarkdownSelection` (set on textarea blur) |
+
+## WYSIWYG ↔ Markdown Mode Switching: Two Code Locations
+
+The mode-switch logic for cursor preservation spans **two separate locations** in `live-wysiwyg-integration.js`. Both must be kept in sync:
+
+1. **`patchSetValueAndGetValueForFrontmatter` IIFE** — Wraps `MarkdownWYSIWYG.prototype.switchToMode`. This is where cursor markers are injected before conversion, frontmatter is spliced in/out, and cursor position is restored after conversion. Contains the `requestAnimationFrame` callbacks that call `scrollToCenterCursor` for WYSIWYG mode and the `setSelectionRange` + `scrollToCenterCursor` for Markdown mode. This code handles the content-level cursor mapping (markers → offsets or offsets → markers).
+
+2. **`syncModeToggle` in `enterFocusMode`** — The focus mode drawer's WYSIWYG/Markdown toggle buttons call `wysiwygEditor.switchToMode()` (which invokes the patched method above) and then update focus-mode-specific UI state (active button class, `focus-mode-markdown` overlay class, TOC rebuild, markdown input handler). It does **not** duplicate cursor logic — it delegates to the patched `switchToMode`.
+
+**Scrolling in focus mode**: `scrollToCenterCursor` auto-detects focus mode and redirects WYSIWYG scroll operations to `.live-wysiwyg-focus-main` (the focus overlay's scroll container) instead of `editableArea`. This means all existing `scrollToCenterCursor(editableArea, false)` calls work correctly in both normal and focus mode without per-call-site changes. In focus mode the scroll target is positioned at 15% from the top (vs 50% center in normal mode).
+
+## Invariants
+
+1. **Every transition must have a capture step and a restore step.** Capture happens *before* the DOM/state change. Restore happens *after* the change completes and the new layout is settled.
+
+2. **Scroll position is part of cursor state.** Saving selection without saving `scrollTop` of the relevant scroll container causes viewport jumps. Always save and restore scroll position alongside selection.
+
+3. **WYSIWYG selection has a two-tier fallback.** Primary: direct DOM `Range` restore (same node references survive reparenting). Fallback: `restoreSelectionFromSemantic` using block-index + text-offset descriptors.
+
+4. **Markdown selection is offset-based.** `selectionStart` and `selectionEnd` are always sufficient because the textarea content does not change during focus mode transitions.
+
+5. **Codepaths are independent.** Each transition boundary (1–4 above) has its own capture/restore mechanism. Do not merge them. Do not let changes to one pathway break another. See `text-selection-architecture.mdc` for the full architecture.
+
+6. **New transitions require cursor preservation.** If a new feature introduces a state change that reparents, recreates, hides, or refocuses editor DOM elements, it must include its own capture/restore cycle following the same pattern.
+
+7. **Test both collapsed and expanded selections.** A cursor (collapsed selection) and a multi-character/multi-line text selection must both survive each transition.
+
+8. **Focus mode reparenting does not recreate DOM.** The toolbar and editor wrapper are moved between parents, not cloned. This means `Range` node references survive. If any future change clones instead of moving, the direct `Range` restore will break and the semantic fallback becomes critical.
+
+## Verification Checklist
+
+When modifying any code that touches editor state transitions, verify:
+
+- [ ] WYSIWYG cursor survives entering focus mode
+- [ ] WYSIWYG text selection survives entering focus mode
+- [ ] WYSIWYG cursor survives exiting focus mode
+- [ ] WYSIWYG text selection survives exiting focus mode
+- [ ] Markdown cursor survives entering focus mode
+- [ ] Markdown text selection survives entering focus mode
+- [ ] Markdown cursor survives exiting focus mode
+- [ ] Markdown text selection survives exiting focus mode
+- [ ] Scroll position is preserved across focus mode toggle (both modes)
+- [ ] WYSIWYG ↔ Markdown toggle preserves cursor (both directions)
+- [ ] Read-only → Edit mode selection is applied correctly
+- [ ] No viewport jump occurs during any transition
+- [ ] Nav edit mode entry captures cursor to cookie
+- [ ] Nav edit mode discard restores cursor from cookie
+- [ ] Nav edit mode save-and-reload restores cursor from cookie after reconnection
+- [ ] "Remain in Focus Mode on Save" preserves cursor via cookie across page reload
+
+## Boundary 5: Edit Mode ↔ Nav Edit Mode
+
+Cookie-based capture/restore via `live_wysiwyg_nav_edit_cursor`. Captures `{ mode, selectionStart, selectionEnd, scrollTop, semantic }` on entry. Restored on discard or after save-and-reload. Cookie is consumed (deleted) after restoration.
+
+The "Remain in Focus Mode on Save" checkbox uses the same cookie mechanism: cursor is captured before save-and-reload, restored after the page reloads and focus mode is re-established.

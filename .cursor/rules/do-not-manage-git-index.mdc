@@ -1,0 +1,24 @@
+---
+description: Never run git index-changing commands; only inspect git history read-only when necessary
+alwaysApply: true
+---
+
+# Do Not Manage Git Index
+
+The author commits often (sometimes mid-edit by the AI) and will not modify files mid-edit. Git operations are entirely the author's responsibility.
+
+**Never** execute git commands that change the index, working tree, or refs. This includes:
+
+- `git add`
+- `git commit`
+- `git stash`
+- `git reset`
+- `git push`
+- `git fetch`
+- `git pull`
+- `git merge`
+- `git rebase`
+- `git checkout` (when it changes branches or files)
+- Any other command that modifies the index, working tree state, or refs
+
+**Allowed**: Read-only inspection when necessary (e.g. `git log`, `git status`, `git diff`, `git show`, `git branch -a`).

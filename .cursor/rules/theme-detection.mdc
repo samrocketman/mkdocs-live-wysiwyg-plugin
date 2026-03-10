@@ -1,0 +1,62 @@
+---
+description: Theme detection and CSS variable injection rules for consistent theming across Material and non-Material MkDocs themes
+alwaysApply: true
+---
+
+# Theme Detection & CSS Variable Injection
+
+The WYSIWYG plugin owns all editor theming. It detects colors at runtime, sets CSS custom properties on `:root`, and injects a `<style>` block that overrides the upstream `mkdocs-live-edit-plugin`'s hardcoded colors. This makes the editor theme-agnostic without requiring upstream changes.
+
+## Detection Logic (`_detectThemeColors`)
+
+- **Guard flag**: `_themeColorsDetected` ensures `:root` properties are set only once per page load. The function is called from both `replaceTextareaWithWysiwyg` and `enterFocusMode`, but the `:root` write is idempotent.
+- **Material path**: If `--md-primary-fg-color` exists on `:root`, only fill gaps (`--md-footer-bg-color`, `--md-code-font-family`) and return an empty map.
+- **Non-Material path**: Sample `getComputedStyle` from navbar (`document.body.children[0]`), `document.body`, and first `<a>`. Derive all `--md-*` variants via `_darken`, `_lighten`, `_alpha`. Set everything on `document.documentElement.style`.
+- **Return value**: A `colors` map used by focus mode to also set variables as inline styles on the overlay element.
+
+## Rules
+
+1. **All editor theming lives in the WYSIWYG plugin.** Do not add theme-related CSS variables or color detection to the upstream `mkdocs-live-edit-plugin`. The `<style id="live-wysiwyg-theme-overrides">` block overrides all upstream hardcoded colors.
+
+2. **`!important` is required on theme overrides.** The upstream `live-edit.css` has equal or higher specificity. The injected style may load after the upstream CSS. Always use `!important` on every property in `live-wysiwyg-theme-overrides`.
+
+3. **Every `var()` reference must include a fallback.** Use `var(--md-primary-fg-color, #4051b5)` not `var(--md-primary-fg-color)`. Fallbacks ensure the editor is usable even if detection fails entirely.
+
+4. **New CSS variable references must be added to the variable inventory.** If you reference a new `--md-*` variable in any CSS (theme overrides, focus mode CSS, editor.css), ensure `_detectThemeColors` generates it in the non-Material branch. Check the inventory table in `DESIGN-theme-detection.md`.
+
+5. **Navbar sampling assumes `document.body.children[0]` is the navbar.** This works for Material (`<header>`), Cinder (`<nav.navbar>`), and MkDocs default. If a theme places the navbar elsewhere, the primary color detection will degrade to body colors. Do not change this heuristic without testing multiple themes.
+
+6. **Light/dark variant direction depends on `_isLight`.** Background variants use `_darken` for light themes (luminance > 0.4) and `_lighten` for dark themes. Do not hardcode darken-only or lighten-only.
+
+7. **Theme overrides are injected server-side and persist.** `plugin.py` emits `<style id="live-wysiwyg-theme-overrides">` as the first asset in `on_page_content` so the overrides apply from first paint — before any JS runs and before the upstream CSS can paint hardcoded colors. The JS `_ensureThemeOverrides()` (called from `ensureToggleButton`) detects the existing element via `getElementById` and skips creating a duplicate; it only calls `_detectThemeColors()` to set `:root` variables for non-Material themes. The style is **not** removed by `destroyWysiwyg` because the controls bar remains visible after the editor is disabled. The CSS rules in `plugin.py` and `_ensureThemeOverrides()` must be kept identical.
+
+8. **Width overrides and theme overrides are separate.** `live-wysiwyg-width-overrides` handles layout; `live-wysiwyg-theme-overrides` handles colors. Never combine them. They have separate inject/cleanup lifecycles documented in `editor-width-alignment.mdc`.
+
+9. **`:root` variables are not cleaned up.** CSS custom properties set on `document.documentElement.style` persist after `destroyWysiwyg`. This is intentional — they are harmless and would be re-set on next activation.
+
+10. **Focus mode gets a double layer.** `_detectThemeColors` sets variables on `:root` (global) and the returned map is applied as inline styles on `.live-wysiwyg-focus-overlay` (local). Both layers exist to handle potential inheritance edge cases. Do not remove the overlay inline styles.
+
+11. **Save/Cancel buttons keep static colors.** The green (save) and red (cancel) buttons use hardcoded colors (#5cb85c, #d9534f) that are universally recognizable. Do not theme these with CSS variables.
+
+12. **General buttons use semi-transparent white.** `button.live-edit-button` uses `rgba(255,255,255,0.12)` background with `--md-primary-bg-color` text, designed to work on the gradient controls bar. Do not replace these with opaque theme colors.
+
+## Covered Upstream Selectors
+
+The theme overrides block must cover these selectors (matching the upstream `live-edit.css` styles):
+
+- `.live-edit-source` — font-family, color, background, border-color
+- `button.live-edit-button` — background, border, color, transition
+- `button.live-edit-button:hover` — background
+- `button.live-edit-save-button` — background, border-color, color
+- `button.live-edit-save-button:hover` — background
+- `button.live-edit-cancel-button` — background, border-color, color
+- `button.live-edit-cancel-button:hover` — background
+- `div.live-edit-controls` — background (gradient), border-color, color
+- `.live-edit-label` — color
+- `.live-edit-info-modal` — background-color, border-color
+
+If the upstream plugin adds new styled elements, add corresponding overrides here.
+
+## Material Theme Requirement for Nav Menu
+
+Material for MkDocs is a hard requirement for the focus mode nav menu feature. At runtime, the nav menu builder checks `_isMaterialThemeDetected()` which tests for `--md-primary-fg-color` on `:root` or the presence of `.md-header`. If a non-Material theme is detected, the entire nav menu subsystem is disabled: left sidebar remains blank (12.1rem empty space), no arrows, no settings gears, no page management submenu, no batch editing, no migration. Other themes can still be used with the rest of the WYSIWYG editor, but there is no guarantee the editor will work fully with non-Material themes.

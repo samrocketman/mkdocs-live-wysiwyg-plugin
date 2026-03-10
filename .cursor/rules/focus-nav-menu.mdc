@@ -1,0 +1,69 @@
+# Focus Mode Navigation Menu
+
+The WYSIWYG editor's focus mode includes an emulated navigation sidebar with page navigation, mkdocs-nav-weight integration, batch nav menu editing, and a page management submenu.
+
+## Material Theme Requirement
+
+The nav menu requires Material for MkDocs. If `--md-primary-fg-color` is not detected on `:root`, the entire nav menu subsystem is disabled: left sidebar remains blank, no arrows, no settings gears, no page management submenu, no batch editing, no migration.
+
+## Key Subsystems
+
+1. **Nav menu builder** (`_buildNavMenu`): Populates `div.live-wysiwyg-focus-sidebar-left` with a hierarchical nav tree using Material theme CSS classes. Data comes from `liveWysiwygNavData` injected by `plugin.py`.
+2. **Navigation flow**: Save prompt dialog, status overlay, cookie-based seamless transition (`live_wysiwyg_focus_nav` cookie), WebSocket reconnection.
+3. **"Remain in Focus Mode on Save"**: Cookie `live_wysiwyg_focus_remain`, triggers controlled reload instead of in-place save.
+4. **mkdocs-nav-weight integration**: 4-direction arrows (Up/Down/Left/Right + Shift), settings gears (page + folder), weight adjustment, normalization.
+5. **Batch nav menu editing**: Operation queue (`_navBatchQueue`), undo/redo stacks, 7-phase write sequence, Save/Discard buttons with confirmation dialogs.
+6. **Page management submenu**: Rename, New Page, Delete, Normalize All — accessed via "Content" toolbar button. All are batch operations.
+7. **Site-wide link integrity**: Outbound link rewriting (in moved documents), inbound link rewriting (across all documents), double rendering check, caution icon system.
+8. **Nav-to-weight migration**: Converts `mkdocs.yml` `nav` key to `mkdocs-nav-weight` frontmatter.
+
+## Upstream WebSocket Limitations (mkdocs-live-edit-plugin)
+
+The `mkdocs-live-edit-plugin` WebSocket server provides: `new_file`, `delete_file`, `rename_file`, `get_contents`, `set_contents`.
+
+**Limitations:**
+- **No folder rename.** `rename_file` only renames within the same directory.
+- **No folder delete.** `delete_file` uses `Path.unlink()` — cannot delete directories.
+- **No standalone folder creation.** Directories are only created as a side effect of `new_file`.
+- **`rename_file` is unsafe for case changes.** `Path.rename()` is a no-op on case-insensitive filesystems.
+
+**Workarounds:**
+- File renames and moves: Always use delete-then-create (read → `delete_file` → `new_file` + `set_contents`).
+- Folder creation: Use `new_file` to create a file inside the desired folder.
+- Folder deletion: Delete all `.md` files recursively. Empty directory remains on disk but is harmless.
+- Convert folder to page: Move `index.md` to `folder.md` via delete-then-create. Empty folder stays.
+
+**Future expansion:** If the upstream WebSocket gains `rename_folder`, `delete_folder`, or `mkdir` actions, update:
+- `_executeDeletePageOp` (7K-0 "Delete Folder"): Use single `delete_folder` call.
+- "Convert Folder to Page": Use `delete_folder` to clean up empty directory.
+- Case-insensitive rename: Use fixed `rename_file` instead of delete-then-create.
+- Page moves: Use `move_file` instead of delete-then-create.
+
+## State Variables
+
+- `_navEditMode` (boolean): Whether nav edit mode is active.
+- `_navNormalizeAllPending` (boolean): Whether recursive normalize runs on save.
+- `_navFocusTarget` (string | null): `src_path` of post-save landing page.
+- `_navBatchQueue` (array): Ordered list of pending batch operations.
+- `_navUndoStack` / `_navRedoStack` (arrays): For undo/redo in nav edit mode.
+- `_bulkWs` (WebSocket | null): Dedicated connection for bulk file operations.
+- `_inMemoryRenderMode` (boolean): True during double rendering check (7I).
+
+## Invariants
+
+1. **Nav edit mode is mutually exclusive with content editing.** When `_navEditMode` is true, `contenteditable` is `false` and the markdown textarea is `readonly`.
+2. **All content-editing shortcuts are suppressed during nav edit mode.** Enter-bubble, backspace revert, bold, italic, and undo/redo are intercepted and blocked. Cmd+Z/Y are routed to nav undo/redo instead.
+3. **Cmd+S in nav edit mode triggers nav save confirmation**, not page save.
+4. **ESC in nav edit mode triggers nav discard confirmation**, not exit-focus-mode.
+5. **Nav edit cleanup (15 items) must run before focus mode cleanup.** If `exitFocusMode` or `destroyWysiwyg` is called while nav edit is active, nav cleanup runs first.
+6. **Batch operations never write to disk until Save is clicked.** All changes are DOM-only until the 7-phase write sequence executes.
+7. **"Remain in Focus Mode on Save" forces controlled reload.** The user sees smooth transition instead of uncontrolled browser reload.
+8. **File operations use delete-then-create for case-insensitive safety.** Never use `rename_file` for renames.
+9. **All link matching and rewriting is case-sensitive.** For Linux deployment correctness.
+10. **Filename generation always produces lowercase.** Generated filenames are `a-z`, `-` only.
+11. **Link rewriting skips exclusion zones.** Fenced code blocks, inline code, and HTML comments are never modified.
+12. **Double rendering check failure does not abort the batch.** Original content is preserved and the page gets a caution icon.
+
+## Design Document
+
+See `docs/design/DESIGN-focus-nav-menu.md` for the full specification and architecture.

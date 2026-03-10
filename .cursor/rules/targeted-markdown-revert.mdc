@@ -1,0 +1,42 @@
+---
+description: Targeted markdown revert rules ensuring backspace only reverts to markdown text for inline-typed elements, not toolbar-created ones
+alwaysApply: true
+---
+
+# Targeted Markdown Revert
+
+The WYSIWYG editor uses `data-md-literal` to distinguish elements created by inline markdown typing from those created by toolbar buttons. Backspace behavior depends on this attribute.
+
+## Core Invariant
+
+- **`data-md-literal` present** → Backspace reverts to markdown text (the stored literal).
+- **`data-md-literal` absent** → Backspace deletes the element (block: empty `<p><br></p>`; inline: unwrap to plain text).
+
+## Rules
+
+1. **Inline markdown typing handlers must set `data-md-literal`.** Every handler that converts typed markdown syntax into a rendered element (`doHeading`, `doBlockquote`, `doAdmonition`, `doList`, `doInlineWrap`, `handleCloseParen`, `handleHorizontalRule`, triple backtick, single/double backtick) must call `setAttribute('data-md-literal', literal)` on the created element.
+
+2. **Toolbar/button handlers must NOT set `data-md-literal`.** Functions that create elements from toolbar actions (`_insertCodeBlock`, `insertAdmonition`, `_wrapSelectionInBlockquote`, `createListInContainer`, `createLinkDropdown`, `execCommand` calls for bold/italic/heading/HR) must never set `data-md-literal`.
+
+3. **Revert handlers must branch on `data-md-literal` presence.** In `handleRevertOnBackspace` and the code block backspace handler, always use `getAttribute('data-md-literal')` without a fallback default. If the attribute is absent (`null`), take the delete/unwrap path. Never fall back to a hardcoded markdown string like `|| '> '` or `|| '```'`.
+
+4. **`setAdmonitionType` must guard `data-md-literal`.** When updating an admonition's type via the settings dropdown, only update `data-md-literal` if `hasAttribute('data-md-literal')` is true. This prevents toolbar-created admonitions from gaining the attribute.
+
+5. **Collapsible conversion must copy, not create.** `convertToCollapsible` and `convertToNonCollapsible` must only copy `data-md-literal` from the old element if it exists. They must not create the attribute on an element that lacks it.
+
+6. **Delete path for block elements.** When `data-md-literal` is absent: replace the block with `<p><br></p>`, place cursor at start (`range.setStart(newP, 0)`). Do not set `white-space: pre-wrap` on the replacement paragraph.
+
+7. **Unwrap path for inline elements.** When `data-md-literal` is absent: replace the inline element with a text node containing just the plain text content (no markdown markers). Place cursor at end of the text.
+
+8. **HR delete path.** When `data-md-literal` is absent on an `<hr>`: remove only the HR, keep the existing empty paragraph. Do not insert a new paragraph.
+
+## Elements Covered
+
+All elements that can be created via inline markdown typing:
+
+- Block: code blocks (`` ``` ``), headings (`#`–`######`), blockquotes (`>`), admonitions (`!!!`, `???`, `???+`), lists (`-`, `*`, `1.`), checklists (`- [ ]`, `- [x]`), horizontal rules (`---`, `***`, `___`)
+- Inline: code (`` ` ``, ` `` `), bold (`**`), italic (`*`), strikethrough (`~~`), links (`[text](url)`)
+
+## In-Memory Double Rendering (Nav Menu Feature)
+
+During the double rendering check (7I in focus-nav-menu), `data-md-literal` must pass through unchanged. The inline markdown typing handlers that set `data-md-literal` should not fire during in-memory round-trips (since there are no user keystrokes). Any inadvertent addition or removal of `data-md-literal` during the round-trip is a structural difference that triggers the caution/failure path, and the original content is preserved.

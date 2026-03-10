@@ -1,0 +1,35 @@
+---
+description: Editor width alignment rules ensuring editing surfaces match readonly HTML content width via negative margins while preserving button positions
+alwaysApply: true
+---
+
+# Editor Width Alignment
+
+The WYSIWYG plugin injects CSS overrides (via `<style id="live-wysiwyg-width-overrides">`) so that editing surfaces match the readonly HTML content width. The overrides are injected when the editor is enabled and removed when disabled.
+
+## Intent
+
+The content-editable area (`.md-editable-area`) and the markdown textarea (`.live-edit-source`) should be approximately the same width as the readonly HTML rendered by MkDocs. Without overrides, accumulated horizontal padding and margins from nested containers make the editing area significantly narrower.
+
+## Mechanism: Negative Margins
+
+The upstream `live-edit-plugin` sets `padding: 5px 10px` on `div.live-edit-controls`. Rather than modifying this padding (which would shift all child elements), the editing surfaces use **negative horizontal margins** (`margin-left: -10px; margin-right: -10px`) to extend through the padding and reach the controls border edge.
+
+Affected selectors:
+- `.live-edit-controls.live-edit-editing .live-edit-source` — negative horizontal margin + 1px horizontal padding
+- `.live-edit-controls.live-edit-editing .live-edit-wysiwyg-wrapper` — negative horizontal margin
+- `.live-edit-wysiwyg-wrapper` inline style uses `margin: 5px 0` (no horizontal margin)
+
+## Rules
+
+1. **Buttons must not move.** The Save, Cancel, Edit, Rename, Delete, New buttons, and the "Live Edit:" label must remain in their original positions when the editor is enabled or disabled. This is why the controls padding is left unchanged and only the editing surfaces use negative margins.
+
+2. **Negative margins must match controls padding.** The `-10px` values correspond to the `10px` horizontal padding on `div.live-edit-controls` (defined in `mkdocs-live-edit-plugin/live/live-edit.css`). If the upstream plugin changes this padding, the negative margins must be updated to match.
+
+3. **Overrides are dynamic.** The `<style id="live-wysiwyg-width-overrides">` element is injected in `replaceTextareaWithWysiwyg` and removed in the destroy/cleanup path. Do not make the overrides static in `editor.css` — they must only apply when the WYSIWYG editor is active.
+
+4. **`!important` is required.** The overrides use `!important` because the upstream `.live-edit-source` styles have equal specificity and the injected `<style>` may appear before the upstream CSS in document order.
+
+5. **Do not remove controls padding.** Removing or reducing `padding` on `.live-edit-controls` would shift all buttons and labels. Always use the negative-margin approach on editing surfaces instead.
+
+6. **Wrapper inline style.** The `.live-edit-wysiwyg-wrapper` container uses `margin: 5px 0` (set inline in JS). The horizontal `0` is intentional — the CSS override provides the negative margin to extend through the controls padding. Do not revert this to `margin: 5px`.

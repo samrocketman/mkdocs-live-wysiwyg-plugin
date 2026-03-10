@@ -1,0 +1,25 @@
+---
+description: Any shell command should AWLAYS be run with bash -exo pipefail -lc for proper environment and strict execution
+alwaysApply: true
+---
+
+# Shell Command Execution
+
+When running any shell command—including **any `make` command** or **any script in a `scripts/` directory**—always execute it through this wrapper so the environment is set up and execution is strict and traceable:
+
+```bash
+/bin/bash -exo pipefail -lc 'your command here'
+```
+
+- **`-e`** — Exit immediately if a command exits with non-zero status
+- **`-x`** — Print commands and their arguments as they run
+- **`-o pipefail`** — Pipeline exit status is that of the rightmost command that failed (or zero if none failed)
+- **`-l`** — Login shell: sources profile and sets up the environment (dependencies, PATH, etc.)
+- **`-c`** — Run the following string as the command
+
+## Examples
+
+- Make: `/bin/bash -exo pipefail -lc 'make target'`
+- Script: `/bin/bash -exo pipefail -lc 'scripts/some-script.sh'`
+
+Do **not** run `make` or scripts from `scripts/` directly; always use this wrapper.

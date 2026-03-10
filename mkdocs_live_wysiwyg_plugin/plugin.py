@@ -3,14 +3,18 @@
 WYSIWYG editor for mkdocs-live-edit-plugin based on @celsowm/markdown-wysiwyg.
 """
 
+from __future__ import annotations
+
 import base64
 import json
+import re
 from pathlib import Path
 from typing import Literal
 
 from mkdocs.config import config_options
 from mkdocs.config.defaults import MkDocsConfig
 from mkdocs.plugins import BasePlugin
+from mkdocs.structure.nav import Navigation, Section
 
 # Fallback emoji map when pymdownx.gemoji_db is not available (~50 common emoji)
 FALLBACK_EMOJI_MAP = {
@@ -124,6 +128,167 @@ class LiveWysiwygPlugin(BasePlugin):
     ) -> None:
         self.is_serving = command == "serve"
 
+    def _collect_nav_tree(self, items) -> list:
+        """Walk nav items recursively, producing a JSON-serializable tree."""
+        result = []
+        for item in items:
+            if isinstance(item, Section):
+                index_page = None
+                for child in item.children:
+                    if (
+                        hasattr(child, "file")
+                        and child.file.src_path.endswith("index.md")
+                    ):
+                        index_page = child
+                        break
+                node = {
+                    "type": "section",
+                    "title": item.title or "",
+                    "children": self._collect_nav_tree(item.children),
+                    "src_path": (
+                        index_page.file.src_path if index_page else None
+                    ),
+                    "index_meta": (
+                        {
+                            "weight": index_page.meta.get("weight"),
+                            "headless": index_page.meta.get("headless"),
+                            "retitled": index_page.meta.get("retitled"),
+                            "empty": index_page.meta.get("empty"),
+                        }
+                        if index_page
+                        else None
+                    ),
+                }
+                result.append(node)
+            elif hasattr(item, "file"):
+                node = {
+                    "type": "page",
+                    "title": item.title or "",
+                    "url": item.url,
+                    "src_path": item.file.src_path,
+                    "isIndex": item.file.src_path.endswith("index.md"),
+                    "weight": item.meta.get("weight"),
+                    "headless": item.meta.get("headless"),
+                    "retitled": item.meta.get("retitled"),
+                    "empty": item.meta.get("empty"),
+                }
+                result.append(node)
+        return result
+
+    def on_nav(
+        self, nav: Navigation, /, *, config: MkDocsConfig, files, **_
+    ) -> Navigation | None:
+        if not self.is_serving:
+            return nav
+
+        self._link_index = {}
+
+        self._nav_ref = nav
+        self._nav_data = self._collect_nav_tree(nav.items)
+        self._nav_pages_flat = [
+            {
+                "url": p.url,
+                "title": p.title or "",
+                "src_path": p.file.src_path,
+                "isIndex": p.file.src_path.endswith("index.md"),
+                "weight": p.meta.get("weight"),
+                "headless": p.meta.get("headless"),
+                "retitled": p.meta.get("retitled"),
+                "empty": p.meta.get("empty"),
+            }
+            for p in nav.pages
+        ]
+
+        self._all_md_src_paths = [
+            f.src_path for f in files if f.src_path.endswith(".md")
+        ]
+
+        nav_weight_plugin = config["plugins"].get("mkdocs-nav-weight")
+        if nav_weight_plugin:
+            nw_cfg = nav_weight_plugin.config
+            self._nw_config = {
+                "enabled": True,
+                "section_renamed": nw_cfg.get("section_renamed", False),
+                "index_weight": nw_cfg.get("index_weight", -10),
+                "warning": nw_cfg.get("warning", True),
+                "reverse": nw_cfg.get("reverse", False),
+                "headless_included": nw_cfg.get(
+                    "headless_included", False
+                ),
+                "default_page_weight": nw_cfg.get(
+                    "default_page_weight", 0
+                ),
+                "frontmatter_defaults": {
+                    "weight": nw_cfg.get("default_page_weight", 0),
+                    "index_weight": nw_cfg.get("index_weight", -10),
+                    "headless": False,
+                    "retitled": False,
+                    "empty": False,
+                },
+            }
+        else:
+            self._nw_config = {"enabled": False}
+
+        self._has_nav_key = config.get("nav") is not None
+
+        return nav
+
+    _RE_MD_LINK = re.compile(r'(?<!!)\[([^\]]*)\]\(([^)]+)\)')
+    _RE_MD_IMAGE = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+    _RE_IMG_TAG = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']')
+    _RE_REF_DEF = re.compile(r'^\[([^\]]+)\]:\s+(\S+)', re.MULTILINE)
+
+    def on_page_markdown(
+        self, markdown: str, /, *, page, config, files, **_
+    ) -> str | None:
+        if not self.is_serving:
+            return markdown
+
+        src = page.file.src_path
+        refs = []
+
+        for m in self._RE_MD_LINK.finditer(markdown):
+            target = m.group(2).split("#")[0].split("?")[0]
+            if target and not target.startswith(
+                ("http://", "https://", "#", "mailto:")
+            ):
+                refs.append(
+                    {"type": "link", "target": target, "offset": m.start()}
+                )
+
+        for m in self._RE_MD_IMAGE.finditer(markdown):
+            target = m.group(2).split("#")[0].split("?")[0]
+            if target and not target.startswith(("http://", "https://")):
+                refs.append(
+                    {"type": "image", "target": target, "offset": m.start()}
+                )
+
+        for m in self._RE_IMG_TAG.finditer(markdown):
+            target = m.group(1)
+            if target and not target.startswith(
+                ("http://", "https://", "data:")
+            ):
+                refs.append(
+                    {"type": "img_tag", "target": target, "offset": m.start()}
+                )
+
+        for m in self._RE_REF_DEF.finditer(markdown):
+            target = m.group(2).split("#")[0].split("?")[0]
+            if target and not target.startswith(
+                ("http://", "https://", "#", "mailto:")
+            ):
+                refs.append(
+                    {
+                        "type": "ref_def",
+                        "ref_id": m.group(1),
+                        "target": target,
+                        "offset": m.start(),
+                    }
+                )
+
+        self._link_index[src] = refs
+        return markdown
+
     def on_page_content(
         self,
         html: str,
@@ -189,6 +354,30 @@ class LiveWysiwygPlugin(BasePlugin):
             f"const liveWysiwygPageSrcPath = {json.dumps(page.file.src_path)};\n"
         )
 
+        nav_ref = getattr(self, "_nav_ref", None)
+        nav_data = (
+            self._collect_nav_tree(nav_ref.items) if nav_ref else []
+        )
+        nw_config = getattr(self, "_nw_config", {"enabled": False})
+        has_nav_key = getattr(self, "_has_nav_key", False)
+        all_md_src_paths = getattr(self, "_all_md_src_paths", [])
+        link_index = getattr(self, "_link_index", {})
+        preamble_parts.append(
+            f"const liveWysiwygNavData = {json.dumps(nav_data)};\n"
+        )
+        preamble_parts.append(
+            f"const liveWysiwygNavWeightConfig = {json.dumps(nw_config)};\n"
+        )
+        preamble_parts.append(
+            f"const liveWysiwygHasNavKey = {json.dumps(has_nav_key)};\n"
+        )
+        preamble_parts.append(
+            f"const liveWysiwygAllMdSrcPaths = {json.dumps(all_md_src_paths)};\n"
+        )
+        preamble_parts.append(
+            f"const liveWysiwygLinkIndex = {json.dumps(link_index)};\n"
+        )
+
         preamble = "".join(preamble_parts)
 
         admonition_css = parent_dir / "admonition.css"
@@ -244,10 +433,36 @@ class LiveWysiwygPlugin(BasePlugin):
             '}'
         )
 
-        # Inject: theme overrides (first, before upstream CSS can paint),
+        early_inject_script = (
+            '(function(){'
+            'var m=document.cookie.match(/(?:^|;\\s*)live_wysiwyg_focus_nav=1/);'
+            'if(!m)return;'
+            'document.cookie="live_wysiwyg_focus_nav=;path=/;max-age=0;SameSite=Lax";'
+            'var o=document.createElement("div");'
+            'o.className="live-wysiwyg-early-overlay";'
+            'o.style.cssText="position:fixed;inset:0;z-index:99989;'
+            'background:rgba(0,0,0,.18);'
+            'display:flex;align-items:center;justify-content:center;'
+            'flex-direction:column;gap:12px;";'
+            'var s=document.createElement("div");'
+            's.style.cssText="width:24px;height:24px;border:3px solid rgba(255,255,255,.25);'
+            'border-top-color:rgba(255,255,255,.75);border-radius:50%;'
+            'animation:live-wysiwyg-spin 1s linear infinite;";'
+            'var t=document.createElement("div");'
+            't.style.cssText="font-size:.85rem;color:rgba(255,255,255,.8);'
+            'text-shadow:0 1px 3px rgba(0,0,0,.5);";'
+            't.textContent="Establishing connection...";'
+            'o.appendChild(s);o.appendChild(t);'
+            'document.documentElement.appendChild(o);'
+            'window.__liveWysiwygEarlyOverlay=o;'
+            '})();'
+        )
+
+        # Inject: early overlay (before anything else), theme overrides,
         # marked.js, MkDocs admonition extension, editor CSS, admonition CSS,
         # editor JS, integration script (all local)
         assets = (
+            f'<script>{early_inject_script}</script>'
             f'<style id="live-wysiwyg-theme-overrides">{live_edit_theme_css}</style>'
             f'<style>{editor_css_content}</style>'
             f'<style>{admonition_css_content}</style>'

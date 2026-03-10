@@ -1,0 +1,13 @@
+---
+description: Restrict all edits and commands to the mkdocs-live-wysiwyg-plugin directory
+alwaysApply: true
+---
+
+# Scope Edits and Commands to mkdocs-live-wysiwyg-plugin
+
+All edits and commands must be within `mkdocs-live-wysiwyg-plugin` (or its subdirectories). Do not modify files or run commands outside this directory.
+
+- **Edits**: Only edit files under `mkdocs-live-wysiwyg-plugin/`
+- **Commands**: Run commands from or targeting `mkdocs-live-wysiwyg-plugin/` (e.g. `cd mkdocs-live-wysiwyg-plugin && ...`)
+
+If a task requires changes outside this directory, ask the user for explicit permission first.

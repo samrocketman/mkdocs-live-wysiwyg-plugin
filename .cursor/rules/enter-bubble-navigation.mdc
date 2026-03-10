@@ -1,0 +1,87 @@
+---
+description: Enter bubble navigation rules for exiting nested block containers (forward bubble at end, reverse bubble at start) via repeated Enter key presses
+alwaysApply: true
+---
+
+# Enter Bubble Navigation
+
+The WYSIWYG editor has two complementary Enter-key navigation systems for escaping nested block containers. Never break one when changing the other.
+
+## Forward Bubble (Exit at End)
+
+Forward bubble exits containers when the user presses Enter repeatedly at the end of the content.
+
+- **List**: 2× Enter (empty LI triggers exit). Handler: `liveWysiwygListEnterExitAttached`.
+- **Admonition**: 3× Enter (or 1 with credit). Handler: `liveWysiwygAdmonitionEnterExitAttached`.
+- **Blockquote**: 3× Enter (or 1 with credit). Handler: `liveWysiwygBlockquoteEnterExitAttached`.
+- **Code block**: 3× Enter (or 1 with credit). Handler: `liveWysiwygCodeBlockEnterExitAttached`.
+
+### Credit chain
+
+When exiting a nested container, the parent container receives credit (`ea.__liveWysiwygAdmonitionEnterCredit` or `ea.__liveWysiwygBlockquoteEnterCredit`) so only 1 more Enter exits the parent. Exiting list→blockquote credits the blockquote. Exiting blockquote→admonition credits the admonition. Exiting admonition→admonition credits the outer admonition.
+
+### Cleanup on exit
+
+Trailing empty paragraphs are removed from the exited container. The cleanup loop **must**:
+- Skip `nodeType !== 1` (text nodes, whitespace)
+- Skip `.admonition-title` and `.md-admonition-settings-btn` in admonitions
+- Only count actual element children as body content
+
+## Reverse Bubble (Exit at Start)
+
+Reverse bubble exits containers and lists when the user presses Enter at position 0 of the first body element or first list item. Handler: `liveWysiwygReverseBubbleAttached`.
+
+### Cases
+
+- **Case A** (non-empty P/heading at start): insert `<p>` before the container. Credit the parent container.
+- **Case B** (list as first body child, cursor at start of first LI): insert `<p>` inside the container before the list. Credit the container. Next Enter triggers Case C.
+- **Case B (root)** (list at editable-area root, cursor at start of first LI): insert `<p>` before the list at root. No credit (already at root).
+- **Case C** (empty P at top with content after it): remove P from container, insert before container. Credit the parent container. This is the hierarchy escalation mechanism.
+- **Case D** (code block body, cursor at position 0, code has content): insert `<p>` before the code block / `.md-code-block` wrapper.
+
+### Content guard
+
+Reverse bubble **must not fire** on empty containers or empty lists (no text, only `<br>` / zero-width-space). If the container/list body is empty, Enter is left to browser default so the user can start typing. Case C additionally requires that there is other content after the empty P.
+
+### Hierarchy
+
+Each Enter moves the paragraph one level up the nesting hierarchy until it reaches the editable area root. The handler always targets the **innermost** container. Root-level lists also participate — pressing Enter at the start of the first LI inserts a paragraph before the list.
+
+### Reverse bubble credit chain
+
+When a reverse bubble case exits a nested element, it credits the parent container so that subsequent forward-bubble exits only need 1 more Enter:
+- **Case B** (list in container): credits the container (blockquote or admonition) the list is in.
+- **Case C** (P exits container): credits the parent container the P is inserted into.
+- **Case A** (P inserted before container): credits the parent container the P is inserted into.
+
+### `isAtStartOf` tolerances
+
+The `isAtStartOf` function used by Case B determines whether the cursor is at the start of the first list item. It tolerates:
+- Zero-width space markers (`\u200B`, `\u200C`, `\u200D`, `\uFEFF`) at any offset before the cursor in text nodes.
+- `<input>` checkbox elements (checklist items) as invisible siblings.
+- Whitespace-only text nodes immediately following a checkbox `<input>` as invisible.
+
+### Collapsible admonition support
+
+Container detection uses `isAdmonitionElement()` to recognize both `<div class="admonition ...">` and `<details class="note/warning/...">` elements. Helper functions (`getFirstBodyEl`, `containerHasContent`, `hasContentBeyond`) skip `<summary>` elements (collapsible admonition titles) alongside `.admonition-title` and `.md-admonition-settings-btn`.
+
+## Shift Bypass
+
+`e.shiftKey` cancels both forward and reverse bubbling on **body content only**. When Shift is held, Enter behaves normally (browser default).
+
+**Title handlers must NOT check `e.shiftKey`:**
+- Admonition title enter-at-start (inside admonition handler)
+- Code block title enter
+
+Title behavior is independent of shift bypass.
+
+## Rules
+
+1. **Do not merge forward and reverse bubble codepaths.** They are independent systems. Editing one must not break the other.
+2. **Title vs body separation.** Title enter-at-start handlers and body bubble handlers are independent codepaths. The admonition title handler and code block title handler must remain unaffected by body-level changes.
+3. **Handler ordering.** The reverse-bubble handler **must** be registered before all forward-bubble handlers (list, admonition, blockquote, code block exit) so it can `stopImmediatePropagation` cleanly. All handlers use capture phase.
+4. **Content guard is mandatory.** Reverse bubble must never fire on empty containers. Always check for meaningful content before intercepting Enter.
+5. **Credit chain must propagate through nesting.** When exiting a container that is inside a parent container, the parent must receive credit. Verify credit propagation when modifying any exit handler.
+6. **Cleanup must filter correctly.** The `bodyEls` population loop in admonition/blockquote exit handlers must skip `nodeType !== 1`, `.admonition-title`, and `.md-admonition-settings-btn`. Failing to filter causes wrong elements to be counted as "empty" and removed.
+7. **`stopImmediatePropagation` prevents double-fire.** When any bubble handler fires, it must call `stopImmediatePropagation` to prevent other Enter handlers from also firing on the same keystroke.
+8. **Nav edit mode guard.** All enter-bubble handlers (forward bubble for list/admonition/blockquote/code-block, reverse bubble) must check `_navEditMode` at the top and return early if true. This prevents any content-editing keyboard behavior during nav edit mode. Content is `contenteditable=false` and covered by a read-only overlay during nav edit, but explicit suppression prevents edge-case event leaks from handlers registered on `document` in capture phase.

@@ -1,0 +1,249 @@
+# Focus Mode Navigation Menu — Design Document
+
+## Overview
+
+The WYSIWYG editor's focus mode includes an emulated navigation sidebar that provides seamless AJAX page navigation (no page reloads), mkdocs-nav-weight integration with 4-direction arrow controls, settings gears for page and folder metadata, a batch nav menu editing system with undo/redo, a page management submenu, and a nav-to-weight migration flow.
+
+## Architecture
+
+### Server Side (`plugin.py`)
+
+- **`on_nav` hook**: Stores a reference to the `nav` object (`_nav_ref`) and collects the full navigation tree via `_collect_nav_tree`. Stores `_nav_data` for immediate use, but it is re-collected in `on_page_content` to ensure page titles (resolved from markdown content or frontmatter) are accurate.
+- **`on_page_markdown` hook**: Builds site-wide link index (`_link_index`) by parsing markdown links (with `(?<!!)` negative lookbehind), images, HTML `<img>` tags, and reference definitions. Stores type, target (stripped of anchors/queries), and character offset.
+- **`on_page_content` hook**: Re-collects the nav tree from `_nav_ref` so that titles resolved during rendering are included. Injects 6 JS constants into the preamble: `liveWysiwygPageSrcPath`, `liveWysiwygNavData`, `liveWysiwygNavWeightConfig`, `liveWysiwygHasNavKey`, `liveWysiwygAllMdSrcPaths`, `liveWysiwygLinkIndex`. Also injects the early-inject overlay script (dark transparent, `rgba(0,0,0,.18)`) for cookie-based focus mode re-entry on full page loads.
+
+### Client Side (`live-wysiwyg-integration.js`)
+
+Core systems:
+
+1. **YAML Frontmatter Parser** (`_parseFrontmatter`, `_buildFrontmatterString`, `_updateFrontmatter`): Parses frontmatter between `---` delimiters. Handles multiline values, YAML comments, and unrecognized keys. Enforces ordering: `title` first, `weight` last, everything else in between. Default-removal strips fields matching their effective default (with exception for `empty` on `retitled` index.md).
+
+2. **Dedicated WebSocket** (`_getOrCreateBulkWs`, `_wsSend`, `_wsNewFile`, etc.): Lazily created connection to the live-edit server for reading/writing arbitrary files. Used for AJAX navigation content loading, bulk operations, frontmatter updates on other pages, and mkdocs.yml editing. `_wsSend` handles `get_contents`, `set_contents`, and `delete_file` (generic `{action, path, contents}` format). `_wsNewFile` is separate because the upstream server expects `{action: 'new_file', path, title}` — **not** `contents`. Both `_wsSend` and `_wsNewFile` register `close` and `error` event handlers alongside the `message` handler: if the server crashes (e.g., `FileNotFoundError` on `get_contents` for a missing file), the promise rejects immediately instead of waiting for the 15-second timeout. On close/error, `_bulkWs` is set to `null` so the next operation creates a fresh connection.
+
+3. **Livereload Guard & Rebuild Polling** (`_installReloadGuard`, `_removeReloadGuard`, `_waitForRebuild`, `_waitForRebuildAndReconnect`): Suppresses page reloads during batch processing via two layers: (a) a permanent XHR tracking hook (`_trackedLivereloadXHRs`) installed at script load time that records every XHR opened to `/livereload/` — when `_installReloadGuard` activates, all tracked XHRs are aborted, killing in-flight livereload long-polls before they can respond and trigger `location.reload()`, (b) patching `XMLHttpRequest.prototype.open/send` to block new livereload XHRs opened during the guard period. `Location.prototype.reload` is NOT patched (it is non-writable/non-configurable in Chrome). Our own rebuild detection uses `fetch()` — completely independent of XHR — to poll `/livereload/` and detect when MkDocs finishes rebuilding after a write. The guard is idempotent and fully reversible (`_removeReloadGuard` restores to the tracking hook). `_waitForRebuildAndReconnect` chains: close bulk WebSocket → poll for rebuild → reconnect WebSocket.
+
+4. **Link Rewriting** (`_rewriteLinksInContent`, `_rewriteInboundLinks`): Rewrites relative paths in moved documents (outbound) and across all referencing documents (inbound). Respects exclusion zones (code blocks, inline code, HTML comments). Preserves anchors and query strings. Case-sensitive matching.
+
+5. **Nav Menu Builder** (`_buildNavMenu`, `_buildNavItems`): Populates the left sidebar (~253px wide) with a hierarchical nav tree using Material for MkDocs CSS classes and variables. Arrow controls and settings gear are grouped inside a flex wrapper (`.live-wysiwyg-nav-controls-wrapper`) positioned to the left of each item. Section expand/collapse uses CSS grid animation (`grid-template-rows: 0fr/1fr`). Page `<li>` elements get `data-nav-src-path` for lookup. Section `<li>` elements get `data-nav-index-path` set to their index child's `src_path` (used by the caution icon system to display warnings for hidden index.md files on the folder title).
+
+6. **Nav Edit Mode** (`_enterNavEditMode`, `_exitNavEditMode`): Manages the editing state: read-only overlay, keyboard overrides (Cmd+S → save, ESC → discard, Cmd+Z/Y → nav undo/redo), Save/Discard/Undo/Redo buttons.
+
+7. **Batch Operation Queue** (`_navBatchQueue`, `_pushNavOperation`): Records all user actions as ordered operations in memory. At save time, normalization ops (if pending) are dispatched first, followed by user ops phase-sorted, all with a single rebuild wait at the end. During execution, `_batchDeletedPaths` and `_batchRenamedPaths` track filesystem changes so subsequent ops resolve files at their current locations and skip deleted files. See "Batch Nav Menu Editing" below.
+
+8. **AJAX Navigation System** (`_doAjaxNavigate`, `_getCurrentSrcPath`, `_doFocusSave`): Enables seamless page-to-page navigation within focus mode without full page reloads. See "Navigation Flow" below.
+
+9. **Content Dirty Tracking** (`_pristineContent`, `_resetPristineContent`, `_loadContent`): Tracks whether the user has made edits by comparing current content against the baseline. The upstream save/cancel buttons are only shown when actual changes exist, preventing false "unsaved changes" warnings caused by WYSIWYG/markdown rendering differences.
+
+10. **Focused Item Interaction** (`_setNavFocus`, `_clearNavFocus`, `_navFocusedLi`): When the user clicks an arrow to move a nav item, that item becomes "focused" — it gets a visible outline and its controls stay visible. Hovering a different item temporarily shows that item's controls (suppressing the focused item's). Moving the mouse off the nav menu restores the focused item's controls. This allows rapid repeated arrow clicks for positioning.
+
+## Navigation Flow
+
+### AJAX Navigation (Primary — Focus Mode)
+
+When the user clicks a nav link while in focus mode, the editor uses AJAX to swap page content without a page reload. The focus mode overlay stays in place throughout:
+
+1. User clicks a nav link in the focus mode sidebar
+2. If unsaved changes exist, show "Save and leave" / "Discard and leave" / "Cancel" dialog
+3. `_doAjaxNavigate(url, title, srcPath)` is called
+4. A dark transparent transition overlay (`rgba(0,0,0,.12)`) fades in on top of focus mode with a spinner and status text
+5. New page markdown is fetched via WebSocket: `_wsGetContents(srcPath)`
+6. `wysiwygEditor._loadContent(markdown)` replaces the editor content:
+   - Updates the hidden textarea value
+   - Converts markdown to HTML and sets `editableArea.innerHTML` (WYSIWYG mode) or updates `markdownArea.value` (markdown mode)
+   - Resets `_pristineContent` baseline and hides save/cancel buttons
+7. `_ajaxCurrentSrcPath` is set to track the new page's file path
+8. `history.pushState()` updates the browser URL (no page reload)
+9. `document.title`, nav sidebar active state, TOC, and focus header are refreshed
+10. Transition overlay fades out
+
+**Fallback**: If the WebSocket fetch fails, navigation falls back to a full page reload with the cookie-based early overlay.
+
+**Browser back/forward**: A `popstate` event listener detects history navigation and performs AJAX navigation when the state contains `srcPath`.
+
+### Cookie-Based Navigation (Fallback — Full Reload)
+
+Used for batch save navigation, migration flow, and any case where AJAX is not possible:
+
+1. Set `live_wysiwyg_focus_nav=1` cookie (60s TTL)
+2. Navigate via `window.location.href = url` (full page reload)
+3. Early-inject script on the new page detects cookie, creates dark transparent overlay (`rgba(0,0,0,.18)`)
+4. `_autoClickEditButton()` polls for and clicks the live-edit "Edit" button to establish the WebSocket connection
+5. Once the `.live-edit-source` textarea appears, the WYSIWYG editor initializes
+6. `enterFocusMode()` is called, which removes the early overlay with a fade-out transition
+
+### Page Source Path Tracking
+
+After AJAX navigation, `liveWysiwygPageSrcPath` (a `const` from the server-rendered page) becomes stale. All code accesses the current page's source path through `_getCurrentSrcPath()`, which returns `_ajaxCurrentSrcPath` if set, falling back to `liveWysiwygPageSrcPath`.
+
+### Source Path to URL Conversion
+
+`_srcPathToUrl(srcPath)` converts a docs-relative source path to a MkDocs URL (assuming `use_directory_urls: true`, which is the default):
+
+- `index.md` → `/`
+- `folder/index.md` → `/folder/`
+- `page.md` → `/page/`
+- `folder/page.md` → `/folder/page/`
+
+Used by `_navigateAfterBatchComplete` and `_navigateAfterSave` to navigate to the correct URL after batch operations that may have moved/renamed the current page.
+
+### Save Flow After AJAX Navigation
+
+When saving content for an AJAX-loaded page, the upstream live-edit save button cannot be used (it would save to the originally-loaded page's `page_path`, which is trapped in the live-edit IIFE closure). Instead:
+
+1. `_doFocusSave()` is called by the focus mode save button
+2. `wysiwygEditor._finalizeUpdate()` syncs current content to the hidden textarea
+3. If `_ajaxCurrentSrcPath` is set: `_wsSetContents(_ajaxCurrentSrcPath, content)` writes directly via the dedicated WebSocket
+4. `_resetPristineContent(content)` updates the dirty tracking baseline
+5. If `_ajaxCurrentSrcPath` is not set (original page): clicks the upstream save button as before
+
+## "Remain in Focus Mode on Save"
+
+Cookie: `live_wysiwyg_focus_remain`. When enabled, Save triggers:
+
+**After AJAX navigation** (no page reload needed):
+1. `_doFocusSave()` saves via WebSocket
+2. Re-fetch content: `_wsGetContents(currentSrcPath)`
+3. `_loadContent()` refreshes the editor with server-side content
+4. TOC is rebuilt
+5. Transition overlay fades out
+
+**Original page** (full reload path):
+1. Capture cursor to `live_wysiwyg_nav_edit_cursor` cookie
+2. Trigger upstream save
+3. Set `live_wysiwyg_focus_nav` cookie
+4. Navigate to current page (controlled reload)
+5. Restore cursor from cookie after reconnection
+
+## Overlay System
+
+All overlays use dark semi-transparent backgrounds to avoid white flashing in both light and dark themes:
+
+| Overlay | Background | Purpose |
+|---------|-----------|---------|
+| **Transition overlay** (`.live-wysiwyg-nav-transition-overlay`) | `rgba(0,0,0,.12)` | Shown on top of focus mode before AJAX navigation or full page reload. Spinner + status text in white with text-shadow. |
+| **Early overlay** (`.live-wysiwyg-early-overlay`) | `rgba(0,0,0,.18)` | Injected by `plugin.py` on the new page during full page reloads. Hides the readonly page while the editor initializes. Faded out once focus mode is ready. |
+| **Status overlay** (`.live-wysiwyg-nav-status`) | `rgba(0,0,0,.12)` | Positioned absolute within the content area during batch save operations. Shows progress bar and detail text. |
+
+All use white-colored text/spinners with `text-shadow` for visibility against the dark background.
+
+## Batch Nav Menu Editing
+
+Entry points: first arrow click, WYSIWYG menu actions (Rename, New, Delete, Normalize).
+
+### Phase Ordering
+
+Operations are assembled in two groups and executed in this order:
+
+**Group A — Normalization (runs first, if `_navNormalizeAllPending`):**
+
+All normalization ops from `_collectNormalizeOps` are expanded and internally ordered:
+
+0. **Normalize renames** (`rename-page`) — index.md regeneration renames
+1. **Normalize creates** (`create-page`) — new placeholder index.md files
+2. **Normalize weights** (`set-weight`) — evenly distributed weights across all pages
+
+Normalization runs first so that weights are in place and index files exist before the user's manual reorganization operations execute.
+
+**Group B — User operations (from `_navBatchQueue`, phase-sorted):**
+
+3. **index.md regeneration** (`regenerate-index`) — rename-and-regenerate for folders needing placeholders
+4. **Create** (`create-folder`, `create-page`, `convert-folder-to-page`) — new files
+5. **Move/Rename** (`rename-page`, `move-left`, `move-right`, `move-into-section`, `set-headless`) — structural changes with outbound/inbound link rewriting
+6. **Reorder** (`move-up`, `move-down`, `set-weight`) — weight updates
+7. **Delete/Config** (`delete-page`, `update-mkdocs-yml`) — destructive operations last
+
+### Fast Write with Reload Guard
+
+The reload guard (`_installReloadGuard`) fully prevents page reloads during batch processing via two mechanisms: (1) aborting all tracked in-flight livereload XHRs (killing MkDocs' livereload long-poll before it can respond and trigger `location.reload()`), and (2) patching `XMLHttpRequest.prototype.open/send` to suppress new livereload XHRs. A permanent tracking hook installed at script load time records every XHR opened to `/livereload/` so the guard can abort them. `Location.prototype.reload` is NOT patched because it is non-writable/non-configurable in Chrome. This allows all WebSocket writes to be dispatched as fast as possible without needing to wait for intermediate MkDocs rebuilds.
+
+1. **Install reload guard**: `_installReloadGuard()` aborts tracked livereload XHRs and patches `XMLHttpRequest.prototype.open/send` before any writes begin.
+2. **Init batch path tracking**: `_batchDeletedPaths = {}; _batchRenamedPaths = {}` — cleared at the start of every batch and again in `_finishBatchSave`.
+3. **Open WebSocket**: `_getOrCreateBulkWs()` establishes the dedicated bulk WebSocket connection.
+4. **Dispatch all ops**: All phase-ordered operations (normalization first, then user ops) are dispatched sequentially via a chained Promise loop — each op completes its WebSocket I/O (reads, deletes, creates, writes) before the next begins, ensuring file consistency. Progress updates show each step. No rebuild wait or WebSocket reconnection between operations. Each op that deletes a file records it in `_batchDeletedPaths`; each rename/move records the old→new mapping in `_batchRenamedPaths`. Before any `_wsGetContents` call, ops resolve paths through `_batchRenamedPaths` and skip files in `_batchDeletedPaths` — this prevents sending `get_contents` for files that no longer exist on disk, which would crash the server's WebSocket handler with an unhandled `FileNotFoundError`.
+5. **Wait for final rebuild**: After all ops complete, `_closeBulkWs()` closes the connection and `_waitForRebuild()` polls `/livereload/` via `fetch()` (independent of the XHR patch) every 1.5s up to 60 attempts (90s window) to detect when MkDocs finishes rebuilding.
+6. **Finish**: Remove reload guard, clear batch tracking maps, show completion status, and navigate to the focus target page via `_srcPathToUrl(focusTarget)` (converts the src_path to the correct MkDocs URL). The `live_wysiwyg_focus_nav` cookie is set for the early overlay on the destination page.
+
+All batch state (operations, focus target, failures, path tracking) is held **in memory only** — no cookies or `localStorage` are used for batch persistence. If the page somehow reloads mid-batch, the batch is abandoned.
+
+**Error handling**: If an individual op fails, it is logged, the affected page gets a caution icon, and the batch continues with the next op. If the WebSocket connection dies (e.g., server crash from a `FileNotFoundError` on a missing file), `_wsSend`/`_wsNewFile` reject immediately via their `close`/`error` handlers and `_bulkWs` is nulled — the next op's `_getOrCreateBulkWs()` creates a fresh connection. Failures are accumulated and shown in the completion status.
+
+### Undo/Redo
+
+Every operation pushes to undo stack, clears redo stack. Undo pops and computes inverse operation. Redo re-applies. New action after undo clears redo (forks history).
+
+## mkdocs-nav-weight Integration
+
+### Arrow Navigation
+
+- **Up/Down**: Reorder within folder, skip sections (unless Shift held)
+- **Left**: Move to parent folder (no-op and hidden at root)
+- **Right**: Move into adjacent folder below (or above if none below). No folders → new folder prompt
+- **Shift+Up**: Move into deepest child of section above
+- **Shift+Down**: Move into first level of section below
+- **Shift+Right**: Always prompt for new/choose folder
+
+### Nav Item Controls Layout
+
+Each nav item `<li>` has `padding-left:56px; margin-left:-56px` to extend the hover-interactive area leftward. The controls wrapper (`.live-wysiwyg-nav-controls-wrapper`) is a direct child of the `<li>`, positioned `absolute; left:2px`, containing both arrow grid and settings gear in a flex row (`display:flex; gap:3px`):
+
+- **Arrow grid** (`.live-wysiwyg-nav-weight-controls`): 3×3 CSS grid of 12px buttons forming a plus/cross symbol. Up (row 1, col 2), Left (row 2, col 1), Right (row 2, col 3), Down (row 3, col 2).
+- **Settings gear** (`.live-wysiwyg-nav-settings-gear`): 0.7rem font-size gear icon, flex-aligned next to the arrow grid.
+
+**Page items**: Controls wrapper uses `top:50%; transform:translateY(-50%)` to vertically center with the link text. Shown on `<li>` `:hover` via direct-child selector.
+
+**Section (folder) items**: Controls wrapper gets additional class `live-wysiwyg-nav-controls-section` with `top:.625em; transform:translateY(calc(.7em - 50%))` to vertically center with the folder title text. Shown only when hovering the folder title label, via a JS-toggled `live-wysiwyg-nav-title-hover` class on the `<li>` — using the direct-child selector (`>`) to prevent showing controls for nested children.
+
+**Focused item** (`.live-wysiwyg-nav-item--focused`): After clicking an arrow, the item gets a 2px accent-color outline and its controls are force-shown via `display:flex!important`. Focus persists until the user interacts with a different item or exits nav edit mode.
+
+### Settings Gears
+
+Two gears: page (current page frontmatter) and folder (parent folder index.md). Fields: title, weight, headless, retitled (index.md only), empty (index.md only), plus Normalize button.
+
+### Normalization Prerequisite
+
+Before any arrow move is allowed, `_checkNormalizationPrerequisite` verifies that at least one sibling item at the same nav level has a weight assigned. `_findNavSiblings` walks the nav tree to find the item, then collects ALL items (pages and sections) at that level. `_getItemWeight` reads `weight` directly from pages and `index_meta.weight` from sections. If no weights exist, the user is prompted to normalize first.
+
+### Weight Adjustment
+
+The effective default weight is `default_page_weight` from the nav-weight config if it is a positive number, otherwise `1000`. This avoids a JavaScript falsy trap where a configured value of `0` would be treated as unset. Increment = `default_page_weight / (count + 1)`. Moving between neighbors: midpoint. Moving to bottom: last weight + increment. Normalization: evenly distributed `weight_i = increment * (i + 1)` up to `default_page_weight`.
+
+## Content Integrity
+
+- **Exclusion zones**: Code blocks, inline code, HTML comments are never modified
+- **Anchor preservation**: `#section` and `?query` split off, path rewritten, reassembled
+- **Heading-only links**: `#anchor` always skipped (same-page reference)
+- **Filename conflicts**: Case-insensitive check + incrementor. Batch queue tracks claimed paths
+- **Double rendering check**: In-memory WYSIWYG↔Markdown round-trip. Failure → original content preserved, caution icon added
+- **Caution icon system**: Cookie `live_wysiwyg_caution_pages`, yellow triangle, popup with Resolve/Resolve All. `_applyCautionIcons` first queries `[data-nav-src-path]` on page `<li>` elements; for `index.md` paths that have no direct match (hidden when `retitled: true` and `empty: true`), it falls back to `[data-nav-index-path]` on the parent section `<li>`, placing the caution icon on the folder title
+- **Pristine content tracking**: Editor content is compared against `_pristineContent` (set when content is loaded) to accurately detect user-initiated changes vs. rendering differences
+
+## File Naming Convention
+
+Generated from title: keep `a-zA-Z-`, lowercase, spaces→dashes, append `.md`. Conflict: append incrementor starting at 2. Folder names: `a-z0-9-` only.
+
+## Case Sensitivity
+
+- Filesystem operations: delete-then-create for case-insensitive safety
+- Content and links: always case-sensitive (for Linux deployment)
+- Link matching: exact case-sensitive comparison
+- Filename generation: always lowercase
+
+## Theme Dependency
+
+The focus mode nav menu requires Material for MkDocs. It uses Material CSS variables (`--md-default-bg-color`, `--md-accent-fg-color`, `--md-nav-icon--next`, etc.) with hardcoded fallbacks. If a non-Material theme is detected, the left nav sidebar is disabled. Other themes may still be used for the editor itself, but nav menu features are unsupported.
+
+## Upstream WebSocket Limitations
+
+The upstream `mkdocs-live-edit-plugin` WebSocket supports `get_contents`, `set_contents`, `new_file`, `delete_file`, and `rename_file` for individual files. It does **not** support:
+
+- Renaming or deleting folders
+- Batch/transactional operations
+
+Each `set_contents` / `new_file` / `delete_file` triggers a MkDocs rebuild. The WebSocket connection itself (running on a separate port/thread) is **not** invalidated by rebuilds, so multiple writes can be dispatched rapidly. The livereload-triggered page reload is suppressed by the reload guard (`_installReloadGuard`), which aborts all tracked in-flight livereload XHRs and patches `XMLHttpRequest.prototype.open/send` to block new ones. `Location.prototype.reload` is NOT patched (non-writable/non-configurable in Chrome). After all writes complete, a single `_waitForRebuild()` poll detects when MkDocs finishes the final rebuild. Note: the upstream server's `get_contents` handler does not gracefully handle missing files — a `FileNotFoundError` crashes the WebSocket connection handler. The batch path tracking system (`_batchDeletedPaths` / `_batchRenamedPaths`) prevents this by resolving paths to their current locations before any read.
+
+**Workarounds**:
+- **Folder deletion**: Recursively delete all `*.md` files; rely on Git not tracking empty folders.
+- **Convert folder to page**: Move `folder/index.md` to `folder.md`, delete child `.md` files; empty folder remains on disk until next Git commit.
+- **AJAX save routing**: The `page_path` variable in the live-edit IIFE is not accessible from outside. After AJAX navigation, saves are routed through the WYSIWYG plugin's dedicated WebSocket (`_wsSetContents`) instead.
+
+See `.cursor/rules/focus-nav-menu.mdc` for detailed constraints and future expansion notes.

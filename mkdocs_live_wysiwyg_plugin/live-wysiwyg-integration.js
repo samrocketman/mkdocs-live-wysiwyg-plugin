@@ -1847,7 +1847,7 @@
           var item = document.createElement('button');
           item.type = 'button';
           item.className = 'md-admonition-dropdown-item';
-          item.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;padding:6px 12px;border:none;background:transparent;cursor:pointer;font-size:13px;color:var(--md-default-fg-color, #333);text-align:left;transition:background-color 0.15s;';
+          item.style.cssText = 'display:flex;align-items:center;gap:8px;width:calc(100% - 8px);margin:1px 4px;padding:5px 10px;border:1px solid transparent;border-radius:3px;background:transparent;cursor:pointer;font-size:13px;color:var(--md-default-fg-color, #333);text-align:left;transition:background 0.1s,border-color 0.1s;';
           var iconSpan = document.createElement('span');
           iconSpan.style.cssText = 'display:inline-flex;align-items:center;flex-shrink:0;color:' + t.color + ';';
           iconSpan.innerHTML = t.icon;
@@ -1855,8 +1855,8 @@
           label.textContent = t.label;
           item.appendChild(iconSpan);
           item.appendChild(label);
-          item.addEventListener('mouseenter', function () { item.style.backgroundColor = 'var(--md-default-bg-color--lighter, #e9e9e9)'; });
-          item.addEventListener('mouseleave', function () { item.style.backgroundColor = 'transparent'; });
+          item.addEventListener('mouseenter', function () { item.style.background = 'var(--md-accent-fg-color--transparent, #cce5ff)'; item.style.borderColor = 'var(--md-accent-fg-color, #007bff)'; });
+          item.addEventListener('mouseleave', function () { item.style.background = 'transparent'; item.style.borderColor = 'transparent'; });
           item.addEventListener('click', function (e) {
             e.stopPropagation();
             hideDropdown();
@@ -7319,6 +7319,7 @@
   // ======================================================================
   var _navEditMode = false;
   var _navNormalizeAllPending = false;
+  var _navNormalizePending = false;
   var _navFocusTarget = null;
   var _navBatchQueue = [];
   var _batchClaimedPaths = (typeof Set !== 'undefined' ? new Set() : null);
@@ -7326,7 +7327,7 @@
   var _navRedoStack = [];
   var _navKeyboardActiveItem = null;
   var _navFocusedLi = null;
-  var _navHoverSuppressed = false;
+  var _navActiveHoverLi = null;
   var _navArrowKeyHandler = null;
   var _navKeyboardHandler = null;
   var _navCmdSHandler = null;
@@ -7336,9 +7337,11 @@
   var _navReadonlyOverlay = null;
   var _navTocOverlay = null;
   var _navEditActionsEl = null;
+  var _navMaxWeight = 0;
   var _bulkWs = null;
   var _batchDeletedPaths = {};
   var _batchRenamedPaths = {};
+  var _batchLinkIndex = null;
   var _inMemoryRenderMode = false;
   var _isMaterialTheme = false;
 
@@ -7720,10 +7723,74 @@
   var _reloadGuardActive = false;
   var _origXHROpen = null;
   var _origXHRSend = null;
+  var _origLocationReload = null;
+  var _origLocationAssign = null;
+  var _origLocationReplace = null;
+  var _origLocationHrefDesc = null;
+  var _reloadGuardBeforeUnloadHandler = null;
+
+  // ======================================================================
+  // WebSocket redirect suppression
+  // ======================================================================
+  // The upstream mkdocs-live-edit-plugin sends { action:'redirect', new_url }
+  // over its WebSocket when a page was recently created or renamed.  During
+  // batch operations or migration Phase 8, this redirect would navigate away
+  // and kill the in-progress operation.  Because Chrome does not allow
+  // redefining location properties, we intercept the redirect at the
+  // WebSocket message level instead.
+  //
+  // The wrapper patches WebSocket.prototype.onmessage (setter) so that any
+  // handler installed by upstream code is transparently wrapped.  When the
+  // suppress flag is active, messages with action:'redirect' are swallowed
+  // and the URL is stored for later use.
+  // ======================================================================
+  var _wsRedirectSuppressActive = false;
+  var _suppressedRedirectUrl = null;
+
+  (function _installWsRedirectWrapper() {
+    var desc = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage');
+    if (!desc || !desc.set) {
+      return;
+    }
+    Object.defineProperty(WebSocket.prototype, 'onmessage', {
+      get: desc.get,
+      set: function (fn) {
+        if (typeof fn !== 'function') { desc.set.call(this, fn); return; }
+        var ws = this;
+        desc.set.call(this, function (e) {
+          if (_wsRedirectSuppressActive || _reloadGuardActive) {
+            try {
+              var data = JSON.parse(e.data);
+              if (data && data.action === 'redirect' && data.new_url) {
+                _suppressedRedirectUrl = data.new_url;
+                return;
+              }
+            } catch (err) { /* not JSON — pass through */ }
+          }
+          return fn.call(ws, e);
+        });
+      },
+      configurable: true,
+      enumerable: desc.enumerable
+    });
+  })();
+
+  // Set suppress flag early if the migration-normalize cookie is present.
+  // This runs synchronously before the live-edit plugin creates its WebSocket
+  // (which happens on DOMContentLoaded), closing the race window.
+  (function _earlyMigrationSuppressCheck() {
+    if (document.cookie.indexOf('live_wysiwyg_migration_normalize=1') !== -1) {
+      _wsRedirectSuppressActive = true;
+    }
+  })();
 
   function _installReloadGuard() {
-    if (_reloadGuardActive) return;
+    if (_reloadGuardActive) { return; }
     _reloadGuardActive = true;
+
+    _reloadGuardBeforeUnloadHandler = function (e) {
+    };
+    window.addEventListener('beforeunload', _reloadGuardBeforeUnloadHandler);
 
     for (var i = 0; i < _trackedLivereloadXHRs.length; i++) {
       try { _trackedLivereloadXHRs[i].abort(); } catch (e) { /* noop */ }
@@ -7741,17 +7808,84 @@
       return _origXHROpen.apply(this, arguments);
     };
     XMLHttpRequest.prototype.send = function () {
-      if (this._liveWysiwygSuppressed) return;
+      if (this._liveWysiwygSuppressed) { return; }
       return _origXHRSend.apply(this, arguments);
     };
+
+    try {
+      if (!_origLocationReload) _origLocationReload = location.reload.bind(location);
+      Object.defineProperty(location, 'reload', {
+        configurable: true,
+        value: function () {
+          if (_reloadGuardActive) { return; }
+          return _origLocationReload();
+        }
+      });
+    } catch (e) { _origLocationReload = null; }
+    try {
+      if (!_origLocationAssign) _origLocationAssign = location.assign.bind(location);
+      Object.defineProperty(location, 'assign', {
+        configurable: true,
+        value: function (url) {
+          if (_reloadGuardActive) { return; }
+          return _origLocationAssign(url);
+        }
+      });
+    } catch (e) { _origLocationAssign = null; }
+    try {
+      if (!_origLocationReplace) _origLocationReplace = location.replace.bind(location);
+      Object.defineProperty(location, 'replace', {
+        configurable: true,
+        value: function (url) {
+          if (_reloadGuardActive) { return; }
+          return _origLocationReplace(url);
+        }
+      });
+    } catch (e) { _origLocationReplace = null; }
+    try {
+      if (!_origLocationHrefDesc) _origLocationHrefDesc = Object.getOwnPropertyDescriptor(Location.prototype, 'href') ||
+        Object.getOwnPropertyDescriptor(location, 'href');
+      if (_origLocationHrefDesc && _origLocationHrefDesc.set) {
+        Object.defineProperty(location, 'href', {
+          configurable: true,
+          get: _origLocationHrefDesc.get ? _origLocationHrefDesc.get.bind(location) : function () { return location.toString(); },
+          set: function (v) {
+            if (_reloadGuardActive) { return; }
+            _origLocationHrefDesc.set.call(location, v);
+          }
+        });
+      }
+    } catch (e) { _origLocationHrefDesc = null; }
   }
 
   function _removeReloadGuard() {
     _reloadGuardActive = false;
+    if (_reloadGuardBeforeUnloadHandler) {
+      window.removeEventListener('beforeunload', _reloadGuardBeforeUnloadHandler);
+      _reloadGuardBeforeUnloadHandler = null;
+    }
     if (_origXHROpen) XMLHttpRequest.prototype.open = _origXHROpen;
     if (_origXHRSend) XMLHttpRequest.prototype.send = _origXHRSend;
     _origXHROpen = null;
     _origXHRSend = null;
+
+    if (_origLocationReload) {
+      try { Object.defineProperty(location, 'reload', { configurable: true, value: _origLocationReload }); } catch (e) { }
+      _origLocationReload = null;
+    }
+    if (_origLocationAssign) {
+      try { Object.defineProperty(location, 'assign', { configurable: true, value: _origLocationAssign }); } catch (e) { }
+      _origLocationAssign = null;
+    }
+    if (_origLocationReplace) {
+      try { Object.defineProperty(location, 'replace', { configurable: true, value: _origLocationReplace }); } catch (e) { }
+      _origLocationReplace = null;
+    }
+    if (_origLocationHrefDesc) {
+      try { Object.defineProperty(location, 'href', _origLocationHrefDesc); } catch (e) { }
+      _origLocationHrefDesc = null;
+    }
+    _wsRedirectSuppressActive = false;
   }
 
   function _closeBulkWs() {
@@ -7916,23 +8050,46 @@
     var pageDir = _getDir(pageSrcPath);
     var oldRelative = _computeRelativePath(pageDir, oldTargetSrcPath);
     var newRelative = _computeRelativePath(pageDir, newTargetSrcPath);
-    if (oldRelative === newRelative) return pageContent;
+    if (oldRelative === newRelative) {
+      return pageContent;
+    }
     var zones = _findExclusionZones(pageContent);
-    var escapedOld = oldRelative.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    var re = new RegExp('(\\]\\(|src=["\']|^\\[[^\\]]+\\]:\\s+)(' + escapedOld + ')((?:#[^)\\s"\']*|\\?[^)\\s"\']*)*(?=[)\\s"\'])', 'gm');
+
+    var searchPatterns = [oldRelative];
+    var isIndex = oldTargetSrcPath.endsWith('/index.md') || oldTargetSrcPath === 'index.md';
+    if (isIndex) {
+      var oldDir = _getDir(oldTargetSrcPath);
+      var dirRelative = _computeRelativePath(pageDir, oldDir ? oldDir + '/' : '');
+      if (dirRelative !== oldRelative) searchPatterns.push(dirRelative);
+      var dirRelativeNoSlash = dirRelative.replace(/\/$/, '');
+      if (dirRelativeNoSlash && dirRelativeNoSlash !== oldRelative && dirRelativeNoSlash !== dirRelative) {
+        searchPatterns.push(dirRelativeNoSlash);
+      }
+    }
+
     var replacements = [];
-    var m;
-    while ((m = re.exec(pageContent)) !== null) {
-      if (_isInExclusionZone(m.index, zones)) continue;
-      var start = m.index + m[1].length;
-      var end = start + m[2].length;
-      replacements.push({ start: start, end: end, replacement: newRelative });
+    for (var p = 0; p < searchPatterns.length; p++) {
+      var pattern = searchPatterns[p];
+      var escapedOld = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      var reStr = '(\\]\\(|src=["\']|^\\[[^\\]]+\\]:\\s+)(' + escapedOld + ')(?:(?:#[^)\\s"\']*|\\?[^)\\s"\']*)*(?=[)\\s"\']))';
+      var re = new RegExp(reStr, 'gm');
+      var m;
+      while ((m = re.exec(pageContent)) !== null) {
+        if (_isInExclusionZone(m.index, zones)) continue;
+        var start = m.index + m[1].length;
+        var end = start + m[2].length;
+        replacements.push({ start: start, end: end, replacement: newRelative });
+      }
     }
     if (!replacements.length) return pageContent;
     replacements.sort(function (a, b) { return b.start - a.start; });
+    var seen = {};
     var result = pageContent;
     for (var i = 0; i < replacements.length; i++) {
       var r = replacements[i];
+      var key = r.start + ':' + r.end;
+      if (seen[key]) continue;
+      seen[key] = true;
       result = result.substring(0, r.start) + r.replacement + result.substring(r.end);
     }
     return result;
@@ -7961,15 +8118,49 @@
     }
   }
 
+  function _fetchLinkIndex() {
+    if (typeof liveWysiwygLinkCheckPort === 'undefined' || !liveWysiwygLinkCheckPort) {
+      var fallback = typeof liveWysiwygLinkIndex !== 'undefined' ? liveWysiwygLinkIndex : {};
+      return Promise.resolve(fallback);
+    }
+    var host = window.location.hostname || '127.0.0.1';
+    var url = 'http://' + host + ':' + liveWysiwygLinkCheckPort + '/link-index';
+    return fetch(url).then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    }).then(function (idx) {
+      return idx;
+    }).catch(function (err) {
+      return typeof liveWysiwygLinkIndex !== 'undefined' ? liveWysiwygLinkIndex : {};
+    });
+  }
+
   function _updateLinkIndexForMove(oldPath, newPath) {
-    var idx = typeof liveWysiwygLinkIndex !== 'undefined' ? liveWysiwygLinkIndex : null;
+    var idx = _batchLinkIndex;
     if (!idx || typeof idx !== 'object') return;
+
+    var oldRefs = idx[oldPath];
+    var newRefs = [];
+    if (Array.isArray(oldRefs)) {
+      var oldDir = _getDir(oldPath);
+      var newDir = _getDir(newPath);
+      for (var r = 0; r < oldRefs.length; r++) {
+        var oRef = oldRefs[r];
+        if (!oRef || !oRef.target) continue;
+        var absTarget = _resolvePath(oldDir, oRef.target);
+        newRefs.push({ target: _computeRelativePath(newDir, absTarget) });
+      }
+    }
+
     delete idx[oldPath];
-    idx[newPath] = [];
+    idx[newPath] = newRefs;
+
     var oldPathBase = oldPath.replace(/\.md$/, '');
-    var newPathBase = newPath.replace(/\.md$/, '');
+    var isIndex = oldPath.endsWith('/index.md') || oldPath === 'index.md';
+    var oldDirForm = isIndex ? _getDir(oldPath) : null;
     for (var srcPath in idx) {
       if (!Object.prototype.hasOwnProperty.call(idx, srcPath)) continue;
+      if (srcPath === newPath) continue;
       var refs = idx[srcPath];
       if (!Array.isArray(refs)) continue;
       var pageDir = _getDir(srcPath);
@@ -7978,9 +8169,11 @@
         var ref = refs[i];
         var target = ref && ref.target;
         if (!target) continue;
-        var absTarget = _resolvePath(pageDir, target);
-        var absTargetBase = absTarget.replace(/\.md$/, '');
-        if (absTargetBase === oldPathBase || absTarget === oldPath || absTarget === oldPathBase || absTargetBase === oldPath.replace(/\.md$/, '')) {
+        var absRef = _resolvePath(pageDir, target);
+        var absRefBase = absRef.replace(/\.md$/, '');
+        if (absRefBase === oldPathBase || absRef === oldPath || absRef === oldPathBase || absRefBase === oldPath.replace(/\.md$/, '')) {
+          ref.target = newRelative;
+        } else if (oldDirForm && (absRef === oldDirForm || absRef === oldDirForm + '/')) {
           ref.target = newRelative;
         }
       }
@@ -7988,8 +8181,12 @@
   }
 
   function _rewriteInboundLinks(oldPath, newPath, linkIndex) {
-    if (!linkIndex || typeof linkIndex !== 'object') return Promise.resolve();
+    if (!linkIndex || typeof linkIndex !== 'object') {
+      return Promise.resolve();
+    }
     var oldPathBase = oldPath.replace(/\.md$/, '');
+    var isIndex = oldPath.endsWith('/index.md') || oldPath === 'index.md';
+    var oldDirForm = isIndex ? _getDir(oldPath) : null;
     var pagesToUpdate = [];
     for (var srcPath in linkIndex) {
       if (!Object.prototype.hasOwnProperty.call(linkIndex, srcPath)) continue;
@@ -8006,18 +8203,25 @@
           pagesToUpdate.push(srcPath);
           break;
         }
+        if (oldDirForm && (absTarget === oldDirForm || absTarget === oldDirForm + '/')) {
+          pagesToUpdate.push(srcPath);
+          break;
+        }
       }
     }
     var chain = Promise.resolve();
     pagesToUpdate.forEach(function (pagePath) {
       chain = chain.then(function () {
         var actualPagePath = _batchRenamedPaths[pagePath] || pagePath;
-        if (_batchDeletedPaths[actualPagePath]) return;
+        if (_batchDeletedPaths[actualPagePath]) {
+          return;
+        }
         return _wsGetContents(actualPagePath).then(function (content) {
           var updated = _rewriteInboundLinksInPage(content, oldPath, newPath, actualPagePath);
           return _wsSetContents(actualPagePath, updated);
-        }).catch(function () {
-          _addCautionPage(pagePath);
+        }).catch(function (err) {
+          console.error('[rewrite-inbound] FAILED for', pagePath, ':', err);
+          _addCautionPage(pagePath, 'Failed to rewrite inbound links after a referenced document was moved');
         });
       });
     });
@@ -8119,6 +8323,39 @@
     });
   }
 
+  function _showNavDialogHtml(htmlContent, buttons) {
+    return new Promise(function (resolve) {
+      var overlay = document.createElement('div');
+      overlay.className = 'live-wysiwyg-nav-dialog';
+      var content = document.createElement('div');
+      content.className = 'live-wysiwyg-nav-dialog-content';
+      content.style.maxWidth = '520px';
+      var body = document.createElement('div');
+      body.innerHTML = htmlContent;
+      body.style.maxHeight = '50vh';
+      body.style.overflowY = 'auto';
+      body.style.fontSize = '.85rem';
+      body.style.lineHeight = '1.5';
+      body.style.marginBottom = '16px';
+      content.appendChild(body);
+      var actions = document.createElement('div');
+      actions.className = 'live-wysiwyg-nav-dialog-actions';
+      buttons.forEach(function (btn) {
+        var b = document.createElement('button');
+        b.textContent = btn.text;
+        if (btn.className) b.className += ' ' + btn.className;
+        b.addEventListener('click', function () {
+          overlay.parentNode.removeChild(overlay);
+          resolve(btn.value);
+        });
+        actions.appendChild(b);
+      });
+      content.appendChild(actions);
+      overlay.appendChild(content);
+      document.body.appendChild(overlay);
+    });
+  }
+
   // ======================================================================
   // NAV MENU - Build nav tree in sidebar
   // ======================================================================
@@ -8146,8 +8383,8 @@
     navTitle.textContent = siteTitle;
     if (typeof liveWysiwygNavWeightConfig !== 'undefined' && !liveWysiwygNavWeightConfig.enabled) {
       var tipIcon = document.createElement('span');
-      tipIcon.className = 'live-wysiwyg-nav-tip-icon';
-      tipIcon.textContent = '\u24D8';
+      tipIcon.className = 'live-wysiwyg-nav-caution';
+      tipIcon.textContent = '\u26A0';
       tipIcon.title = 'mkdocs-nav-weight not configured';
       tipIcon.addEventListener('click', function (e) {
         e.stopPropagation();
@@ -8175,18 +8412,41 @@
 
     var ul = document.createElement('ul');
     ul.className = 'md-nav__list';
+    _navMaxWeight = 0;
     _buildNavItems(ul, liveWysiwygNavData, 0);
     nav.appendChild(ul);
+
+    var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
+    if (nwCfg.enabled && _navMaxWeight > 0) {
+      var defWeight = nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 1000;
+      if (_navMaxWeight > defWeight) {
+        var suggested = Math.ceil((_navMaxWeight + 500) / 1000) * 1000;
+        var weightWarn = document.createElement('span');
+        weightWarn.className = 'live-wysiwyg-nav-caution';
+        weightWarn.textContent = '\u26A0';
+        weightWarn.title = 'Page weights exceed default';
+        weightWarn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          _showNavPopup(weightWarn,
+            'Page weights in content are higher than default page weight. Increase default_page_weight to ' + suggested + '?',
+            [{
+              text: 'Apply to mkdocs.yml', primary: true, action: function () {
+                _applyDefaultPageWeight(suggested);
+              }
+            }]
+          );
+        });
+        navTitle.appendChild(weightWarn);
+      }
+    }
+
     sidebarEl.appendChild(nav);
 
     _applyCautionIcons(sidebarEl);
 
-    sidebarEl.addEventListener('mouseleave', function () {
-      if (_navFocusedLi) {
-        _navHoverSuppressed = false;
-        _navFocusedLi.classList.add('live-wysiwyg-nav-item--focused');
-      }
-    });
+    requestAnimationFrame(function () { _alignAllNavControls(); });
+
+    sidebarEl.addEventListener('mouseleave', function () {});
   }
 
   function _buildNavItems(parentUl, items, depth) {
@@ -8199,20 +8459,6 @@
       (function (liEl) {
         liEl.addEventListener('mouseenter', function (e) {
           e.stopPropagation();
-          if (_navFocusedLi && _navFocusedLi !== liEl) {
-            _navHoverSuppressed = true;
-            _navFocusedLi.classList.remove('live-wysiwyg-nav-item--focused');
-          }
-        });
-        liEl.addEventListener('mouseleave', function (e) {
-          if (_navFocusedLi && _navHoverSuppressed) {
-            var related = e.relatedTarget;
-            var isChildLi = related && related.closest && related.closest('.md-nav__item');
-            if (!isChildLi || isChildLi === _navFocusedLi) {
-              _navHoverSuppressed = false;
-              _navFocusedLi.classList.add('live-wysiwyg-nav-item--focused');
-            }
-          }
         });
       })(li);
 
@@ -8264,18 +8510,25 @@
           var expanded = childNavEl.getAttribute('aria-expanded') !== 'false';
           childNavEl.setAttribute('aria-expanded', expanded ? 'false' : 'true');
           this.parentNode.classList.toggle('md-nav__item--active', !expanded);
+          var sectionLi = this.parentNode;
+          requestAnimationFrame(function () { _alignNavControls(sectionLi); });
         });
 
-        sectionLabel.addEventListener('mouseenter', function () { this.parentNode.classList.add('live-wysiwyg-nav-title-hover'); });
-        sectionLabel.addEventListener('mouseleave', function () { this.parentNode.classList.remove('live-wysiwyg-nav-title-hover'); });
+        (function (sLi, sLabel) {
+          sLabel.addEventListener('mouseenter', function () { _showNavItemControls(sLi); });
+          sLabel.addEventListener('mouseleave', function () { _scheduleNavItemHide(sLi); });
+        })(li, sectionLabel);
         li.appendChild(sectionLabel);
 
-        if (_navEditMode || (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)) {
+        if ((_navEditMode || (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)) &&
+            !(typeof liveWysiwygHasNavKey !== 'undefined' && liveWysiwygHasNavKey)) {
           var sectionCtrl = _createNavWeightControls(item, 'section', depth);
           var sectionWrapper = document.createElement('div');
           sectionWrapper.className = 'live-wysiwyg-nav-controls-wrapper live-wysiwyg-nav-controls-section';
           sectionWrapper.appendChild(sectionCtrl.arrows);
           sectionWrapper.appendChild(sectionCtrl.gear);
+          sectionWrapper.addEventListener('mouseenter', function () { _showNavItemControls(this.parentNode); });
+          sectionWrapper.addEventListener('mouseleave', function () { _scheduleNavItemHide(this.parentNode); });
           li.insertBefore(sectionWrapper, sectionLabel);
         }
 
@@ -8306,12 +8559,15 @@
       } else if (item.type === 'page') {
         var isActive = item.src_path === currentSrcPath;
 
-        if (_navEditMode || (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)) {
+        if ((_navEditMode || (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)) &&
+            !(typeof liveWysiwygHasNavKey !== 'undefined' && liveWysiwygHasNavKey)) {
           var pageCtrl = _createNavWeightControls(item, 'page', depth);
           var pageWrapper = document.createElement('div');
           pageWrapper.className = 'live-wysiwyg-nav-controls-wrapper';
           pageWrapper.appendChild(pageCtrl.arrows);
           pageWrapper.appendChild(pageCtrl.gear);
+          pageWrapper.addEventListener('mouseenter', function () { _showNavItemControls(this.parentNode); });
+          pageWrapper.addEventListener('mouseleave', function () { _scheduleNavItemHide(this.parentNode); });
           li.appendChild(pageWrapper);
         }
 
@@ -8319,6 +8575,10 @@
         a.className = 'md-nav__link';
         a.href = '/' + (item.url || '');
         a.setAttribute('data-src-path', item.src_path || '');
+        (function (pLi, pLink) {
+          pLink.addEventListener('mouseenter', function () { _showNavItemControls(pLi); });
+          pLink.addEventListener('mouseleave', function () { _scheduleNavItemHide(pLi); });
+        })(li, a);
         if (isActive) {
           a.classList.add('md-nav__link--active');
           li.classList.add('md-nav__item--active');
@@ -8329,50 +8589,36 @@
         a.appendChild(pageEllipsis);
 
         var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
-        var defWeight = item.isIndex
-          ? ((nwCfg.frontmatter_defaults && nwCfg.frontmatter_defaults.index_weight !== undefined)
-            ? nwCfg.frontmatter_defaults.index_weight
-            : (nwCfg.index_weight !== undefined ? nwCfg.index_weight : -10))
-          : (nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 0);
-        if (nwCfg.enabled && item.weight != null && item.weight > defWeight) {
-          var warnIcon = document.createElement('span');
-          warnIcon.className = 'live-wysiwyg-nav-warning';
-          warnIcon.textContent = '\u26A0';
-          warnIcon.title = 'Weight exceeds default';
-          warnIcon.addEventListener('click', function (ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            _showNavPopup(warnIcon,
-              'This page\'s weight (' + item.weight + ') exceeds the default (' + defWeight + '). ' +
-              'Consider increasing default_page_weight in mkdocs.yml to avoid ordering conflicts.',
-              [{ text: 'Apply', primary: true, action: function () { _applyNavWeightPlugin(); } }]
-            );
-          });
-          a.appendChild(warnIcon);
+        if (!_isRootIndex(item)) {
+          if (nwCfg.enabled && item.weight != null) {
+            if (item.weight > _navMaxWeight) _navMaxWeight = item.weight;
+            var isFolderIndex = item.isIndex && (item.retitled || item.empty);
+            var defWeight = (isFolderIndex || !item.isIndex)
+              ? (nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 1000)
+              : ((nwCfg.frontmatter_defaults && nwCfg.frontmatter_defaults.index_weight !== undefined)
+                ? nwCfg.frontmatter_defaults.index_weight
+                : (nwCfg.index_weight !== undefined ? nwCfg.index_weight : -10));
+            if (item.weight > defWeight) {
+              var weightSrcPath = item.src_path || (item.index_meta && item.index_meta.src_path);
+              if (weightSrcPath) {
+                _addCautionPage(weightSrcPath,
+                  'Weight ' + item.weight + ' exceeds default page weight ' + defWeight + '. See caution at top of nav menu to resolve.');
+              }
+            }
+          }
+          if (item.weight == null && typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled) {
+            var infoIcon = document.createElement('span');
+            infoIcon.className = 'live-wysiwyg-nav-info';
+            infoIcon.textContent = '\u2139';
+            infoIcon.title = 'No nav weight defined';
+            infoIcon.addEventListener('click', function (ev) {
+              ev.preventDefault();
+              ev.stopPropagation();
+              _showUnweightedPopup(ev.target);
+            });
+            a.appendChild(infoIcon);
+          }
         }
-        if (item.weight == null && typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled) {
-          var qMark = document.createElement('span');
-          qMark.className = 'live-wysiwyg-nav-question';
-          qMark.textContent = '?';
-          qMark.title = 'No weight defined';
-          qMark.addEventListener('click', function (ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            _showUnweightedPopup(ev.target);
-          });
-          a.appendChild(qMark);
-        }
-        var targetIcon = document.createElement('span');
-        targetIcon.className = 'live-wysiwyg-nav-target-icon';
-        targetIcon.textContent = '\uD83C\uDFAF';
-        targetIcon.title = 'Set as focus target after save';
-        targetIcon.addEventListener('click', function (ev) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          var targetPath = item.src_path;
-          if (targetPath) _setNavFocusTarget(targetPath);
-        });
-        a.appendChild(targetIcon);
         li.appendChild(a);
         li.setAttribute('data-nav-src-path', item.src_path || '');
 
@@ -8429,7 +8675,12 @@
       leftBtn.disabled = rightBtn.disabled = upBtn.disabled = downBtn.disabled = true;
     }
 
-    if (depth === 0) {
+    if (_isRootIndex(item)) {
+      upBtn.style.display = 'none';
+      downBtn.style.display = 'none';
+      leftBtn.style.display = 'none';
+      rightBtn.style.display = 'none';
+    } else if (depth === 0) {
       leftBtn.style.visibility = 'hidden';
     }
 
@@ -8445,8 +8696,20 @@
       _showSettingsGear(item, itemType, gearBtn);
     });
 
+    var targetBtn = document.createElement('button');
+    targetBtn.type = 'button';
+    targetBtn.textContent = '\u25CF';
+    targetBtn.title = 'Set as focus target after save';
+    targetBtn.className = 'live-wysiwyg-nav-target-dot';
+    targetBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var targetPath = item.src_path || (item.index_meta && item.index_meta.src_path);
+      if (targetPath) _setNavFocusTarget(targetPath);
+    });
+
     controls.appendChild(upBtn);
     controls.appendChild(leftBtn);
+    controls.appendChild(targetBtn);
     controls.appendChild(rightBtn);
     controls.appendChild(downBtn);
 
@@ -8457,6 +8720,10 @@
   // ======================================================================
   // NAV MENU - Arrow click handler (enters nav edit mode)
   // ======================================================================
+  function _isRootIndex(item) {
+    return item && item.type === 'page' && item.isIndex && item.src_path === 'index.md';
+  }
+
   function _getItemWeight(navItem) {
     if (navItem.type === 'page') return navItem.weight;
     if (navItem.type === 'section' && navItem.index_meta) return navItem.index_meta.weight;
@@ -8509,13 +8776,53 @@
     return result;
   }
 
+  function _dismissActiveNavHover(exceptLi) {
+    if (_navActiveHoverLi && _navActiveHoverLi !== exceptLi) {
+      clearTimeout(_navActiveHoverLi.__navHoverTimer);
+      _navActiveHoverLi.classList.remove('live-wysiwyg-nav-hover');
+      _navActiveHoverLi = null;
+    }
+  }
+
+  function _showNavItemControls(li) {
+    _dismissActiveNavHover(li);
+    clearTimeout(li.__navHoverTimer);
+    li.classList.add('live-wysiwyg-nav-hover');
+    _navActiveHoverLi = li;
+  }
+
+  function _scheduleNavItemHide(li) {
+    li.__navHoverTimer = setTimeout(function () {
+      li.classList.remove('live-wysiwyg-nav-hover');
+      if (_navActiveHoverLi === li) _navActiveHoverLi = null;
+    }, 500);
+  }
+
+  function _alignNavControls(li) {
+    if (!li) return;
+    var wrapper = li.querySelector(':scope > .live-wysiwyg-nav-controls-wrapper');
+    var label = li.querySelector(':scope > .md-nav__link');
+    if (!wrapper || !label) return;
+    wrapper.style.top = label.offsetTop + 'px';
+    wrapper.style.height = label.offsetHeight + 'px';
+  }
+
+  function _alignAllNavControls() {
+    if (!_navSidebarEl) return;
+    var items = _navSidebarEl.querySelectorAll('.md-nav__item');
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].querySelector(':scope > .live-wysiwyg-nav-controls-wrapper')) {
+        _alignNavControls(items[i]);
+      }
+    }
+  }
+
   function _setNavFocus(li) {
     if (_navFocusedLi && _navFocusedLi !== li) {
       _navFocusedLi.classList.remove('live-wysiwyg-nav-item--focused');
     }
     _navFocusedLi = li;
     if (li) li.classList.add('live-wysiwyg-nav-item--focused');
-    _navHoverSuppressed = false;
   }
 
   function _clearNavFocus() {
@@ -8524,10 +8831,10 @@
     }
     _navFocusedLi = null;
     _navKeyboardActiveItem = null;
-    _navHoverSuppressed = false;
   }
 
   function _handleArrowClick(item, itemType, direction, shiftKey) {
+    if (_isNormalizeLocked()) return;
     if (!_ensureNavEditReady()) return;
     if (!_checkNormalizationPrerequisite(item)) return;
     if (!_navEditMode) _enterNavEditMode();
@@ -8540,7 +8847,7 @@
     var isDown = direction.indexOf('down') !== -1;
 
     var srcPath = item.src_path || '';
-    var li = _navSidebarEl && _navSidebarEl.querySelector('[data-nav-src-path="' + srcPath + '"]');
+    var li = _findNavLiByPath(srcPath);
     if (!li) return;
 
     if (isUp) {
@@ -8554,7 +8861,7 @@
     }
 
     var updatedPath = _resolveNavPathThroughQueue(srcPath);
-    var focusLi = updatedPath ? (_navSidebarEl && _navSidebarEl.querySelector('[data-nav-src-path="' + updatedPath + '"]')) : li;
+    var focusLi = updatedPath ? _findNavLiByPath(updatedPath) : li;
     _setNavFocus(focusLi || li);
   }
 
@@ -8562,9 +8869,6 @@
     var parentUl = li.parentNode;
     if (!parentUl) return;
     var prev = li.previousElementSibling;
-    while (prev && prev.classList.contains('md-nav__item--nested') && !shiftKey) {
-      prev = prev.previousElementSibling;
-    }
     if (shiftKey && prev && prev.classList.contains('md-nav__item--nested')) {
       var deepestUl = prev.querySelector('.md-nav__list');
       var deepNav = prev;
@@ -8578,10 +8882,17 @@
         } else break;
       }
       if (deepestUl) {
+        var sourceSection = _getSectionLiFromUl(parentUl);
         deepestUl.appendChild(li);
         _pushNavOperation({ type: 'move-into-section', item: item, targetSection: prev, position: 'end' });
+        _expandSection(prev);
+        if (deepNav && deepNav !== prev) _expandSection(deepNav);
+        _collapseIfEmpty(sourceSection);
         return;
       }
+    }
+    if (prev && prev.getAttribute('data-nav-src-path') === 'index.md' && !_getSectionLiFromUl(parentUl)) {
+      return;
     }
     if (prev) {
       parentUl.insertBefore(li, prev);
@@ -8639,9 +8950,6 @@
     var parentUl = li.parentNode;
     if (!parentUl) return;
     var next = li.nextElementSibling;
-    while (next && next.classList.contains('md-nav__item--nested') && !shiftKey) {
-      next = next.nextElementSibling;
-    }
     if (shiftKey && next && next.classList.contains('md-nav__item--nested')) {
       var targetUl = next.querySelector('.md-nav__list');
       if (targetUl) {
@@ -8651,12 +8959,40 @@
         if (firstChild) targetUl.insertBefore(li, firstChild);
         else targetUl.appendChild(li);
         _pushNavOperation({ type: 'move-into-section', item: item, targetSection: next, position: 'start', originalSection: origSection, originalIndex: origIdx });
+        _expandSection(next);
+        _collapseIfEmpty(origSection);
         return;
       }
     }
     if (next) {
       parentUl.insertBefore(li, next.nextSibling);
       _pushNavOperation({ type: 'move-down', item: item });
+    }
+  }
+
+  function _expandSection(sectionLi) {
+    if (!sectionLi) return;
+    var childNav = sectionLi.querySelector(':scope > .md-nav');
+    if (!childNav) return;
+    childNav.setAttribute('aria-expanded', 'true');
+    sectionLi.classList.add('md-nav__item--active');
+    requestAnimationFrame(function () { _alignNavControls(sectionLi); });
+  }
+
+  function _collapseIfEmpty(sectionLi) {
+    if (!sectionLi || !sectionLi.classList.contains('md-nav__item--nested')) return;
+    var childNav = sectionLi.querySelector(':scope > .md-nav');
+    if (!childNav) return;
+    var ul = childNav.querySelector('.md-nav__list');
+    if (!ul) return;
+    var visiblePages = 0;
+    for (var i = 0; i < ul.children.length; i++) {
+      var c = ul.children[i];
+      if (c.classList.contains('md-nav__item') && !c.classList.contains('md-nav__item--nested')) visiblePages++;
+    }
+    if (visiblePages === 0 || (visiblePages === 1 && ul.children.length === 1 && ul.children[0].getAttribute('data-nav-src-path') && ul.children[0].getAttribute('data-nav-src-path').endsWith('index.md'))) {
+      childNav.setAttribute('aria-expanded', 'false');
+      sectionLi.classList.remove('md-nav__item--active');
     }
   }
 
@@ -8672,6 +9008,7 @@
     var origIdx = Array.from(parentUl.children).indexOf(li);
     grandparentUl.insertBefore(li, sectionLi.nextSibling);
     _pushNavOperation({ type: 'move-left', item: item, fromSection: sectionLi, originalIndex: origIdx });
+    _collapseIfEmpty(sectionLi);
   }
 
   function _moveNavItemRight(li, item, shiftKey) {
@@ -8704,6 +9041,8 @@
         if (first) targetUl.insertBefore(li, first);
         else targetUl.appendChild(li);
         _pushNavOperation({ type: 'move-right', item: item, targetSection: belowFolder, position: 'start', originalSection: origSection, originalIndex: origIdx });
+        _expandSection(belowFolder);
+        _collapseIfEmpty(_getSectionLiFromUl(parentUl));
       }
     } else if (aboveFolder) {
       var aboveUl = aboveFolder.querySelector('.md-nav__list');
@@ -8713,6 +9052,8 @@
         var origIdx = origSection ? Array.from(parentUl.children).indexOf(li) : -1;
         aboveUl.appendChild(li);
         _pushNavOperation({ type: 'move-right', item: item, targetSection: aboveFolder, position: 'end', originalSection: origSection, originalIndex: origIdx });
+        _expandSection(aboveFolder);
+        _collapseIfEmpty(_getSectionLiFromUl(parentUl));
       }
     } else {
       _promptNewFolder(li, item);
@@ -8941,6 +9282,7 @@
     _navUndoStack = [];
     _navRedoStack = [];
     _navNormalizeAllPending = false;
+    _navNormalizePending = false;
     _navFocusTarget = null;
     _clearNavFocus();
 
@@ -9009,6 +9351,17 @@
 
   // ======================================================================
   // NAV MENU - Undo / Redo
+  function _isNormalizeLocked() {
+    if (_navNormalizeAllPending || _navNormalizePending) {
+      _showNavDialog(
+        'A normalization operation is pending. You must save or discard it before making additional edits.',
+        [{ text: 'OK', value: 'ok' }]
+      );
+      return true;
+    }
+    return false;
+  }
+
   // ======================================================================
   function _pushNavOperation(op) {
     op.inverse = _computeNavOpInverse(op);
@@ -9237,12 +9590,16 @@
 
   function _findNavLi(item) {
     if (!_navSidebarEl || !item || !item.src_path) return null;
-    return _navSidebarEl.querySelector('[data-nav-src-path="' + item.src_path + '"]');
+    return _findNavLiByPath(item.src_path);
   }
 
   function _findNavLiByPath(path) {
     if (!_navSidebarEl || !path) return null;
-    return _navSidebarEl.querySelector('[data-nav-src-path="' + path + '"]');
+    var el = _navSidebarEl.querySelector('[data-nav-src-path="' + path + '"]');
+    if (!el && path.endsWith('/index.md')) {
+      el = _navSidebarEl.querySelector('[data-nav-index-path="' + path + '"]');
+    }
+    return el;
   }
 
   function _updateUndoRedoBtns() {
@@ -9254,18 +9611,101 @@
   }
 
   // ======================================================================
+  // NAV MENU - Move op consolidation
+  // ======================================================================
+  function _consolidateMoveOps(rawOps) {
+    var movedPaths = {};
+    rawOps.forEach(function (op) {
+      if ((op.type === 'move-up' || op.type === 'move-down') && op.item && op.item.src_path) {
+        movedPaths[op.item.src_path] = op.item;
+      }
+    });
+    var pathKeys = Object.keys(movedPaths);
+    if (!pathKeys.length) return [];
+
+    var result = [];
+    var processedUls = [];
+
+    for (var k = 0; k < pathKeys.length; k++) {
+      var srcPath = pathKeys[k];
+      var li = _findNavLiByPath(srcPath);
+      if (!li || !li.parentNode) continue;
+      var ul = li.parentNode;
+      if (processedUls.indexOf(ul) !== -1) continue;
+      processedUls.push(ul);
+
+      var domItems = [];
+      for (var i = 0; i < ul.children.length; i++) {
+        var child = ul.children[i];
+        var childPath = child.getAttribute('data-nav-src-path') ||
+                        child.getAttribute('data-nav-index-path');
+        if (!childPath) continue;
+        var navItem = typeof liveWysiwygNavData !== 'undefined'
+          ? _findNavItemByPath(liveWysiwygNavData, childPath) : null;
+        var origW = navItem ? _getItemWeight(navItem) : null;
+        domItems.push({
+          srcPath: childPath,
+          isMoved: !!movedPaths[childPath],
+          originalWeight: origW != null ? origW : 0,
+          navItem: navItem,
+          item: movedPaths[childPath]
+        });
+      }
+
+      for (var j = 0; j < domItems.length; j++) {
+        if (!domItems[j].isMoved) continue;
+        var prevWeight = null, nextWeight = null;
+        for (var p = j - 1; p >= 0; p--) {
+          if (!domItems[p].isMoved) { prevWeight = domItems[p].originalWeight; break; }
+        }
+        for (var n = j + 1; n < domItems.length; n++) {
+          if (!domItems[n].isMoved) { nextWeight = domItems[n].originalWeight; break; }
+        }
+        var newWeight;
+        if (prevWeight != null && nextWeight != null) {
+          newWeight = Math.round((prevWeight + nextWeight) / 2);
+        } else if (prevWeight != null) {
+          newWeight = prevWeight + 100;
+        } else if (nextWeight != null) {
+          newWeight = nextWeight - 100;
+        } else {
+          newWeight = (j + 1) * 100;
+        }
+        var isIdx = domItems[j].item && domItems[j].item.isIndex;
+        if (!isIdx && domItems[j].navItem) isIdx = domItems[j].navItem.isIndex;
+        if (isIdx && newWeight < 0) newWeight = 0;
+        result.push({ type: 'set-weight', src_path: domItems[j].srcPath, weight: newWeight });
+      }
+    }
+    return result;
+  }
+
+  function _countUniqueAffectedDocs(rawOps) {
+    var paths = {};
+    rawOps.forEach(function (op) {
+      var p = op.src_path || (op.item && op.item.src_path) || op.path || op.oldPath;
+      if (p) paths[p] = true;
+    });
+    return Object.keys(paths).length;
+  }
+
+  // ======================================================================
   // NAV MENU - Save and Discard
   // ======================================================================
   function _countNormalizeTargets() {
-    if (typeof liveWysiwygNavData === 'undefined') return 0;
     var ops = [];
-    _collectNormalizeOps(liveWysiwygNavData, '', ops);
+    if (_navNormalizeAllPending && typeof liveWysiwygNavData !== 'undefined') {
+      _collectNormalizeOps(liveWysiwygNavData, '', ops);
+    } else if (_navNormalizePending) {
+      _collectNormalizeFolderOps(_navNormalizePending, ops);
+    }
     return ops.length;
   }
 
   function _confirmNavSave() {
-    var normalizeCount = _navNormalizeAllPending ? _countNormalizeTargets() : 0;
-    var count = _navBatchQueue.length + normalizeCount;
+    var normalizeCount = (_navNormalizeAllPending || _navNormalizePending) ? _countNormalizeTargets() : 0;
+    var uniqueUserDocs = _countUniqueAffectedDocs(_navBatchQueue);
+    var count = uniqueUserDocs + normalizeCount;
     _showNavDialog(
       'This will modify ' + count + ' document' + (count !== 1 ? 's' : '') + '. Continue?',
       [
@@ -9279,7 +9719,7 @@
 
   function _confirmNavDiscard() {
     var count = _navBatchQueue.length;
-    if (!count && !_navNormalizeAllPending) {
+    if (!count && !_navNormalizeAllPending && !_navNormalizePending) {
       _exitNavEditMode(true);
       return;
     }
@@ -9309,38 +9749,45 @@
 
     var orderedOps = [];
 
-    // Normalization FIRST — ops are generated bottom-up (deepest children first)
-    // and kept in level-grouped order (rename, create, weight per level)
+    // Normalization FIRST
+    var normOps = [];
     if (_navNormalizeAllPending && typeof liveWysiwygNavData !== 'undefined') {
-      var normOps = [];
       _collectNormalizeOps(liveWysiwygNavData, '', normOps);
-      normOps.forEach(function (normOp) {
-        if (normOp.action === 'rename') {
-          orderedOps.push({ type: 'rename-page', oldPath: normOp.oldPath, newPath: normOp.newPath, skipDoubleRenderCheck: true });
-        } else if (normOp.action === 'create') {
-          orderedOps.push({ type: 'create-page', path: normOp.path, content: normOp.content });
-        } else {
-          orderedOps.push({ type: 'set-weight', src_path: normOp.path, weight: normOp.weight });
-        }
-      });
+    } else if (_navNormalizePending) {
+      _collectNormalizeFolderOps(_navNormalizePending, normOps);
     }
+    normOps.forEach(function (normOp) {
+      if (normOp.action === 'rename') {
+        orderedOps.push({ type: 'rename-page', oldPath: normOp.oldPath, newPath: normOp.newPath, skipDoubleRenderCheck: true });
+      } else if (normOp.action === 'create') {
+        orderedOps.push({ type: 'create-page', path: normOp.path, content: normOp.content });
+      } else {
+        orderedOps.push({ type: 'set-weight', src_path: normOp.path, weight: normOp.weight });
+      }
+    });
 
     // Then user operations in phase order
+    var consolidatedMoves = _consolidateMoveOps(rawOps);
     orderedOps = orderedOps.concat(
       phaseFilter(['regenerate-index']),
       phaseFilter(['create-folder', 'create-page', 'convert-folder-to-page']),
-      phaseFilter(['rename-page', 'move-left', 'move-right', 'move-into-section', 'set-headless']),
-      phaseFilter(['move-up', 'move-down', 'set-weight']),
-      phaseFilter(['delete-page', 'update-mkdocs-yml'])
+      phaseFilter(['rename-page', 'move-left', 'move-right', 'move-into-section', 'set-headless', 'set-frontmatter']),
+      consolidatedMoves,
+      phaseFilter(['set-weight']),
+      phaseFilter(['delete-page', 'update-mkdocs-yml']),
+      phaseFilter(['consolidate-hidden'])
     );
 
-    var focusTarget = _navFocusTarget ? (_resolveNavPathThroughQueue(_navFocusTarget) || _navFocusTarget) : null;
+    var focusTarget = _navFocusTarget
+      ? (_resolveNavPathThroughQueue(_navFocusTarget) || _navFocusTarget)
+      : _getCurrentSrcPath() || null;
 
     _exitNavEditMode(false);
     _runBatchOps(contentEl, orderedOps, focusTarget);
   }
 
   function _getOpLabel(op) {
+    if (op.type === 'consolidate-hidden') return 'Consolidating hidden documents';
     return op.path || op.src_path || (op.item && op.item.src_path) ||
       (op.newPath ? op.newPath : null) || (op.item && op.item.title) || op.type;
   }
@@ -9356,7 +9803,9 @@
     if (op.type === 'rename-page') return _executeRenamePageOp(op);
     if (op.type === 'set-weight') return _executeSetWeightOp(op);
     if (op.type === 'set-headless') return _executeSetHeadlessOp(op);
+    if (op.type === 'set-frontmatter') return _executeSetFrontmatterOp(op);
     if (op.type === 'update-mkdocs-yml') return _executeUpdateMkdocsYmlOp(op);
+    if (op.type === 'consolidate-hidden') return _executeConsolidateHiddenOp(op);
     return Promise.resolve();
   }
 
@@ -9379,6 +9828,9 @@
     _showNavStatus(statusContainer, 'Saving nav changes...', { showProgress: true, percent: 0 });
 
     _getOrCreateBulkWs().then(function () {
+      return _fetchLinkIndex();
+    }).then(function (freshIndex) {
+      _batchLinkIndex = freshIndex;
       var chain = Promise.resolve();
       for (var i = 0; i < orderedOps.length; i++) {
         (function (op, idx) {
@@ -9390,9 +9842,9 @@
               completed++;
             }).catch(function (err) {
               var path = _getOpLabel(op);
-              console.error('live-wysiwyg: batch op failed for ' + path, err);
+              console.error('[batch-save] op failed for ' + path, err);
               failures.push({ path: path, msg: err && err.message ? err.message : String(err) });
-              if (path.endsWith && path.endsWith('.md')) _addCautionPage(path);
+              if (path.endsWith && path.endsWith('.md')) _addCautionPage(path, 'Batch operation failed: ' + (err && err.message ? err.message : String(err)));
               completed++;
             });
           });
@@ -9404,24 +9856,27 @@
       _closeBulkWs();
       return _waitForRebuild();
     }).then(function () {
+      _setCookie('live_wysiwyg_focus_nav', '1', 60);
       _removeReloadGuard();
       _finishBatchSave(statusContainer, failures, focusTarget);
     }).catch(function (err) {
-      console.error('live-wysiwyg: batch save failed', err);
+      _setCookie('live_wysiwyg_focus_nav', '1', 60);
       _removeReloadGuard();
       _finishBatchSave(statusContainer, failures, focusTarget);
     });
   }
 
   function _finishBatchSave(container, failures, focusTarget) {
+    _setCookie('live_wysiwyg_focus_nav', '1', 60);
     _removeReloadGuard();
     _batchDeletedPaths = {};
     _batchRenamedPaths = {};
+    _batchLinkIndex = null;
 
     if (failures && failures.length) {
       failures.forEach(function (f) {
         if (f.path !== '_normalize_all' && f.path && typeof f.path === 'string' && f.path.endsWith('.md')) {
-          _addCautionPage(f.path);
+          _addCautionPage(f.path, 'Batch save failed: ' + (f.msg || 'unknown error'));
         }
       });
       var detail = failures.map(function (f) { return f.path + ': ' + (f.msg || 'unknown error'); }).join('; ');
@@ -9448,34 +9903,41 @@
   }
 
   function _navigateAfterBatchComplete(focusTarget) {
-    if (focusTarget) {
-      _showFullScreenTransition('Navigating...');
-      _setCookie('live_wysiwyg_focus_nav', '1', 60);
-      window.location.href = _srcPathToUrl(focusTarget);
-    } else {
-      _showFullScreenTransition('Reloading...');
-      _setCookie('live_wysiwyg_focus_nav', '1', 60);
-      window.location.reload();
-    }
+    var ov = document.querySelector('.live-wysiwyg-nav-transition-overlay') || _showFullScreenTransition(focusTarget ? 'Navigating...' : 'Reloading...');
+    _setCookie('live_wysiwyg_focus_nav', '1', 60);
+    _fadeOverlayToOpaque(ov, function () {
+      if (focusTarget) {
+        var targetUrl = _srcPathToUrl(focusTarget);
+        if (targetUrl === window.location.pathname || targetUrl === window.location.pathname + window.location.search) {
+          window.location.reload();
+        } else {
+          window.location.href = targetUrl;
+        }
+      } else {
+        window.location.reload();
+      }
+    });
   }
 
   function _navigateAfterSave(focusTarget) {
-    _showFullScreenTransition('Navigating...');
+    var ov = _showFullScreenTransition('Navigating...');
     _setCookie('live_wysiwyg_focus_nav', '1', 60);
-    var targetUrl = focusTarget ? _srcPathToUrl(focusTarget) : location.href;
-    window.location.href = targetUrl;
+    _fadeOverlayToOpaque(ov, function () {
+      var targetUrl = focusTarget ? _srcPathToUrl(focusTarget) : location.href;
+      window.location.href = targetUrl;
+    });
   }
 
   function _executeMoveWeightOp(op) {
     if (!op.item || !op.item.src_path) return Promise.resolve();
     var actualPath = _batchRenamedPaths[op.item.src_path] || op.item.src_path;
     if (_batchDeletedPaths[actualPath]) return Promise.resolve();
-    var siblings = _findNavSiblings(op.item);
-    var sorted = siblings.slice().sort(function (a, b) {
-      var wa = a.weight != null ? a.weight : 0;
-      var wb = b.weight != null ? b.weight : 0;
-      return wa - wb;
-    });
+    var siblings = _findNavSiblings(op.item).filter(function (s) { return !_isRootIndex(s); });
+    function w(navItem) {
+      var v = _getItemWeight(navItem);
+      return v != null ? v : 0;
+    }
+    var sorted = siblings.slice().sort(function (a, b) { return w(a) - w(b); });
     var idx = -1;
     for (var i = 0; i < sorted.length; i++) {
       if (sorted[i].src_path === op.item.src_path) { idx = i; break; }
@@ -9483,27 +9945,23 @@
     return _wsGetContents(actualPath).then(function (content) {
       var fm = _parseFrontmatter(content);
       var currentWeight = fm.fields.weight !== undefined ? fm.fields.weight : 0;
-      var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
-      var defWeight = (nwCfg.default_page_weight != null && nwCfg.default_page_weight > 0)
-        ? nwCfg.default_page_weight : 1000;
-      var increment = Math.max(1, Math.round(defWeight / (sorted.length + 1)));
       var newWeight;
       if (op.type === 'move-up') {
         if (idx > 0) {
-          var prevWeight = sorted[idx - 1].weight != null ? sorted[idx - 1].weight : 0;
-          var prevPrevWeight = idx > 1 ? (sorted[idx - 2].weight != null ? sorted[idx - 2].weight : prevWeight - increment) : prevWeight - increment;
+          var prevWeight = w(sorted[idx - 1]);
+          var prevPrevWeight = idx > 1 ? w(sorted[idx - 2]) : prevWeight - 100;
           newWeight = Math.round((prevPrevWeight + prevWeight) / 2);
         } else {
-          newWeight = currentWeight - increment;
+          newWeight = currentWeight - 100;
         }
       } else {
         if (idx >= 0 && idx < sorted.length - 1) {
-          var nextWeight = sorted[idx + 1].weight != null ? sorted[idx + 1].weight : 0;
-          var nextNextWeight = idx < sorted.length - 2 ? (sorted[idx + 2].weight != null ? sorted[idx + 2].weight : nextWeight + increment) : nextWeight + increment;
+          var nextWeight = w(sorted[idx + 1]);
+          var nextNextWeight = idx < sorted.length - 2 ? w(sorted[idx + 2]) : nextWeight + 100;
           newWeight = Math.round((nextWeight + nextNextWeight) / 2);
         } else {
-          var lastWeight = sorted.length ? (sorted[sorted.length - 1].weight != null ? sorted[sorted.length - 1].weight : 0) : 0;
-          newWeight = lastWeight + increment;
+          var lastWeight = sorted.length ? w(sorted[sorted.length - 1]) : 0;
+          newWeight = lastWeight + 100;
         }
       }
       if (newWeight === currentWeight) newWeight = op.type === 'move-up' ? currentWeight - 1 : currentWeight + 1;
@@ -9517,7 +9975,7 @@
     var oldPath = op.item.src_path;
     if (_batchRenamedPaths[oldPath]) oldPath = _batchRenamedPaths[oldPath];
     if (_batchDeletedPaths[oldPath]) {
-      _addCautionPage(op.item.src_path);
+      _addCautionPage(op.item.src_path, 'File was already deleted when move was attempted');
       return Promise.reject(new Error('File already deleted: ' + oldPath));
     }
     var fileName = oldPath.split('/').pop();
@@ -9545,11 +10003,13 @@
       });
     }).then(function () {
       _batchRenamedPaths[op.item.src_path] = newPath;
-      _updateLinkIndexForMove(oldPath, newPath);
-      var linkIndex = typeof liveWysiwygLinkIndex !== 'undefined' ? liveWysiwygLinkIndex : null;
-      return _rewriteInboundLinks(oldPath, newPath, linkIndex);
+      _migrateCautionForRename(oldPath, newPath);
+      var linkIndex = _batchLinkIndex;
+      return _rewriteInboundLinks(oldPath, newPath, linkIndex).then(function () {
+        _updateLinkIndexForMove(oldPath, newPath);
+      });
     }).catch(function (err) {
-      _addCautionPage(op.item.src_path);
+      _addCautionPage(op.item.src_path, 'Move failed: ' + (err && err.message ? err.message : String(err)));
       return Promise.reject(err);
     });
   }
@@ -9558,7 +10018,7 @@
     if (!op.oldPath || !op.newPath || !op.indexPath || !op.indexContent) return Promise.resolve();
     var actualOldPath = _batchRenamedPaths[op.oldPath] || op.oldPath;
     if (_batchDeletedPaths[actualOldPath]) {
-      _addCautionPage(op.oldPath);
+      _addCautionPage(op.oldPath, 'File was already deleted when index regeneration was attempted');
       return Promise.reject(new Error('File already deleted: ' + actualOldPath));
     }
     return _wsGetContents(actualOldPath).then(function (content) {
@@ -9569,8 +10029,13 @@
           return _wsSetContents(op.newPath, rewritten);
         }).then(function () {
           _batchRenamedPaths[op.oldPath] = op.newPath;
-          return _wsNewFile(op.indexPath, '').then(function () {
-            return _wsSetContents(op.indexPath, op.indexContent);
+          _migrateCautionForRename(actualOldPath, op.newPath);
+          var linkIndex = _batchLinkIndex;
+          return _rewriteInboundLinks(actualOldPath, op.newPath, linkIndex).then(function () {
+            _updateLinkIndexForMove(actualOldPath, op.newPath);
+            return _wsNewFile(op.indexPath, '').then(function () {
+              return _wsSetContents(op.indexPath, op.indexContent);
+            });
           });
         });
       });
@@ -9601,7 +10066,7 @@
     if (!op.indexPath || !op.newPath || !op.content) return Promise.resolve();
     var actualIndexPath = _batchRenamedPaths[op.indexPath] || op.indexPath;
     if (_batchDeletedPaths[actualIndexPath]) {
-      _addCautionPage(op.indexPath);
+      _addCautionPage(op.indexPath, 'File was already deleted when folder-to-page conversion was attempted');
       return Promise.reject(new Error('File already deleted: ' + actualIndexPath));
     }
     return _wsNewFile(op.newPath, '').then(function () {
@@ -9611,9 +10076,10 @@
     }).then(function () {
       _batchDeletedPaths[actualIndexPath] = true;
       _batchRenamedPaths[op.indexPath] = op.newPath;
-      _updateLinkIndexForMove(actualIndexPath, op.newPath);
-      var linkIndex = typeof liveWysiwygLinkIndex !== 'undefined' ? liveWysiwygLinkIndex : null;
-      return _rewriteInboundLinks(actualIndexPath, op.newPath, linkIndex);
+      var linkIndex = _batchLinkIndex;
+      return _rewriteInboundLinks(actualIndexPath, op.newPath, linkIndex).then(function () {
+        _updateLinkIndexForMove(actualIndexPath, op.newPath);
+      });
     });
   }
 
@@ -9629,7 +10095,7 @@
     if (!op.oldPath || !op.newPath) return Promise.resolve();
     var actualOldPath = _batchRenamedPaths[op.oldPath] || op.oldPath;
     if (_batchDeletedPaths[actualOldPath]) {
-      _addCautionPage(op.oldPath);
+      _addCautionPage(op.oldPath, 'File was already deleted when rename was attempted');
       return Promise.reject(new Error('File already deleted: ' + actualOldPath));
     }
     return _wsGetContents(actualOldPath).then(function (content) {
@@ -9639,7 +10105,7 @@
       }
       var rewritten = _rewriteLinksInContent(updated, actualOldPath, op.newPath);
       if (!op.skipDoubleRenderCheck && !_doubleRenderCheck(rewritten, actualOldPath)) {
-        _addCautionPage(op.oldPath);
+        _addCautionPage(op.oldPath, 'Rename skipped because content could not safely round-trip through the editor');
         return Promise.reject(new Error('Double render check failed for ' + actualOldPath));
       }
       return _wsDeleteFile(actualOldPath).then(function () {
@@ -9650,9 +10116,11 @@
       });
     }).then(function () {
       _batchRenamedPaths[op.oldPath] = op.newPath;
-      _updateLinkIndexForMove(actualOldPath, op.newPath);
-      var linkIndex = typeof liveWysiwygLinkIndex !== 'undefined' ? liveWysiwygLinkIndex : null;
-      return _rewriteInboundLinks(actualOldPath, op.newPath, linkIndex);
+      _migrateCautionForRename(actualOldPath, op.newPath);
+      var linkIndex = _batchLinkIndex;
+      return _rewriteInboundLinks(actualOldPath, op.newPath, linkIndex).then(function () {
+        _updateLinkIndexForMove(actualOldPath, op.newPath);
+      });
     });
   }
 
@@ -9662,7 +10130,9 @@
     if (_batchDeletedPaths[actualPath]) return Promise.resolve();
     return _wsGetContents(actualPath).then(function (content) {
       var isIndex = actualPath.endsWith('index.md');
-      var updated = _updateFrontmatter(content, { weight: op.weight }, isIndex);
+      var weight = op.weight;
+      if (isIndex && weight != null && weight < 0) weight = 0;
+      var updated = _updateFrontmatter(content, { weight: weight }, isIndex);
       return _wsSetContents(actualPath, updated);
     });
   }
@@ -9678,10 +10148,125 @@
     });
   }
 
+  function _executeSetFrontmatterOp(op) {
+    if (!op.src_path || !op.updates) return Promise.resolve();
+    var actualPath = _batchRenamedPaths[op.src_path] || op.src_path;
+    if (_batchDeletedPaths[actualPath]) return Promise.resolve();
+    return _wsGetContents(actualPath).then(function (content) {
+      var isIndex = op.isIndex || actualPath.endsWith('index.md');
+      var updated = _updateFrontmatter(content, op.updates, isIndex);
+      return _wsSetContents(actualPath, updated);
+    });
+  }
+
+  function _executeConsolidateHiddenOp(op) {
+    if (!op.hiddenPaths || !op.hiddenPaths.length) return Promise.resolve();
+    var allPaths = typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [];
+    var chain = Promise.resolve();
+    var scannedLinks = {};
+    var freshLinkIndex = {};
+
+    chain = chain.then(function () {
+      var scanChain = Promise.resolve();
+      allPaths.forEach(function (srcPath) {
+        scanChain = scanChain.then(function () {
+          var actualPath = _batchRenamedPaths[srcPath] || srcPath;
+          if (_batchDeletedPaths[actualPath]) return;
+          return _wsGetContents(actualPath).then(function (content) {
+            var srcDir = _getDir(actualPath);
+            var zones = _findExclusionZones(content);
+            var linkRe = /\[(?:[^\]]*)\]\(([^)]+)\)|<img[^>]+src=["']([^"']+)["']|\[(?:[^\]]*)\]:\s+(\S+)/g;
+            var m;
+            linkRe.lastIndex = 0;
+            while ((m = linkRe.exec(content)) !== null) {
+              var inZone = false;
+              for (var z = 0; z < zones.length; z++) {
+                if (m.index >= zones[z][0] && m.index < zones[z][1]) { inZone = true; break; }
+              }
+              if (inZone) continue;
+              var raw = m[1] || m[2] || m[3];
+              if (!raw || /^(https?:|mailto:|data:|#)/.test(raw)) continue;
+              var hashIdx = raw.indexOf('#');
+              var pathPart = hashIdx >= 0 ? raw.substring(0, hashIdx) : raw;
+              var qIdx = pathPart.indexOf('?');
+              if (qIdx >= 0) pathPart = pathPart.substring(0, qIdx);
+              if (!pathPart) continue;
+              var resolved = _resolvePath(srcDir, pathPart);
+              if (!scannedLinks[resolved]) scannedLinks[resolved] = [];
+              scannedLinks[resolved].push({ from: actualPath, fromDir: srcDir });
+              if (!freshLinkIndex[actualPath]) freshLinkIndex[actualPath] = [];
+              freshLinkIndex[actualPath].push({ target: pathPart });
+            }
+          }).catch(function () {});
+        });
+      });
+      return scanChain;
+    });
+
+    chain = chain.then(function () {
+      var moveChain = Promise.resolve();
+      op.hiddenPaths.forEach(function (hiddenPath) {
+        moveChain = moveChain.then(function () {
+          var actualHidden = _batchRenamedPaths[hiddenPath] || hiddenPath;
+          if (_batchDeletedPaths[actualHidden]) return;
+          var refs = scannedLinks[actualHidden];
+          if (!refs || !refs.length) return;
+          var targetDir = null;
+          var unanimous = true;
+          for (var r = 0; r < refs.length; r++) {
+            var refDir = refs[r].fromDir;
+            if (targetDir === null) {
+              targetDir = refDir;
+            } else if (targetDir !== refDir) {
+              unanimous = false;
+              break;
+            }
+          }
+          if (!unanimous || targetDir === null) return;
+          var hiddenDir = _getDir(actualHidden);
+          if (hiddenDir === targetDir) return;
+          var filename = actualHidden.split('/').pop();
+          var newPath = targetDir ? targetDir + '/' + filename : filename;
+          if (newPath === actualHidden) return;
+          return _wsGetContents(actualHidden).then(function (content) {
+            var rewritten = _rewriteLinksInContent(content, actualHidden, newPath);
+            return _wsDeleteFile(actualHidden).then(function () {
+              _batchDeletedPaths[actualHidden] = true;
+              return _wsNewFile(newPath, '').then(function () {
+                return _wsSetContents(newPath, rewritten);
+              });
+            });
+          }).then(function () {
+            _batchRenamedPaths[hiddenPath] = newPath;
+            _migrateCautionForRename(actualHidden, newPath);
+            return _rewriteInboundLinks(actualHidden, newPath, freshLinkIndex);
+          }).catch(function (err) {
+            console.error('live-wysiwyg: consolidate-hidden failed for ' + actualHidden, err);
+          });
+        });
+      });
+      return moveChain;
+    });
+
+    return chain;
+  }
+
+  function _updateMkdocsYml(transformFn) {
+    var mainPath = '../mkdocs.yml';
+    return _wsGetContents(mainPath).then(function (yml) {
+      return _wsSetContents(mainPath, transformFn(yml));
+    }).then(function () {
+      if (typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml) {
+        return _wsGetContents(liveWysiwygOriginalMkdocsYml).then(function (origYml) {
+          return _wsSetContents(liveWysiwygOriginalMkdocsYml, transformFn(origYml));
+        });
+      }
+    });
+  }
+
   function _executeUpdateMkdocsYmlOp(op) {
-    if (!op.content) return Promise.resolve();
-    var path = op.path || '../mkdocs.yml';
-    return _wsSetContents(path, op.content);
+    if (!op.transform) return Promise.resolve();
+    return _updateMkdocsYml(op.transform);
   }
 
   function _queueRenameAndRegenerateIndex(srcPath, title, folderDir, ops) {
@@ -9733,7 +10318,7 @@
           var path = normOp.path || normOp.oldPath || 'unknown';
           console.error('live-wysiwyg: normalize failed for ' + path, err);
           failures.push(path);
-          if (path.endsWith && path.endsWith('.md')) _addCautionPage(path);
+          if (path.endsWith && path.endsWith('.md')) _addCautionPage(path, 'Normalization failed: ' + (err && err.message ? err.message : String(err)));
         });
       });
     });
@@ -9747,13 +10332,14 @@
   function _collectNormalizeOps(items, parentDir, allOps) {
     var pageItems = [];
     var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
-    var defaultWeight = (nwCfg.default_page_weight != null && nwCfg.default_page_weight > 0)
-      ? nwCfg.default_page_weight : 1000;
 
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
       if (item.type === 'page') {
-        if (item.isIndex && (item.retitled || item.empty)) continue;
+        if (_isRootIndex(item)) {
+          if (item.weight != null) allOps.push({ path: 'index.md', weight: null });
+          continue;
+        }
         pageItems.push(item);
       } else if (item.type === 'section' && item.children) {
         var indexChild = item.children.find(function (c) { return c.type === 'page' && c.isIndex; });
@@ -9761,17 +10347,64 @@
         _collectNormalizeOps(item.children, folderDir, allOps);
         if (indexChild && !(indexChild.retitled && indexChild.empty)) {
           var renamedPath = _queueRenameAndRegenerateIndex(indexChild.src_path, indexChild.title || item.title, folderDir, allOps);
+          var newIndexPath = folderDir ? folderDir + '/index.md' : 'index.md';
+          pageItems.push({ src_path: newIndexPath, _isIndex: true });
           pageItems.push({ src_path: renamedPath });
         } else if (indexChild) {
-          pageItems.push(indexChild);
+          pageItems.push({ src_path: indexChild.src_path, _isIndex: true });
         }
       }
     }
 
     if (pageItems.length) {
-      var increment = defaultWeight / (pageItems.length + 1);
       for (var j = 0; j < pageItems.length; j++) {
-        allOps.push({ path: pageItems[j].src_path, weight: Math.round(increment * (j + 1)) });
+        var w = (j + 1) * 100;
+        if (pageItems[j]._isIndex && w < 0) w = 0;
+        allOps.push({ path: pageItems[j].src_path, weight: w });
+      }
+    }
+  }
+
+  function _findParentSectionItem(pageItem) {
+    if (!pageItem || !pageItem.src_path || typeof liveWysiwygNavData === 'undefined') return null;
+    function search(items) {
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (it.type === 'section' && it.children) {
+          for (var j = 0; j < it.children.length; j++) {
+            if (it.children[j].type === 'page' && it.children[j].src_path === pageItem.src_path) return it;
+          }
+          var deep = search(it.children);
+          if (deep) return deep;
+        }
+      }
+      return null;
+    }
+    return search(liveWysiwygNavData);
+  }
+
+  function _collectNormalizeFolderOps(sectionItem, allOps) {
+    if (!sectionItem || !sectionItem.children) return;
+    var pageItems = [];
+
+    for (var i = 0; i < sectionItem.children.length; i++) {
+      var child = sectionItem.children[i];
+      if (child.type === 'page') {
+        if (_isRootIndex(child)) continue;
+        pageItems.push({ src_path: child.src_path, _isIndex: child.isIndex });
+      } else if (child.type === 'section') {
+        var indexChild = (child.children || []).find(function (c) { return c.type === 'page' && c.isIndex; });
+        if (indexChild && indexChild.retitled && indexChild.empty) {
+          pageItems.push({ src_path: indexChild.src_path, _isIndex: true });
+        }
+      }
+    }
+
+    if (pageItems.length) {
+      for (var j = 0; j < pageItems.length; j++) {
+        var w = (j + 1) * 100;
+        if (pageItems[j]._isIndex && w < 0) w = 0;
+        allOps.push({ path: pageItems[j].src_path, weight: w });
       }
     }
   }
@@ -9811,10 +10444,12 @@
       _doAjaxNavigate(url, title, srcPath);
       return;
     }
-    _showFullScreenTransition('Navigating to ' + (title || 'page') + '...');
+    var navOv = _showFullScreenTransition('Navigating to ' + (title || 'page') + '...');
     _setCookie('live_wysiwyg_focus_nav', '1', 60);
     if (title) _setCookie('live_wysiwyg_focus_nav_target', title, 60);
-    window.location.href = url;
+    _fadeOverlayToOpaque(navOv, function () {
+      window.location.href = url;
+    });
   }
 
   function _doAjaxNavigate(url, title, srcPath) {
@@ -9831,19 +10466,15 @@
       _refreshNavActiveState(srcPath);
       _refreshFocusToc();
       _refreshFocusTitle(title);
-
-      if (transitionOverlay && transitionOverlay.parentNode) {
-        transitionOverlay.style.transition = 'opacity .2s ease';
-        transitionOverlay.style.opacity = '0';
-        setTimeout(function () {
-          if (transitionOverlay.parentNode) transitionOverlay.parentNode.removeChild(transitionOverlay);
-        }, 220);
-      }
+      _checkDeadLinksForCurrentPage();
+      _fadeOutOverlay(transitionOverlay);
     }).catch(function (err) {
       console.error('live-wysiwyg: AJAX navigate failed', err);
       _setCookie('live_wysiwyg_focus_nav', '1', 60);
       if (title) _setCookie('live_wysiwyg_focus_nav_target', title, 60);
-      window.location.href = url;
+      _fadeOverlayToOpaque(transitionOverlay, function () {
+        window.location.href = url;
+      });
     });
   }
 
@@ -9863,6 +10494,21 @@
     return overlay;
   }
 
+  function _fadeOverlayToOpaque(overlay, callback) {
+    if (!overlay || !overlay.parentNode) { if (callback) callback(); return; }
+    overlay.style.background = 'rgba(0,0,0,1)';
+    setTimeout(function () { if (callback) callback(); }, 350);
+  }
+
+  function _fadeOutOverlay(overlay) {
+    if (!overlay || !overlay.parentNode) return;
+    overlay.style.transition = 'opacity .6s ease-out';
+    overlay.style.opacity = '0';
+    setTimeout(function () {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    }, 650);
+  }
+
   function _refreshNavActiveState(srcPath) {
     if (!_focusOverlay) return;
     var links = _focusOverlay.querySelectorAll('.live-wysiwyg-focus-sidebar-left .md-nav__link');
@@ -9874,7 +10520,32 @@
         if (li) li.classList.add('md-nav__item--active');
       } else {
         a.classList.remove('md-nav__link--active');
-        if (li) li.classList.remove('md-nav__item--active');
+        if (li) {
+          if (li.classList.contains('md-nav__item--nested')) {
+            var childNav = li.querySelector(':scope > .md-nav');
+            var isExpanded = childNav && childNav.getAttribute('aria-expanded') === 'true';
+            if (!isExpanded) li.classList.remove('md-nav__item--active');
+          } else {
+            li.classList.remove('md-nav__item--active');
+          }
+        }
+      }
+    }
+    _syncAllSectionActiveState();
+  }
+
+  function _syncAllSectionActiveState() {
+    if (!_navSidebarEl) return;
+    var sections = _navSidebarEl.querySelectorAll('.md-nav__item--nested');
+    for (var i = 0; i < sections.length; i++) {
+      var sLi = sections[i];
+      var childNav = sLi.querySelector(':scope > .md-nav');
+      if (!childNav) continue;
+      var expanded = childNav.getAttribute('aria-expanded') === 'true';
+      if (expanded) {
+        sLi.classList.add('md-nav__item--active');
+      } else {
+        sLi.classList.remove('md-nav__item--active');
       }
     }
   }
@@ -9907,16 +10578,17 @@
       var ta = document.querySelector('.live-edit-source');
       content = ta ? ta.value : '';
     }
-    if (_ajaxCurrentSrcPath) {
-      return _wsSetContents(_ajaxCurrentSrcPath, content).then(function () {
+    if (path) {
+      _installReloadGuard();
+      return _wsSetContents(path, content).then(function () {
         if (wysiwygEditor && wysiwygEditor._resetPristineContent) {
           wysiwygEditor._resetPristineContent(content);
         }
+        _removeReloadGuard();
+      }).catch(function (err) {
+        _removeReloadGuard();
+        throw err;
       });
-    }
-    var upstreamSave = document.querySelector('.live-edit-save-button');
-    if (upstreamSave && !upstreamSave.classList.contains('live-edit-hidden')) {
-      upstreamSave.click();
     }
     return Promise.resolve();
   }
@@ -9977,13 +10649,19 @@
   function _showSettingsGear(item, itemType, gearBtn) {
     var existing = document.querySelector('.live-wysiwyg-nav-settings-dropdown');
     if (existing) { existing.parentNode.removeChild(existing); return; }
-    if (itemType === 'page' && !_checkNormalizationPrerequisite(item)) return;
+    var isCurrentPage = item.src_path === _getCurrentSrcPath();
+    if (!isCurrentPage && _isNormalizeLocked()) return;
+    if (itemType === 'page' && !isCurrentPage && !_isRootIndex(item) && !_checkNormalizationPrerequisite(item)) return;
 
     var dropdown = document.createElement('div');
     dropdown.className = 'live-wysiwyg-nav-settings-dropdown';
     var nwConfig = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : { enabled: false };
 
-    if (itemType === 'section' && (item.src_path == null || item.src_path === '')) {
+    var sectionHasIndex = itemType === 'section' && (
+      (item.src_path != null && item.src_path !== '') ||
+      (item.children && item.children.some(function (c) { return c.type === 'page' && c.isIndex; }))
+    );
+    if (itemType === 'section' && !sectionHasIndex) {
       var createIndexBtn = document.createElement('button');
       createIndexBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
       createIndexBtn.textContent = 'Create folder index';
@@ -10038,6 +10716,13 @@
     addField('Title', 'text', 'title', item.title || '');
     addField('Weight', 'number', 'weight', item.weight !== undefined && item.weight !== null ? item.weight :
       (nwConfig.frontmatter_defaults ? nwConfig.frontmatter_defaults.weight : 0));
+    if (_isRootIndex(item)) {
+      var weightInput = dropdown.querySelector('[data-fm-key="weight"]');
+      if (weightInput) {
+        weightInput.disabled = true;
+        weightInput.title = 'Root index page does not use a weight';
+      }
+    }
     if (nwConfig.enabled) {
       addField('Headless', 'checkbox', 'headless', item.headless || false);
       if (item.isIndex) {
@@ -10050,21 +10735,46 @@
     hr.className = 'live-wysiwyg-nav-settings-divider';
     dropdown.appendChild(hr);
 
-    if (nwConfig.enabled) {
+    if (nwConfig.enabled && itemType === 'section') {
       var normalizeBtn = document.createElement('button');
       normalizeBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
       normalizeBtn.textContent = 'Normalize Nav Weights';
       normalizeBtn.addEventListener('click', function () {
         dropdown.parentNode.removeChild(dropdown);
+        if (_isNormalizeLocked()) return;
         if (!_navEditMode) {
           if (!_ensureNavEditReady()) return;
           _enterNavEditMode();
         }
-        _navNormalizeAllPending = true;
+        _navNormalizePending = item;
         if (_navEditActionsEl && !_navEditActionsEl.querySelector('.live-wysiwyg-nav-normalize-badge')) {
           var badge = document.createElement('span');
           badge.className = 'live-wysiwyg-nav-normalize-badge';
-          badge.textContent = 'Normalize on save';
+          badge.textContent = 'Normalize folder on save';
+          _navEditActionsEl.appendChild(badge);
+        }
+      });
+      dropdown.appendChild(normalizeBtn);
+    } else if (nwConfig.enabled && itemType === 'page') {
+      var normalizeBtn = document.createElement('button');
+      normalizeBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
+      normalizeBtn.textContent = 'Normalize Nav Weights';
+      normalizeBtn.addEventListener('click', function () {
+        dropdown.parentNode.removeChild(dropdown);
+        if (_isNormalizeLocked()) return;
+        if (!_navEditMode) {
+          if (!_ensureNavEditReady()) return;
+          _enterNavEditMode();
+        }
+        var parentSection = _findParentSectionItem(item);
+        if (!parentSection && typeof liveWysiwygNavData !== 'undefined') {
+          parentSection = { type: 'section', children: liveWysiwygNavData };
+        }
+        _navNormalizePending = parentSection;
+        if (_navEditActionsEl && !_navEditActionsEl.querySelector('.live-wysiwyg-nav-normalize-badge')) {
+          var badge = document.createElement('span');
+          badge.className = 'live-wysiwyg-nav-normalize-badge';
+          badge.textContent = 'Normalize folder on save';
           _navEditActionsEl.appendChild(badge);
         }
       });
@@ -10101,6 +10811,7 @@
   function _applySettingsGearChanges(dropdown, item, itemType) {
     var updates = {};
     dropdown.querySelectorAll('[data-fm-key]').forEach(function (input) {
+      if (input.disabled) return;
       var key = input.getAttribute('data-fm-key');
       var val;
       if (input.type === 'checkbox') val = input.checked;
@@ -10111,18 +10822,45 @@
 
     if (item.src_path === _getCurrentSrcPath()) {
       if (wysiwygEditor) {
-        var md = wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea
-          ? wysiwygEditor.markdownArea.value
-          : (wysiwygEditor.getValue ? wysiwygEditor.getValue() : '');
+        var md = wysiwygEditor.getValue ? wysiwygEditor.getValue() : '';
         var updated = _updateFrontmatter(md, updates, item.isIndex);
-        if (wysiwygEditor._finalizeUpdate) wysiwygEditor._finalizeUpdate(updated);
-        else if (wysiwygEditor.markdownArea) wysiwygEditor.markdownArea.value = updated;
+        var parsed = parseFrontmatter(updated);
+        wysiwygEditor._liveWysiwygFrontmatter = parsed.frontmatter;
+        if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
+          wysiwygEditor.markdownArea.value = updated;
+        }
+        if (wysiwygEditor._finalizeUpdate) wysiwygEditor._finalizeUpdate();
+      }
+      if (updates.title) {
+        _updateNavItemTitle(_getCurrentSrcPath(), updates.title);
+        _refreshFocusTitle(updates.title);
       }
     } else {
-      _wsGetContents(item.src_path).then(function (content) {
-        var updated = _updateFrontmatter(content, updates, item.isIndex);
-        return _wsSetContents(item.src_path, updated);
-      });
+      if (!_navEditMode) {
+        if (!_ensureNavEditReady()) return;
+        _enterNavEditMode();
+      }
+      _pushNavOperation({ type: 'set-frontmatter', src_path: item.src_path, updates: updates, isIndex: item.isIndex });
+      if (updates.title) _updateNavItemTitle(item.src_path, updates.title);
+    }
+  }
+
+  function _updateNavItemTitle(srcPath, newTitle) {
+    if (!_navSidebarEl || !srcPath || !newTitle) return;
+    var link = _navSidebarEl.querySelector('[data-nav-src-path="' + srcPath + '"] .md-nav__link');
+    if (!link) {
+      var sectionLi = _navSidebarEl.querySelector('[data-nav-index-path="' + srcPath + '"]');
+      if (sectionLi) link = sectionLi.querySelector(':scope > .md-nav__link, :scope > label');
+    }
+    if (link) {
+      var textNode = null;
+      for (var i = 0; i < link.childNodes.length; i++) {
+        if (link.childNodes[i].nodeType === 3 && link.childNodes[i].textContent.trim()) {
+          textNode = link.childNodes[i]; break;
+        }
+      }
+      if (textNode) textNode.textContent = newTitle;
+      else link.textContent = newTitle;
     }
   }
 
@@ -10231,7 +10969,7 @@
     _showNavPopup(anchorEl,
       'The mkdocs-nav-weight plugin is not configured. Add it to your mkdocs.yml to enable nav weight management.',
       [{
-        text: 'Apply', primary: true, action: function () {
+        text: 'Add to mkdocs.yml', primary: true, action: function () {
           _applyNavWeightPlugin();
         }
       }]
@@ -10252,29 +10990,45 @@
 
     var popup = document.createElement('div');
     popup.className = 'live-wysiwyg-nav-popup';
-    popup.textContent = message;
 
-    buttons.forEach(function (btn) {
-      var b = document.createElement('button');
-      b.textContent = btn.text;
-      if (btn.primary) b.className = 'live-wysiwyg-nav-popup-primary';
-      var saveActive = document.querySelector('.live-edit-save-button:not(.live-edit-hidden)');
-      if (saveActive && btn.primary) {
-        b.disabled = true;
-        b.title = 'Save the current page before applying';
-      }
-      b.addEventListener('click', function () {
-        popup.parentNode.removeChild(popup);
-        if (btn.action) btn.action();
+    var msgEl = document.createElement('div');
+    msgEl.textContent = message;
+    popup.appendChild(msgEl);
+
+    if (buttons.length) {
+      var btnRow = document.createElement('div');
+      btnRow.style.marginTop = '8px';
+      buttons.forEach(function (btn) {
+        var b = document.createElement('button');
+        b.textContent = btn.text;
+        if (btn.primary) b.className = 'live-wysiwyg-nav-popup-primary';
+        var saveActive = document.querySelector('.live-edit-save-button:not(.live-edit-hidden)');
+        if (saveActive && btn.primary) {
+          b.disabled = true;
+          b.title = 'Save the current page before applying';
+        }
+        b.addEventListener('click', function () {
+          popup.parentNode.removeChild(popup);
+          if (btn.action) btn.action();
+        });
+        btnRow.appendChild(b);
       });
-      popup.appendChild(b);
-    });
+      popup.appendChild(btnRow);
+    }
 
     var rect = anchorEl.getBoundingClientRect();
     popup.style.position = 'fixed';
-    popup.style.top = (rect.bottom + 4) + 'px';
     popup.style.left = Math.max(4, rect.left - 50) + 'px';
+    popup.style.visibility = 'hidden';
     document.body.appendChild(popup);
+    var popupH = popup.offsetHeight;
+    var spaceBelow = window.innerHeight - rect.bottom - 8;
+    if (spaceBelow < popupH && rect.top > popupH + 8) {
+      popup.style.top = (rect.top - popupH - 4) + 'px';
+    } else {
+      popup.style.top = (rect.bottom + 4) + 'px';
+    }
+    popup.style.visibility = '';
 
     var closeHandler = function (e) {
       if (!popup.contains(e.target) && e.target !== anchorEl) {
@@ -10340,70 +11094,203 @@
     return result.items;
   }
 
-  function _buildMigrationOps(navStructure, allMdSrcPaths) {
-    var ops = [];
-    var inNavPaths = {};
-    var nwConfig = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
-    var indexWeight = (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined)
-      ? nwConfig.frontmatter_defaults.index_weight
-      : (nwConfig.index_weight !== undefined ? nwConfig.index_weight : -10);
+  // ------------------------------------------------------------------
+  // NAV MIGRATION - Helpers
+  // ------------------------------------------------------------------
 
+  function _migrationCheckDuplicates(navStructure) {
+    var seen = {};
+    var dupes = [];
     function walk(items) {
       for (var i = 0; i < items.length; i++) {
         var item = items[i];
-        if (item.type === 'page') {
-          var path = item.path;
-          if (path && path.endsWith('.md')) {
-            inNavPaths[path] = true;
-            ops.push({ type: 'set-weight', src_path: path, weight: (i + 1) * 10 });
-          }
+        if (item.type === 'page' && item.path) {
+          if (seen[item.path]) { if (dupes.indexOf(item.path) === -1) dupes.push(item.path); }
+          else { seen[item.path] = true; }
         } else if (item.type === 'section' && item.children) {
-          var sectionTitle = item.title || 'Untitled';
-          var folderDir = '';
-          var hasIndex = false;
-          for (var j = 0; j < item.children.length; j++) {
-            var ch = item.children[j];
-            if (ch.type === 'page' && ch.path) {
-              var dir = _getDir(ch.path);
-              if (folderDir === '' && dir) folderDir = dir;
-              if (ch.path.endsWith('index.md')) {
-                hasIndex = true;
-                inNavPaths[ch.path] = true;
-                ops.push({ type: 'set-weight', src_path: ch.path, weight: indexWeight });
-              }
-            }
+          walk(item.children);
+        }
+      }
+    }
+    walk(navStructure);
+    return dupes;
+  }
+
+  function _migrationSectionSlug(title) {
+    return title.toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'section';
+  }
+
+  function _migrationComputeTargetTree(navStructure) {
+    var pages = [];
+    var indexes = [];
+    var inNavPaths = {};
+    var claimedIndexPaths = {};
+
+    function findSectionIndex(children) {
+      for (var j = 0; j < children.length; j++) {
+        if (children[j].type === 'page' && children[j].path &&
+            children[j].path.endsWith('index.md')) {
+          return children[j];
+        }
+      }
+      return null;
+    }
+
+    function walk(items, targetDir) {
+      var childIdx = 0;
+      for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        if (item.type === 'page' && item.path && item.path.endsWith('.md')) {
+          if (item.path === 'index.md' && targetDir === '') {
+            inNavPaths[item.path] = true;
+            pages.push({
+              oldPath: item.path,
+              targetPath: item.path,
+              title: item.title || null,
+              weight: null
+            });
+            continue;
           }
-          if (!hasIndex && folderDir) {
-            var indexPath = folderDir + '/index.md';
-            var indexContent = '---\ntitle: ' + _fmSerialize(sectionTitle) +
-              '\nretitled: true\nempty: true\nweight: ' + indexWeight + '\n---\nThis section covers information about ' +
-              sectionTitle + ' and its contents.\n';
-            ops.push({ type: 'create-page', path: indexPath, content: indexContent });
+          if (claimedIndexPaths[item.path]) {
+            childIdx++;
+            claimedIndexPaths[item.path].weight = childIdx * 100;
+            inNavPaths[item.path] = true;
+            continue;
           }
-          for (var k = 0; k < item.children.length; k++) {
-            var c = item.children[k];
-            if (c.type === 'page' && c.path && c.path.endsWith('.md') && !c.path.endsWith('index.md')) {
-              inNavPaths[c.path] = true;
-              ops.push({ type: 'set-weight', src_path: c.path, weight: (k + 1) * 10 });
-            } else if (c.type === 'section' && c.children) {
-              walk(c.children);
-            }
+          childIdx++;
+          var filename = item.path.split('/').pop();
+          if (filename === 'index.md') {
+            var slug = item.title ? _migrationSectionSlug(item.title) : _getDir(item.path).split('/').pop();
+            filename = (slug || 'page') + '.md';
           }
+          var targetPath = targetDir ? targetDir + '/' + filename : filename;
+          inNavPaths[item.path] = true;
+          pages.push({
+            oldPath: item.path,
+            targetPath: targetPath,
+            title: item.title || null,
+            weight: childIdx * 100
+          });
+        } else if (item.type === 'section' && item.children) {
+          childIdx++;
+          var secSlug = _migrationSectionSlug(item.title);
+          var secDir = targetDir ? targetDir + '/' + secSlug : secSlug;
+          var existingIndex = findSectionIndex(item.children);
+          if (existingIndex) {
+            claimedIndexPaths[existingIndex.path] = {
+              secDir: secDir,
+              navTitle: existingIndex.title || null
+            };
+            inNavPaths[existingIndex.path] = true;
+          }
+          indexes.push({
+            dir: secDir,
+            sectionTitle: item.title,
+            existingIndexPath: existingIndex ? existingIndex.path : null,
+            weight: childIdx * 100
+          });
+          walk(item.children, secDir);
         }
       }
     }
 
-    if (navStructure && navStructure.length) {
-      walk(navStructure);
-    }
+    walk(navStructure, '');
+    return { pages: pages, indexes: indexes, inNavPaths: inNavPaths, claimedIndexPaths: claimedIndexPaths };
+  }
 
-    var allPaths = allMdSrcPaths || (typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : []);
-    for (var p = 0; p < allPaths.length; p++) {
-      var srcPath = allPaths[p];
-      if (!inNavPaths[srcPath]) {
-        ops.push({ type: 'set-headless', src_path: srcPath });
+  function _buildMigrationOps(navStructure, allMdSrcPaths) {
+    var tree = _migrationComputeTargetTree(navStructure);
+    var ops = [];
+    var inNavPaths = tree.inNavPaths;
+
+    // Phase 3: Create directory structure (indexes)
+    // Every section gets a thin index.md (retitled + empty).
+    // If a section already has an index.md, split it: rename the existing
+    // content to a slug-based page, then create the thin index in its place.
+    var splitContentPages = [];
+    for (var idx = 0; idx < tree.indexes.length; idx++) {
+      var sec = tree.indexes[idx];
+      var idxPath = sec.dir + '/index.md';
+      if (sec.existingIndexPath) {
+        var claimed = tree.claimedIndexPaths[sec.existingIndexPath];
+        var contentTitle = (claimed && claimed.navTitle) || sec.sectionTitle;
+        var contentFilename = _generateFilename(contentTitle);
+        var contentPath = sec.dir + '/' + contentFilename;
+        var thinContent = '---\ntitle: ' + _fmSerialize(sec.sectionTitle) +
+          '\nretitled: true\nempty: true\n---\n';
+        ops.push({
+          type: 'regenerate-index',
+          oldPath: sec.existingIndexPath,
+          newPath: contentPath,
+          indexPath: idxPath,
+          indexContent: thinContent
+        });
+        splitContentPages.push({
+          oldPath: sec.existingIndexPath,
+          targetPath: contentPath,
+          title: contentTitle,
+          weight: (claimed && claimed.weight) || 100
+        });
+      } else {
+        var indexContent = '---\ntitle: ' + _fmSerialize(sec.sectionTitle) +
+          '\nretitled: true\nempty: true\n---\n';
+        ops.push({ type: 'create-page', path: idxPath, content: indexContent });
       }
     }
+
+    // Phase 4: Move documents
+    for (var p = 0; p < tree.pages.length; p++) {
+      var pg = tree.pages[p];
+      if (pg.oldPath !== pg.targetPath) {
+        ops.push({
+          type: 'rename-page', oldPath: pg.oldPath, newPath: pg.targetPath,
+          skipDoubleRenderCheck: true
+        });
+      }
+    }
+
+    // Phase 5: Mark hidden documents
+    var allPaths = allMdSrcPaths || (typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : []);
+    var hiddenPaths = [];
+    for (var h = 0; h < allPaths.length; h++) {
+      var sp = allPaths[h];
+      if (!inNavPaths[sp]) {
+        ops.push({ type: 'set-headless', src_path: sp });
+        hiddenPaths.push(sp);
+      }
+    }
+
+    // Phase 6: Set titles + weights on section indexes (always the new thin index)
+    for (var si = 0; si < tree.indexes.length; si++) {
+      var secI = tree.indexes[si];
+      ops.push({
+        type: 'set-frontmatter',
+        src_path: secI.dir + '/index.md',
+        updates: { title: secI.sectionTitle, retitled: true, weight: secI.weight }
+      });
+    }
+    // Phase 6: Set titles + weights on pages (including split content pages from Phase 3)
+    var allPages = tree.pages.concat(splitContentPages);
+    for (var pg2 = 0; pg2 < allPages.length; pg2++) {
+      var page = allPages[pg2];
+      var updates = {};
+      if (page.weight != null) updates.weight = page.weight;
+      if (page.title) updates.title = page.title;
+      if (updates.weight != null || updates.title) {
+        ops.push({ type: 'set-frontmatter', src_path: page.oldPath, updates: updates });
+      }
+    }
+    // Phase 6: Remove nav key from mkdocs.yml
+    ops.push({ type: 'update-mkdocs-yml', transform: _removeNavKeyFromYaml });
+
+    // Phase 7: Consolidate hidden documents (queued as special marker op,
+    // resolved at execution time after all moves are complete)
+    if (hiddenPaths.length) {
+      ops.push({ type: 'consolidate-hidden', hiddenPaths: hiddenPaths });
+    }
+
     return ops;
   }
 
@@ -10447,20 +11334,57 @@
         _showNavDialog('No nav structure found in mkdocs.yml. Nothing to migrate.', [{ text: 'OK', value: 'ok' }]);
         return;
       }
-      var msg = 'This will migrate your navigation from mkdocs.yml `nav` key to mkdocs-nav-weight frontmatter. This includes:\n' +
-        '- Assigning weights to all pages\n' +
-        '- Creating index.md for folders that lack one\n' +
-        '- Marking unlisted pages as headless\n' +
-        '- Removing the nav key from mkdocs.yml\n\n' +
-        'This operation will enter nav edit mode. Review changes before saving.';
-      return _showNavDialog(msg, [
+
+      var dupes = _migrationCheckDuplicates(navStructure);
+      if (dupes.length) {
+        var html = '<p style="margin:0 0 8px"><strong>Cannot migrate:</strong> the nav key contains duplicate page entries.</p>' +
+          '<p style="margin:0 0 8px">Remove duplicates from mkdocs.yml before migrating:</p>' +
+          '<ul style="margin:4px 0;padding-left:20px;font-family:monospace;font-size:.8rem">';
+        for (var d = 0; d < dupes.length; d++) {
+          html += '<li>' + dupes[d].replace(/</g, '&lt;') + '</li>';
+        }
+        html += '</ul>';
+        return _showNavDialogHtml(html, [{ text: 'OK', value: 'ok' }]);
+      }
+
+      var tree = _migrationComputeTargetTree(navStructure);
+      var moveCount = 0;
+      for (var m = 0; m < tree.pages.length; m++) {
+        if (tree.pages[m].oldPath !== tree.pages[m].targetPath) moveCount++;
+      }
+      var splitCount = 0;
+      var createCount = 0;
+      for (var c = 0; c < tree.indexes.length; c++) {
+        if (tree.indexes[c].existingIndexPath) splitCount++;
+        else createCount++;
+      }
+
+      var summaryHtml = '<p style="margin:0 0 12px">This will migrate your navigation from the mkdocs.yml <code>nav</code> key to mkdocs-nav-weight frontmatter.</p>' +
+        '<p style="margin:0 0 4px"><strong>Summary:</strong></p>' +
+        '<ul style="margin:4px 0 12px;padding-left:20px;font-size:.83rem">';
+      if (splitCount) summaryHtml += '<li>Split ' + splitCount + ' existing index.md file' + (splitCount > 1 ? 's' : '') + ' (content renamed, thin index created)</li>';
+      if (createCount) summaryHtml += '<li>Create ' + createCount + ' new index.md file' + (createCount > 1 ? 's' : '') + ' for sections</li>';
+      if (moveCount) summaryHtml += '<li>Move ' + moveCount + ' document' + (moveCount > 1 ? 's' : '') + ' to match nav structure</li>';
+      summaryHtml += '<li>Set titles and weights on all ' + (Object.keys(tree.inNavPaths).length) + ' nav pages</li>';
+      var hiddenCount = 0;
+      var allPaths = typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [];
+      for (var h = 0; h < allPaths.length; h++) {
+        if (!tree.inNavPaths[allPaths[h]]) hiddenCount++;
+      }
+      if (hiddenCount) summaryHtml += '<li>Mark ' + hiddenCount + ' unlisted page' + (hiddenCount > 1 ? 's' : '') + ' as headless</li>';
+      summaryHtml += '<li>Remove <code>nav</code> key from mkdocs.yml</li>';
+      if (hiddenCount) summaryHtml += '<li>Consolidate hidden docs into referencing directories where possible</li>';
+      summaryHtml += '</ul>';
+      if (moveCount || hiddenCount) {
+        summaryHtml += '<p style="margin:0 0 12px;font-size:.83rem">Relative links will be updated automatically when documents are moved.</p>';
+      }
+
+      return _showNavDialogHtml(summaryHtml, [
         { text: 'Cancel', value: 'cancel' },
         { text: 'Start Migration', value: 'start', className: 'live-wysiwyg-nav-dialog-primary' }
       ]).then(function (result) {
         if (result !== 'start') return;
-        var ops = _buildMigrationOps(navStructure, typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : []);
-        var updatedYaml = _removeNavKeyFromYaml(yml);
-        ops.push({ type: 'update-mkdocs-yml', content: updatedYaml, path: mkdocsPath });
+        var ops = _buildMigrationOps(navStructure, allPaths);
         if (!_navEditMode) _enterNavEditMode();
         _navNormalizeAllPending = false;
         for (var i = 0; i < ops.length; i++) {
@@ -10470,33 +11394,68 @@
           var badge = _navEditActionsEl.querySelector('.live-wysiwyg-nav-normalize-badge');
           if (badge.parentNode) badge.parentNode.removeChild(badge);
         }
+        _setCookie('live_wysiwyg_migration_normalize', '1', 120);
       });
     }).catch(function (err) {
       _showNavDialog('Failed to read mkdocs.yml: ' + (err && err.message ? err.message : String(err)), [{ text: 'OK', value: 'ok' }]);
     });
   }
 
+  function _insertNavWeightEntry(yml) {
+    var pluginsMatch = yml.match(/^plugins:\s*$/m);
+    var newEntry = '\n  - mkdocs-nav-weight:\n      default_page_weight: 1000\n';
+    if (pluginsMatch) {
+      return yml.substring(0, pluginsMatch.index + pluginsMatch[0].length) + newEntry +
+        yml.substring(pluginsMatch.index + pluginsMatch[0].length);
+    }
+    return yml + '\nplugins:' + newEntry;
+  }
+
   function _applyNavWeightPlugin() {
     _installReloadGuard();
-    _wsGetContents('../mkdocs.yml').then(function (yml) {
-      var pluginsMatch = yml.match(/^plugins:\s*$/m);
-      var newEntry = '\n  - mkdocs-nav-weight:\n      default_page_weight: 1000\n';
-      var updated;
-      if (pluginsMatch) {
-        updated = yml.substring(0, pluginsMatch.index + pluginsMatch[0].length) + newEntry +
-          yml.substring(pluginsMatch.index + pluginsMatch[0].length);
-      } else {
-        updated = yml + '\nplugins:' + newEntry;
-      }
-      return _wsSetContents('../mkdocs.yml', updated);
-    }).then(function () {
-      _showFullScreenTransition('Applying changes...');
+    _updateMkdocsYml(_insertNavWeightEntry).then(function () {
+      var applyOv = _showFullScreenTransition('Applying changes...');
       _setCookie('live_wysiwyg_focus_nav', '1', 60);
       _removeReloadGuard();
-      setTimeout(function () { location.reload(); }, 2000);
+      setTimeout(function () {
+        _fadeOverlayToOpaque(applyOv, function () { location.reload(); });
+      }, 1500);
     }).catch(function () {
       _removeReloadGuard();
     });
+  }
+
+  function _applyDefaultPageWeight(newWeight) {
+    _stripWeightCautionReasons();
+    _installReloadGuard();
+    _updateMkdocsYml(function (yml) {
+      return _replaceDefaultPageWeight(yml, newWeight);
+    }).then(function () {
+      var applyOv = _showFullScreenTransition('Applying changes...');
+      _setCookie('live_wysiwyg_focus_nav', '1', 60);
+      _removeReloadGuard();
+      setTimeout(function () {
+        _fadeOverlayToOpaque(applyOv, function () { location.reload(); });
+      }, 1500);
+    }).catch(function () {
+      _removeReloadGuard();
+    });
+  }
+
+  function _replaceDefaultPageWeight(yml, newWeight) {
+    var re = /^(\s*default_page_weight\s*:\s*)\d+/m;
+    if (re.test(yml)) {
+      return yml.replace(re, '$1' + newWeight);
+    }
+    var pluginRe = /^(\s*-\s*mkdocs-nav-weight\s*:\s*\n)/m;
+    var match = pluginRe.exec(yml);
+    if (match) {
+      var indent = match[1].match(/^(\s*)/)[1];
+      return yml.substring(0, match.index + match[0].length) +
+        indent + '    default_page_weight: ' + newWeight + '\n' +
+        yml.substring(match.index + match[0].length);
+    }
+    return yml;
   }
 
   // ======================================================================
@@ -10505,25 +11464,64 @@
   function _getCautionPages() {
     var raw = _getCookie('live_wysiwyg_caution_pages');
     if (!raw) return [];
-    try { return JSON.parse(raw); } catch (e) { return []; }
+    try {
+      var parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map(function (entry) {
+        if (typeof entry === 'string') return { path: entry, reasons: ['Link integrity may need attention'], renames: 0 };
+        var reasons = Array.isArray(entry.reasons) ? entry.reasons : [];
+        if (!reasons.length) reasons = ['Link integrity may need attention'];
+        return { path: entry.path || '', reasons: reasons, renames: entry.renames || 0 };
+      });
+    } catch (e) { return []; }
   }
 
   function _setCautionPages(pages) {
     _setCookie('live_wysiwyg_caution_pages', JSON.stringify(pages));
   }
 
-  function _addCautionPage(srcPath) {
+  function _addCautionPage(srcPath, reason) {
+    var actualPath = _batchRenamedPaths[srcPath] || srcPath;
+    var msg = reason || 'Link integrity may need attention';
     var pages = _getCautionPages();
-    if (pages.indexOf(srcPath) === -1) {
-      pages.push(srcPath);
-      _setCautionPages(pages);
+    for (var i = 0; i < pages.length; i++) {
+      if (pages[i].path === actualPath) {
+        if (pages[i].reasons.indexOf(msg) === -1) {
+          pages[i].reasons.push(msg);
+          _setCautionPages(pages);
+        }
+        return;
+      }
     }
+    pages.push({ path: actualPath, reasons: [msg], renames: 0 });
+    _setCautionPages(pages);
+  }
+
+  function _migrateCautionForRename(oldPath, newPath) {
+    var pages = _getCautionPages();
+    var changed = false;
+    for (var i = 0; i < pages.length; i++) {
+      if (pages[i].path === oldPath) {
+        pages[i].path = newPath;
+        pages[i].renames = (pages[i].renames || 0) + 1;
+        changed = true;
+      }
+    }
+    if (changed) _setCautionPages(pages);
+  }
+
+  function _cautionRenamePrefix(entry) {
+    var n = entry.renames || 0;
+    if (n === 0) return '';
+    if (n === 1) return 'Before document was renamed: ';
+    return 'The document was renamed ' + n + ' times after warning: ';
   }
 
   function _applyCautionIcons(sidebarEl) {
     var pages = _getCautionPages();
     if (!pages.length) return;
-    pages.forEach(function (srcPath) {
+    pages.forEach(function (entry) {
+      var srcPath = entry.path;
       var li = sidebarEl.querySelector('[data-nav-src-path="' + srcPath + '"]');
       if (!li && srcPath.endsWith('/index.md')) {
         li = sidebarEl.querySelector('[data-nav-index-path="' + srcPath + '"]');
@@ -10538,38 +11536,936 @@
       icon.addEventListener('click', function (e) {
         e.preventDefault();
         e.stopPropagation();
-        _showCautionPopup(icon, srcPath);
+        _showCautionPopup(icon, entry);
       });
       link.appendChild(icon);
+      li.classList.add('live-wysiwyg-nav-caution-item');
+      var ancestor = li.parentNode;
+      while (ancestor && ancestor !== sidebarEl) {
+        if (ancestor.classList && ancestor.classList.contains('md-nav__item--nested')) {
+          _expandSection(ancestor);
+        }
+        ancestor = ancestor.parentNode;
+      }
     });
   }
 
-  function _showCautionPopup(anchorEl, srcPath) {
+  function _showCautionPopup(anchorEl, entry) {
+    var existing = document.querySelector('.live-wysiwyg-nav-popup');
+    if (existing) existing.parentNode.removeChild(existing);
+
+    var popup = document.createElement('div');
+    popup.className = 'live-wysiwyg-nav-popup';
+
+    var prefix = _cautionRenamePrefix(entry);
+    var reasons = entry.reasons || ['Link integrity may need attention'];
+
+    if (prefix) {
+      var prefixEl = document.createElement('div');
+      prefixEl.style.fontWeight = 'bold';
+      prefixEl.style.marginBottom = '4px';
+      prefixEl.textContent = prefix;
+      popup.appendChild(prefixEl);
+    }
+
+    var intro = document.createElement('div');
+    intro.style.marginBottom = '6px';
+    intro.textContent = 'Review content for the following issues:';
+    popup.appendChild(intro);
+
+    if (reasons.length === 1) {
+      var single = document.createElement('div');
+      single.style.fontSize = '.8rem';
+      single.style.opacity = '.85';
+      single.textContent = '\u2022 ' + reasons[0];
+      popup.appendChild(single);
+    } else {
+      var ul = document.createElement('ul');
+      ul.style.margin = '4px 0';
+      ul.style.paddingLeft = '16px';
+      ul.style.fontSize = '.8rem';
+      ul.style.opacity = '.85';
+      for (var r = 0; r < reasons.length; r++) {
+        var li = document.createElement('li');
+        li.textContent = reasons[r];
+        ul.appendChild(li);
+      }
+      popup.appendChild(ul);
+    }
+
     var pages = _getCautionPages();
-    _showNavPopup(anchorEl,
-      'This page avoided potential corruption as part of a recent batch update from the nav menu. ' +
-      'You should review the content of this page and manually fix any potentially broken links because ' +
-      'content integrity was prioritized over migrating links.',
-      [
-        {
-          text: 'Resolve', action: function () {
-            var p = _getCautionPages();
-            _setCautionPages(p.filter(function (s) { return s !== srcPath; }));
-            anchorEl.parentNode.removeChild(anchorEl);
+    var buttons = [
+      {
+        text: 'Resolve', action: function () {
+          var p = _getCautionPages();
+          _setCautionPages(p.filter(function (e) { return e.path !== entry.path; }));
+          var parentLi = anchorEl.closest('.live-wysiwyg-nav-caution-item');
+          if (parentLi) parentLi.classList.remove('live-wysiwyg-nav-caution-item');
+          anchorEl.parentNode.removeChild(anchorEl);
+          var dlPages = _getDeadLinkPages();
+          _setDeadLinkPages(dlPages.filter(function (d) { return d.path !== entry.path; }));
+          _hideDeadLinkPanel();
+        }
+      }
+    ];
+    if (pages.length > 1) {
+      buttons.push({
+        text: 'Resolve All', action: function () {
+          _setCautionPages([]);
+          _setDeadLinkPages([]);
+          _hideDeadLinkPanel();
+          if (_navSidebarEl) {
+            _navSidebarEl.querySelectorAll('.live-wysiwyg-nav-caution').forEach(function (el) {
+              el.parentNode.removeChild(el);
+            });
+            _navSidebarEl.querySelectorAll('.live-wysiwyg-nav-caution-item').forEach(function (el) {
+              el.classList.remove('live-wysiwyg-nav-caution-item');
+            });
           }
-        },
-        pages.length > 1 ? {
-          text: 'Resolve All', action: function () {
-            _setCautionPages([]);
-            if (_navSidebarEl) {
-              _navSidebarEl.querySelectorAll('.live-wysiwyg-nav-caution').forEach(function (el) {
-                el.parentNode.removeChild(el);
-              });
+        }
+      });
+    }
+    var cautionBtnRow = document.createElement('div');
+    cautionBtnRow.style.marginTop = '8px';
+    buttons.forEach(function (btn) {
+      var b = document.createElement('button');
+      b.textContent = btn.text;
+      b.addEventListener('click', function () {
+        popup.parentNode.removeChild(popup);
+        if (btn.action) btn.action();
+      });
+      cautionBtnRow.appendChild(b);
+    });
+    popup.appendChild(cautionBtnRow);
+
+    var rect = anchorEl.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.left = Math.max(4, rect.left - 50) + 'px';
+    popup.style.visibility = 'hidden';
+    document.body.appendChild(popup);
+    var popupH = popup.offsetHeight;
+    var spaceBelow = window.innerHeight - rect.bottom - 8;
+    if (spaceBelow < popupH && rect.top > popupH + 8) {
+      popup.style.top = (rect.top - popupH - 4) + 'px';
+    } else {
+      popup.style.top = (rect.bottom + 4) + 'px';
+    }
+    popup.style.visibility = '';
+
+    var closeHandler = function (e) {
+      if (!popup.contains(e.target) && e.target !== anchorEl) {
+        if (popup.parentNode) popup.parentNode.removeChild(popup);
+        document.removeEventListener('mousedown', closeHandler, true);
+      }
+    };
+    setTimeout(function () {
+      document.addEventListener('mousedown', closeHandler, true);
+    }, 0);
+  }
+
+  // ======================================================================
+  // DEAD LINK FINDER — localStorage storage
+  // ======================================================================
+  function _getDeadLinkPages() {
+    try {
+      var raw = localStorage.getItem('live_wysiwyg_dead_links');
+      if (!raw) return [];
+      var parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) { return []; }
+  }
+
+  function _setDeadLinkPages(pages) {
+    try {
+      if (!pages || !pages.length) {
+        localStorage.removeItem('live_wysiwyg_dead_links');
+        return;
+      }
+      localStorage.setItem('live_wysiwyg_dead_links', JSON.stringify(pages));
+    } catch (e) { /* storage full or unavailable */ }
+  }
+
+  function _addDeadLinksForPage(srcPath, internal, external) {
+    var pages = _getDeadLinkPages();
+    var found = null;
+    for (var i = 0; i < pages.length; i++) {
+      if (pages[i].path === srcPath) { found = pages[i]; break; }
+    }
+    if (!found) {
+      found = { path: srcPath, internal: [], external: [] };
+      pages.push(found);
+    }
+    if (internal) found.internal = internal;
+    if (external) found.external = external;
+    if (!found.internal.length && !found.external.length) {
+      pages = pages.filter(function (p) { return p.path !== srcPath; });
+    }
+    _setDeadLinkPages(pages);
+  }
+
+  // ======================================================================
+  // DEAD LINK FINDER — Scanner
+  // ======================================================================
+  function _scanDeadLinks(mode) {
+    if (typeof liveWysiwygLinkCheckPort === 'undefined' || !liveWysiwygLinkCheckPort) {
+      _showNavDialog('Dead link checker server is not available.', [
+        { text: 'OK', value: 'ok' }
+      ]);
+      return;
+    }
+    var overlay = _showFullScreenTransition('Scanning pages for links...');
+    var allPaths = (typeof liveWysiwygAllMdSrcPaths !== 'undefined') ? liveWysiwygAllMdSrcPaths : [];
+    var linkPatterns = [
+      { re: /(?<!!)\[([^\]]*)\]\(([^)]+)\)/g, textGroup: 1, targetGroup: 2 },
+      { re: /!\[([^\]]*)\]\(([^)]+)\)/g, textGroup: 1, targetGroup: 2 },
+      { re: /<img[^>]+src=["']([^"']+)["']/g, textGroup: 0, targetGroup: 1 },
+      { re: /^\[([^\]]+)\]:\s+(\S+)/gm, textGroup: 1, targetGroup: 2 }
+    ];
+
+    var allChecks = [];
+    var checkMeta = [];
+    var externalUrlMap = {};
+    var pageIdx = 0;
+
+    function processNextPage() {
+      if (pageIdx >= allPaths.length) {
+        _sendLinkChecks(allChecks, checkMeta, externalUrlMap, mode, overlay);
+        return;
+      }
+      var path = allPaths[pageIdx];
+      pageIdx++;
+      _updateTransitionText(overlay, 'Scanning page ' + pageIdx + ' of ' + allPaths.length + '...');
+      _wsGetContents(path).then(function (content) {
+        if (!content) { processNextPage(); return; }
+        var zones = _findExclusionZones(content);
+        for (var p = 0; p < linkPatterns.length; p++) {
+          var pat = linkPatterns[p];
+          pat.re.lastIndex = 0;
+          var m;
+          while ((m = pat.re.exec(content)) !== null) {
+            if (_isInExclusionZone(m.index, zones)) continue;
+            var target = m[pat.targetGroup];
+            var text = pat.textGroup === 0 ? target : m[pat.textGroup];
+            if (!target) continue;
+
+            var hashIdx = target.indexOf('#');
+            var queryIdx = target.indexOf('?');
+            var splitIdx = -1;
+            if (hashIdx !== -1 && queryIdx !== -1) splitIdx = Math.min(hashIdx, queryIdx);
+            else if (hashIdx !== -1) splitIdx = hashIdx;
+            else if (queryIdx !== -1) splitIdx = queryIdx;
+            var pathPart = splitIdx >= 0 ? target.substring(0, splitIdx) : target;
+            if (!pathPart) continue;
+
+            var isExternal = pathPart.indexOf('http://') === 0 || pathPart.indexOf('https://') === 0;
+            var isInternal = !isExternal && pathPart.indexOf('mailto:') !== 0 &&
+              pathPart.indexOf('data:') !== 0 && pathPart.indexOf('#') !== 0;
+
+            if (mode === 'internal' && !isInternal) continue;
+            if (mode === 'external' && !isExternal) continue;
+
+            if (isExternal) {
+              if (!externalUrlMap[pathPart]) {
+                externalUrlMap[pathPart] = [];
+                allChecks.push({ type: 'external', url: pathPart });
+                checkMeta.push({ srcPath: path, text: text, target: pathPart, kind: 'external' });
+              }
+              externalUrlMap[pathPart].push({ srcPath: path, text: text, target: pathPart });
+            } else if (isInternal) {
+              allChecks.push({ type: 'internal', from: path, target: pathPart });
+              checkMeta.push({ srcPath: path, text: text, target: pathPart, kind: 'internal' });
             }
           }
-        } : null
-      ].filter(Boolean)
+        }
+        processNextPage();
+      }).catch(function () { processNextPage(); });
+    }
+    processNextPage();
+  }
+
+  function _sendLinkChecks(allChecks, checkMeta, externalUrlMap, mode, overlay) {
+    if (!allChecks.length) {
+      _fadeOutOverlay(overlay);
+      _showNavDialog('No dead links found!', [{ text: 'OK', value: 'ok' }]);
+      return;
+    }
+    var port = liveWysiwygLinkCheckPort;
+    var host = window.location.hostname || '127.0.0.1';
+    var baseUrl = 'http://' + host + ':' + port + '/check-links';
+    var allResults = new Array(allChecks.length);
+    var filled = 0;
+
+    _updateTransitionText(overlay, 'Checking ' + allChecks.length + ' links (this may take a moment for external links)...');
+
+    _postLinkBatch(baseUrl, allChecks, 300000).then(function (results) {
+      for (var i = 0; i < results.length; i++) { allResults[i] = results[i]; }
+      filled = results.length;
+      _processDeadLinkResults(allChecks, allResults, checkMeta, externalUrlMap, mode, overlay);
+    }).catch(function () {
+      _sendLinkBatches(baseUrl, allChecks, allResults, filled, checkMeta, externalUrlMap, mode, overlay);
+    });
+  }
+
+  function _postLinkBatch(url, checks, timeoutMs) {
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = null;
+    if (controller && timeoutMs) {
+      timer = setTimeout(function () { controller.abort(); }, timeoutMs);
+    }
+    var opts = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checks: checks })
+    };
+    if (controller) opts.signal = controller.signal;
+    return fetch(url, opts).then(function (resp) {
+      if (timer) clearTimeout(timer);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    }).then(function (data) {
+      return data.results || [];
+    }).catch(function (err) {
+      if (timer) clearTimeout(timer);
+      throw err;
+    });
+  }
+
+  function _sendLinkBatches(baseUrl, allChecks, allResults, startIdx, checkMeta, externalUrlMap, mode, overlay) {
+    var batchSize = 50;
+    var remaining = allChecks.slice(startIdx);
+    var totalBatches = Math.ceil(remaining.length / batchSize);
+    var batchIdx = 0;
+
+    function sendNext() {
+      if (batchIdx >= totalBatches) {
+        _processDeadLinkResults(allChecks, allResults, checkMeta, externalUrlMap, mode, overlay);
+        return;
+      }
+      var chunk = remaining.slice(batchIdx * batchSize, (batchIdx + 1) * batchSize);
+      _updateTransitionText(overlay, 'Checking links: batch ' + (batchIdx + 1) + ' of ' + totalBatches + '...');
+      _postLinkBatch(baseUrl, chunk, 60000).then(function (results) {
+        for (var i = 0; i < results.length; i++) {
+          allResults[startIdx + batchIdx * batchSize + i] = results[i];
+        }
+        batchIdx++;
+        sendNext();
+      }).catch(function () {
+        batchIdx++;
+        sendNext();
+      });
+    }
+    sendNext();
+  }
+
+  function _processDeadLinkResults(allChecks, allResults, checkMeta, externalUrlMap, mode, overlay) {
+    var deadByPage = {};
+    for (var i = 0; i < allResults.length; i++) {
+      var result = allResults[i];
+      if (!result || result.ok) continue;
+      var meta = checkMeta[i];
+      if (!meta) continue;
+
+      if (meta.kind === 'external' && externalUrlMap[meta.target]) {
+        var occurrences = externalUrlMap[meta.target];
+        for (var j = 0; j < occurrences.length; j++) {
+          var occ = occurrences[j];
+          if (!deadByPage[occ.srcPath]) deadByPage[occ.srcPath] = { internal: [], external: [] };
+          deadByPage[occ.srcPath].external.push({
+            text: occ.text, target: occ.target,
+            status: result.status || 0, error: result.error || ''
+          });
+        }
+      } else if (meta.kind === 'internal') {
+        if (!deadByPage[meta.srcPath]) deadByPage[meta.srcPath] = { internal: [], external: [] };
+        deadByPage[meta.srcPath].internal.push({
+          text: meta.text, target: meta.target
+        });
+      }
+    }
+
+    var deadPageCount = Object.keys(deadByPage).length;
+    if (deadPageCount === 0) {
+      _fadeOutOverlay(overlay);
+      _showNavDialog('No dead links found!', [{ text: 'OK', value: 'ok' }]);
+      return;
+    }
+
+    var analysis = _buildDeadLinkGroups(deadByPage);
+    if (analysis.groups.length > 0) {
+      _fadeOutOverlay(overlay);
+      _showDeadLinkAnalysisWizard(analysis, deadByPage, mode).then(function (filtered) {
+        _commitDeadLinkResults(filtered, mode);
+      });
+    } else {
+      _fadeOutOverlay(overlay);
+      _commitDeadLinkResults(deadByPage, mode);
+    }
+  }
+
+  function _commitDeadLinkResults(deadByPage, mode) {
+    var deadPageCount = Object.keys(deadByPage).length;
+    if (deadPageCount === 0) {
+      _showNavDialog('No dead links remain after exclusions.', [{ text: 'OK', value: 'ok' }]);
+      return;
+    }
+
+    for (var pagePath in deadByPage) {
+      if (!deadByPage.hasOwnProperty(pagePath)) continue;
+      var info = deadByPage[pagePath];
+      _addDeadLinksForPage(pagePath,
+        (mode === 'external') ? null : info.internal,
+        (mode === 'internal') ? null : info.external
+      );
+      if (info.internal.length) _addCautionPage(pagePath, 'Internal dead links found');
+      if (info.external.length) _addCautionPage(pagePath, 'External dead links found');
+    }
+
+    if (_navSidebarEl) _applyCautionIcons(_navSidebarEl);
+    _checkDeadLinksForCurrentPage();
+
+    var totalDead = 0;
+    for (var p in deadByPage) {
+      if (deadByPage.hasOwnProperty(p)) {
+        totalDead += deadByPage[p].internal.length + deadByPage[p].external.length;
+      }
+    }
+    _showNavDialog(
+      'Found ' + totalDead + ' dead link' + (totalDead !== 1 ? 's' : '') + ' across ' +
+      deadPageCount + ' page' + (deadPageCount !== 1 ? 's' : '') + '.',
+      [{ text: 'OK', value: 'ok' }]
     );
+  }
+
+  function _updateTransitionText(overlay, text) {
+    if (!overlay) return;
+    var el = overlay.querySelector('.live-wysiwyg-nav-transition-text');
+    if (el) el.textContent = text;
+  }
+
+  // ======================================================================
+  // DEAD LINK FINDER — Analysis wizard (grouping + exclude UI)
+  // ======================================================================
+  function _extractUrlPrefix(url) {
+    try {
+      var m = url.match(/^(https?:\/\/[^/]+)(\/[^/]*\/?)?/);
+      if (!m) return url;
+      return m[1] + (m[2] || '/');
+    } catch (e) { return url; }
+  }
+
+  function _buildDeadLinkGroups(deadByPage) {
+    var groupMap = {};
+    var totalExternal = 0;
+    for (var pagePath in deadByPage) {
+      if (!deadByPage.hasOwnProperty(pagePath)) continue;
+      var ext = deadByPage[pagePath].external;
+      for (var i = 0; i < ext.length; i++) {
+        totalExternal++;
+        var status = ext[i].status || 0;
+        var prefix = _extractUrlPrefix(ext[i].target);
+        var key = status + '|' + prefix;
+        if (!groupMap[key]) {
+          groupMap[key] = { status: status, prefix: prefix, count: 0 };
+        }
+        groupMap[key].count++;
+      }
+    }
+    var groups = [];
+    var groupedCount = 0;
+    for (var k in groupMap) {
+      if (groupMap.hasOwnProperty(k) && groupMap[k].count >= 2) {
+        groups.push(groupMap[k]);
+        groupedCount += groupMap[k].count;
+      }
+    }
+    groups.sort(function (a, b) { return b.count - a.count; });
+    return { groups: groups, groupedCount: groupedCount, ungroupedCount: totalExternal - groupedCount };
+  }
+
+  function _showDeadLinkAnalysisWizard(analysis, deadByPage, mode) {
+    var totalDead = 0;
+    var pageCount = 0;
+    for (var p in deadByPage) {
+      if (!deadByPage.hasOwnProperty(p)) continue;
+      pageCount++;
+      totalDead += deadByPage[p].internal.length + deadByPage[p].external.length;
+    }
+
+    return new Promise(function (resolve) {
+      var overlay = document.createElement('div');
+      overlay.className = 'live-wysiwyg-nav-dialog';
+      var content = document.createElement('div');
+      content.className = 'live-wysiwyg-nav-dialog-content';
+      content.style.maxWidth = '580px';
+
+      var title = document.createElement('div');
+      title.style.fontWeight = '700';
+      title.style.fontSize = '.95rem';
+      title.style.marginBottom = '4px';
+      title.textContent = 'Dead Link Analysis';
+      content.appendChild(title);
+
+      var summary = document.createElement('div');
+      summary.style.fontSize = '.8rem';
+      summary.style.color = 'var(--md-default-fg-color--light,#666)';
+      summary.style.marginBottom = '12px';
+      summary.textContent = 'Found ' + totalDead + ' dead link' + (totalDead !== 1 ? 's' : '') +
+        ' across ' + pageCount + ' page' + (pageCount !== 1 ? 's' : '') +
+        '. Exclude noisy patterns below.';
+      content.appendChild(summary);
+
+      var body = document.createElement('div');
+      body.style.maxHeight = '45vh';
+      body.style.overflowY = 'auto';
+      body.style.marginBottom = '12px';
+
+      var excludeSet = {};
+
+      for (var g = 0; g < analysis.groups.length; g++) {
+        (function (group, idx) {
+          var row = document.createElement('div');
+          row.className = 'live-wysiwyg-dead-link-wizard-row';
+
+          var badge = document.createElement('span');
+          badge.className = 'live-wysiwyg-dead-link-wizard-badge';
+          badge.textContent = group.status || '?';
+          row.appendChild(badge);
+
+          var desc = document.createElement('span');
+          desc.className = 'live-wysiwyg-dead-link-wizard-desc';
+          var prefixDisplay = group.prefix.length > 50 ? group.prefix.substring(0, 47) + '...' : group.prefix;
+          desc.textContent = group.count + ' link' + (group.count !== 1 ? 's' : '') +
+            ' starting with ' + prefixDisplay;
+          desc.title = group.prefix;
+          row.appendChild(desc);
+
+          var toggle = document.createElement('button');
+          toggle.className = 'live-wysiwyg-dead-link-wizard-toggle';
+          toggle.textContent = 'Include';
+          var key = group.status + '|' + group.prefix;
+
+          toggle.addEventListener('click', function () {
+            if (excludeSet[key]) {
+              delete excludeSet[key];
+              toggle.textContent = 'Include';
+              row.classList.remove('live-wysiwyg-dead-link-wizard-excluded');
+            } else {
+              excludeSet[key] = group;
+              toggle.textContent = 'Exclude';
+              row.classList.add('live-wysiwyg-dead-link-wizard-excluded');
+            }
+          });
+          row.appendChild(toggle);
+          body.appendChild(row);
+        })(analysis.groups[g], g);
+      }
+
+      if (analysis.ungroupedCount > 0) {
+        var other = document.createElement('div');
+        other.className = 'live-wysiwyg-dead-link-wizard-row live-wysiwyg-dead-link-wizard-other';
+        other.textContent = analysis.ungroupedCount + ' other external dead link' +
+          (analysis.ungroupedCount !== 1 ? 's' : '') + ' (always included)';
+        body.appendChild(other);
+      }
+
+      var internalCount = 0;
+      for (var pp in deadByPage) {
+        if (deadByPage.hasOwnProperty(pp)) internalCount += deadByPage[pp].internal.length;
+      }
+      if (internalCount > 0) {
+        var intRow = document.createElement('div');
+        intRow.className = 'live-wysiwyg-dead-link-wizard-row live-wysiwyg-dead-link-wizard-other';
+        intRow.textContent = internalCount + ' internal dead link' +
+          (internalCount !== 1 ? 's' : '') + ' (always included)';
+        body.appendChild(intRow);
+      }
+
+      content.appendChild(body);
+
+      var actions = document.createElement('div');
+      actions.className = 'live-wysiwyg-nav-dialog-actions';
+
+      var applyBtn = document.createElement('button');
+      applyBtn.textContent = 'Apply';
+      applyBtn.addEventListener('click', function () {
+        overlay.parentNode.removeChild(overlay);
+        resolve(_applyDeadLinkExclusions(deadByPage, excludeSet));
+      });
+      actions.appendChild(applyBtn);
+
+      var includeAllBtn = document.createElement('button');
+      includeAllBtn.textContent = 'Include All';
+      includeAllBtn.addEventListener('click', function () {
+        overlay.parentNode.removeChild(overlay);
+        resolve(deadByPage);
+      });
+      actions.appendChild(includeAllBtn);
+
+      content.appendChild(actions);
+      overlay.appendChild(content);
+      document.body.appendChild(overlay);
+    });
+  }
+
+  function _applyDeadLinkExclusions(deadByPage, excludeSet) {
+    var hasExclusions = false;
+    for (var k in excludeSet) { if (excludeSet.hasOwnProperty(k)) { hasExclusions = true; break; } }
+    if (!hasExclusions) return deadByPage;
+
+    for (var pagePath in deadByPage) {
+      if (!deadByPage.hasOwnProperty(pagePath)) continue;
+      deadByPage[pagePath].external = deadByPage[pagePath].external.filter(function (entry) {
+        var prefix = _extractUrlPrefix(entry.target);
+        var key = (entry.status || 0) + '|' + prefix;
+        return !excludeSet[key];
+      });
+      if (!deadByPage[pagePath].internal.length && !deadByPage[pagePath].external.length) {
+        delete deadByPage[pagePath];
+      }
+    }
+    return deadByPage;
+  }
+
+  // ======================================================================
+  // DEAD LINK FINDER — Panel overlay on TOC
+  // ======================================================================
+  function _showDeadLinkPanel(tocEl, pageDeadLinks) {
+    _hideDeadLinkPanel();
+    if (!tocEl || !pageDeadLinks) return;
+    var allLinks = [];
+    if (pageDeadLinks.internal) {
+      for (var i = 0; i < pageDeadLinks.internal.length; i++) {
+        allLinks.push({ kind: 'internal', text: pageDeadLinks.internal[i].text, target: pageDeadLinks.internal[i].target });
+      }
+    }
+    if (pageDeadLinks.external) {
+      for (var j = 0; j < pageDeadLinks.external.length; j++) {
+        var ext = pageDeadLinks.external[j];
+        allLinks.push({
+          kind: 'external', text: ext.text, target: ext.target,
+          status: ext.status, error: ext.error
+        });
+      }
+    }
+    if (!allLinks.length) return;
+
+    var panel = document.createElement('div');
+    panel.className = 'live-wysiwyg-dead-link-panel';
+
+    var header = document.createElement('div');
+    header.className = 'live-wysiwyg-dead-link-panel-header';
+    var headerTitle = document.createElement('span');
+    headerTitle.textContent = 'Dead links on this page';
+    header.appendChild(headerTitle);
+    var closeBtn = document.createElement('button');
+    closeBtn.className = 'live-wysiwyg-dead-link-panel-close';
+    closeBtn.textContent = '\u00D7';
+    closeBtn.title = 'Close panel';
+    closeBtn.addEventListener('click', function () { _hideDeadLinkPanel(); });
+    header.appendChild(closeBtn);
+    panel.appendChild(header);
+
+    var list = document.createElement('div');
+    list.className = 'live-wysiwyg-dead-link-panel-list';
+
+    for (var k = 0; k < allLinks.length; k++) {
+      (function (link) {
+        var entry = document.createElement('div');
+        entry.className = 'live-wysiwyg-dead-link-entry';
+        entry.title = link.target;
+
+        var nameEl = document.createElement('span');
+        nameEl.className = 'live-wysiwyg-dead-link-entry-text';
+        var displayText = link.text || link.target;
+        nameEl.textContent = displayText.length > 40 ? displayText.substring(0, 37) + '...' : displayText;
+        entry.appendChild(nameEl);
+
+        var label = document.createElement('span');
+        label.className = 'live-wysiwyg-dead-link-entry-label';
+        if (link.kind === 'internal') {
+          label.textContent = 'internal';
+        } else {
+          label.textContent = link.status ? 'external (' + link.status + ')' : 'external';
+        }
+        entry.appendChild(label);
+
+        var resolveOne = document.createElement('button');
+        resolveOne.className = 'live-wysiwyg-dead-link-entry-resolve';
+        resolveOne.textContent = '\u2715';
+        resolveOne.title = 'Resolve this link';
+        resolveOne.addEventListener('click', function (e) {
+          e.stopPropagation();
+          _resolveOneDeadLink(currentPath, link.kind, link.target);
+          entry.parentNode.removeChild(entry);
+          var remaining = list.querySelectorAll('.live-wysiwyg-dead-link-entry');
+          if (!remaining.length) _hideDeadLinkPanel();
+        });
+        entry.appendChild(resolveOne);
+
+        entry.addEventListener('click', function () {
+          _scrollToDeadLink(link.target, link.text);
+        });
+        list.appendChild(entry);
+      })(allLinks[k]);
+    }
+    panel.appendChild(list);
+
+    var actions = document.createElement('div');
+    actions.className = 'live-wysiwyg-dead-link-panel-actions';
+
+    var currentPath = _getCurrentSrcPath();
+
+    var resolvePageBtn = document.createElement('button');
+    resolvePageBtn.textContent = 'Resolve Page';
+    resolvePageBtn.addEventListener('click', function () {
+      var pages = _getDeadLinkPages();
+      _setDeadLinkPages(pages.filter(function (p) { return p.path !== currentPath; }));
+      _stripDeadLinkCautionReasons([currentPath]);
+      _hideDeadLinkPanel();
+    });
+    actions.appendChild(resolvePageBtn);
+
+    var allDeadPages = _getDeadLinkPages();
+    if (allDeadPages.length > 1) {
+      var resolveAllBtn = document.createElement('button');
+      resolveAllBtn.textContent = 'Resolve All';
+      resolveAllBtn.addEventListener('click', function () {
+        var affectedPaths = _getDeadLinkPages().map(function (d) { return d.path; });
+        _setDeadLinkPages([]);
+        _stripDeadLinkCautionReasons(affectedPaths);
+        _hideDeadLinkPanel();
+      });
+      actions.appendChild(resolveAllBtn);
+    }
+    panel.appendChild(actions);
+
+    var tocRect = tocEl.getBoundingClientRect();
+    panel.style.top = tocRect.top + 'px';
+    panel.style.left = tocRect.left + 'px';
+    panel.style.width = tocRect.width + 'px';
+    panel.style.maxHeight = (window.innerHeight - tocRect.top) + 'px';
+    document.body.appendChild(panel);
+  }
+
+  function _hideDeadLinkPanel() {
+    var existing = document.querySelector('.live-wysiwyg-dead-link-panel');
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+  }
+
+  function _resolveOneDeadLink(pagePath, kind, target) {
+    var pages = _getDeadLinkPages();
+    var pageGone = false;
+    var hasInternal = false;
+    var hasExternal = false;
+    for (var i = 0; i < pages.length; i++) {
+      if (pages[i].path !== pagePath) continue;
+      var arr = kind === 'internal' ? pages[i].internal : pages[i].external;
+      for (var j = arr.length - 1; j >= 0; j--) {
+        if (arr[j].target === target) { arr.splice(j, 1); break; }
+      }
+      hasInternal = pages[i].internal.length > 0;
+      hasExternal = pages[i].external.length > 0;
+      if (!hasInternal && !hasExternal) {
+        pages.splice(i, 1);
+        pageGone = true;
+      }
+      break;
+    }
+    _setDeadLinkPages(pages);
+    if (pageGone) {
+      _removeDeadLinkCaution(pagePath);
+    } else {
+      if (!hasInternal) _removeCautionReason(pagePath, 'Internal dead links found');
+      if (!hasExternal) _removeCautionReason(pagePath, 'External dead links found');
+    }
+  }
+
+  function _removeDeadLinkCaution(pagePath) {
+    var cautions = _getCautionPages();
+    cautions = cautions.filter(function (c) {
+      return c.path !== pagePath ||
+        (c.reasons.indexOf('Internal dead links found') === -1 &&
+         c.reasons.indexOf('External dead links found') === -1);
+    });
+    _setCautionPages(cautions);
+    if (_navSidebarEl) {
+      var li = _navSidebarEl.querySelector('[data-nav-src-path="' + pagePath + '"]');
+      if (!li && pagePath.endsWith('/index.md')) {
+        li = _navSidebarEl.querySelector('[data-nav-index-path="' + pagePath + '"]');
+      }
+      if (li) {
+        var icon = li.querySelector('.live-wysiwyg-nav-caution');
+        if (icon) icon.parentNode.removeChild(icon);
+        li.classList.remove('live-wysiwyg-nav-caution-item');
+      }
+    }
+  }
+
+  function _removeCautionReason(pagePath, reason) {
+    var cautions = _getCautionPages();
+    var changed = false;
+    for (var i = 0; i < cautions.length; i++) {
+      if (cautions[i].path !== pagePath) continue;
+      var idx = cautions[i].reasons.indexOf(reason);
+      if (idx !== -1) {
+        cautions[i].reasons.splice(idx, 1);
+        changed = true;
+      }
+      if (!cautions[i].reasons.length) {
+        cautions.splice(i, 1);
+        changed = true;
+        if (_navSidebarEl) {
+          var li = _navSidebarEl.querySelector('[data-nav-src-path="' + pagePath + '"]');
+          if (!li && pagePath.endsWith('/index.md')) {
+            li = _navSidebarEl.querySelector('[data-nav-index-path="' + pagePath + '"]');
+          }
+          if (li) {
+            var icon = li.querySelector('.live-wysiwyg-nav-caution');
+            if (icon) icon.parentNode.removeChild(icon);
+            li.classList.remove('live-wysiwyg-nav-caution-item');
+          }
+        }
+      }
+      break;
+    }
+    if (changed) _setCautionPages(cautions);
+  }
+
+  function _stripDeadLinkCautionReasons(paths) {
+    var deadReasons = ['Internal dead links found', 'External dead links found'];
+    var cautions = _getCautionPages();
+    var changed = false;
+    for (var i = cautions.length - 1; i >= 0; i--) {
+      if (paths.indexOf(cautions[i].path) === -1) continue;
+      var reasons = cautions[i].reasons;
+      for (var r = reasons.length - 1; r >= 0; r--) {
+        if (deadReasons.indexOf(reasons[r]) !== -1) {
+          reasons.splice(r, 1);
+          changed = true;
+        }
+      }
+      var pagePath = cautions[i].path;
+      if (!reasons.length) {
+        cautions.splice(i, 1);
+        if (_navSidebarEl) {
+          var li = _navSidebarEl.querySelector('[data-nav-src-path="' + pagePath + '"]');
+          if (!li && pagePath.endsWith('/index.md')) {
+            li = _navSidebarEl.querySelector('[data-nav-index-path="' + pagePath + '"]');
+          }
+          if (li) {
+            var icon = li.querySelector('.live-wysiwyg-nav-caution');
+            if (icon) icon.parentNode.removeChild(icon);
+            li.classList.remove('live-wysiwyg-nav-caution-item');
+          }
+        }
+      }
+    }
+    if (changed) _setCautionPages(cautions);
+  }
+
+  function _stripWeightCautionReasons() {
+    var cautions = _getCautionPages();
+    var changed = false;
+    for (var i = cautions.length - 1; i >= 0; i--) {
+      var reasons = cautions[i].reasons;
+      for (var r = reasons.length - 1; r >= 0; r--) {
+        if (reasons[r].indexOf('default_page_weight') !== -1 || reasons[r].indexOf('default page weight') !== -1) {
+          reasons.splice(r, 1);
+          changed = true;
+        }
+      }
+      var pagePath = cautions[i].path;
+      if (!reasons.length) {
+        cautions.splice(i, 1);
+        if (_navSidebarEl) {
+          var li = _navSidebarEl.querySelector('[data-nav-src-path="' + pagePath + '"]');
+          if (!li && pagePath.endsWith('/index.md')) {
+            li = _navSidebarEl.querySelector('[data-nav-index-path="' + pagePath + '"]');
+          }
+          if (li) {
+            var icon = li.querySelector('.live-wysiwyg-nav-caution');
+            if (icon) icon.parentNode.removeChild(icon);
+            li.classList.remove('live-wysiwyg-nav-caution-item');
+          }
+        }
+      }
+    }
+    if (changed) _setCautionPages(cautions);
+  }
+
+  // ======================================================================
+  // DEAD LINK FINDER — Click to scroll and select
+  // ======================================================================
+  function _scrollToDeadLink(target, text) {
+    if (!wysiwygEditor) return;
+    var mainArea = _focusOverlay ? _focusOverlay.querySelector('.live-wysiwyg-focus-main') : null;
+
+    if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
+      var ta = wysiwygEditor.markdownArea;
+      var val = ta.value;
+      var escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      var patterns = [
+        new RegExp('\\[([^\\]]*)\\]\\(' + escaped + '[^)]*\\)'),
+        new RegExp('!\\[([^\\]]*)\\]\\(' + escaped + '[^)]*\\)'),
+        new RegExp('<img[^>]+src=["\']' + escaped + '["\']'),
+        new RegExp('^\\[[^\\]]+\\]:\\s+' + escaped, 'm')
+      ];
+      for (var p = 0; p < patterns.length; p++) {
+        var match = patterns[p].exec(val);
+        if (match) {
+          ta.focus();
+          ta.setSelectionRange(match.index, match.index + match[0].length);
+          var sc = wysiwygEditor.markdownEditorContainer;
+          if (sc) {
+            var lineHeight = parseInt(window.getComputedStyle(ta).lineHeight, 10) || 20;
+            var linesAbove = val.substring(0, match.index).split('\n').length - 1;
+            var scrollTarget = Math.max(0, linesAbove * lineHeight - sc.clientHeight * 0.15);
+            _smoothScrollTo(sc, scrollTarget, 350);
+          }
+          return;
+        }
+      }
+    } else if (wysiwygEditor.editableArea) {
+      var anchors = wysiwygEditor.editableArea.querySelectorAll('a[href], img[src]');
+      for (var i = 0; i < anchors.length; i++) {
+        var el = anchors[i];
+        var href = el.getAttribute('href') || el.getAttribute('src') || '';
+        var hrefPath = href.split('#')[0].split('?')[0];
+        if (hrefPath === target) {
+          if (mainArea) {
+            var rect = el.getBoundingClientRect();
+            var mainRect = mainArea.getBoundingClientRect();
+            var scrollPos = Math.max(0, mainArea.scrollTop + (rect.top - mainRect.top) - mainArea.clientHeight * 0.15);
+            _smoothScrollTo(mainArea, scrollPos, 350);
+          }
+          var sel = window.getSelection();
+          var range = document.createRange();
+          range.selectNode(el);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return;
+        }
+      }
+    }
+  }
+
+  // ======================================================================
+  // DEAD LINK FINDER — Panel lifecycle
+  // ======================================================================
+  function _checkDeadLinksForCurrentPage() {
+    var currentPath = _getCurrentSrcPath();
+    if (!currentPath) return;
+    var pages = _getDeadLinkPages();
+    var pageData = null;
+    for (var i = 0; i < pages.length; i++) {
+      if (pages[i].path === currentPath) { pageData = pages[i]; break; }
+    }
+    if (!pageData || (!pageData.internal.length && !pageData.external.length)) {
+      _hideDeadLinkPanel();
+      return;
+    }
+    var tocEl = document.querySelector('.live-wysiwyg-focus-toc');
+    if (tocEl) _showDeadLinkPanel(tocEl, pageData);
   }
 
   // ======================================================================
@@ -10582,10 +12478,17 @@
     var submenu = document.createElement('div');
     submenu.className = 'live-wysiwyg-page-submenu';
 
+    function _closeSubmenu() {
+      if (submenu.parentNode) submenu.parentNode.removeChild(submenu);
+      var arrow = contentBtn.querySelector('.live-wysiwyg-page-submenu-arrow');
+      if (arrow) arrow.classList.remove('live-wysiwyg-page-submenu-arrow--open');
+    }
+
     var renameBtn = document.createElement('button');
     renameBtn.textContent = 'Rename Page';
     renameBtn.addEventListener('click', function () {
-      submenu.parentNode.removeChild(submenu);
+      _closeSubmenu();
+      if (_isNormalizeLocked()) return;
       _showRenameDialog();
     });
     submenu.appendChild(renameBtn);
@@ -10593,7 +12496,8 @@
     var newPageBtn = document.createElement('button');
     newPageBtn.textContent = 'New Page';
     newPageBtn.addEventListener('click', function () {
-      submenu.parentNode.removeChild(submenu);
+      _closeSubmenu();
+      if (_isNormalizeLocked()) return;
       _showNewPageDialog();
     });
     submenu.appendChild(newPageBtn);
@@ -10601,7 +12505,8 @@
     var deleteBtn = document.createElement('button');
     deleteBtn.textContent = 'Delete Current Document';
     deleteBtn.addEventListener('click', function () {
-      submenu.parentNode.removeChild(submenu);
+      _closeSubmenu();
+      if (_isNormalizeLocked()) return;
       _deleteCurrentDocument();
     });
     submenu.appendChild(deleteBtn);
@@ -10609,15 +12514,30 @@
     var normalizeBtn = document.createElement('button');
     normalizeBtn.textContent = 'Normalize All Nav Weights';
     normalizeBtn.addEventListener('click', function () {
-      submenu.parentNode.removeChild(submenu);
+      _closeSubmenu();
       _normalizeAllNavWeights();
     });
     submenu.appendChild(normalizeBtn);
 
+    var findDeadLinksBtn = document.createElement('button');
+    findDeadLinksBtn.textContent = 'Find Dead Links';
+    findDeadLinksBtn.addEventListener('click', function () {
+      _closeSubmenu();
+      _showNavDialog('Scan for dead links:', [
+        { text: 'All', value: 'all' },
+        { text: 'Internal', value: 'internal' },
+        { text: 'External', value: 'external' },
+        { text: 'Cancel', value: 'cancel' }
+      ]).then(function (mode) {
+        if (mode && mode !== 'cancel') _scanDeadLinks(mode);
+      });
+    });
+    submenu.appendChild(findDeadLinksBtn);
+
     var discardBtn = document.createElement('button');
     discardBtn.textContent = 'Discard Changes';
     discardBtn.addEventListener('click', function () {
-      submenu.parentNode.removeChild(submenu);
+      _closeSubmenu();
       if (_navEditMode) {
         _confirmNavDiscard();
       } else {
@@ -10629,8 +12549,22 @@
           ]
         ).then(function (result) {
           if (result === 'discard') {
-            var cancelBtn = document.querySelector('.live-edit-cancel-button');
-            if (cancelBtn) cancelBtn.click();
+            var currentSrc = _getCurrentSrcPath();
+            if (currentSrc && wysiwygEditor) {
+              var discardOv = _showFullScreenTransition('Discarding changes...');
+              _wsGetContents(currentSrc).then(function (md) {
+                if (wysiwygEditor._loadContent) {
+                  wysiwygEditor._loadContent(md);
+                }
+                if (wysiwygEditor._resetPristineContent) {
+                  wysiwygEditor._resetPristineContent(md);
+                }
+                _refreshFocusToc();
+                _fadeOutOverlay(discardOv);
+              }).catch(function () {
+                _fadeOutOverlay(discardOv);
+              });
+            }
           }
         });
       }
@@ -10645,7 +12579,7 @@
 
     var closeHandler = function (e) {
       if (!submenu.contains(e.target) && e.target !== contentBtn) {
-        if (submenu.parentNode) submenu.parentNode.removeChild(submenu);
+        _closeSubmenu();
         document.removeEventListener('click', closeHandler, true);
       }
     };
@@ -10851,13 +12785,14 @@
   }
 
   function _normalizeAllNavWeights() {
+    if (_isNormalizeLocked()) return;
     if (!_ensureNavEditReady()) return;
     if (!_navEditMode) _enterNavEditMode();
     _navNormalizeAllPending = true;
     if (_navEditActionsEl && !_navEditActionsEl.querySelector('.live-wysiwyg-nav-normalize-badge')) {
       var badge = document.createElement('span');
       badge.className = 'live-wysiwyg-nav-normalize-badge';
-      badge.textContent = 'Normalize on save';
+      badge.textContent = 'Normalize all on save';
       _navEditActionsEl.appendChild(badge);
     }
   }
@@ -11111,6 +13046,16 @@
         'background-color:var(--md-primary-fg-color--dark,#0056b3);' +
         'border-color:var(--md-primary-fg-color--dark,#0056b3);' +
       '}' +
+      '.live-wysiwyg-focus-content-btn{' +
+        'background-color:var(--md-default-bg-color,#fff);' +
+        'color:var(--md-default-fg-color,#333);' +
+        'border:1px solid var(--md-default-fg-color--lighter,#ccc);' +
+        'border-radius:4px;padding:4px 14px;cursor:pointer;font-size:.75rem;' +
+        'position:relative;' +
+      '}' +
+      '.live-wysiwyg-focus-content-btn:hover{' +
+        'background-color:var(--md-default-bg-color--lighter,#e9e9e9);' +
+      '}' +
       '.live-wysiwyg-focus-exit-btn{' +
         'background-color:var(--md-default-bg-color,#fff);' +
         'color:var(--md-default-fg-color,#333);' +
@@ -11334,14 +13279,6 @@
         'display:none;position:absolute;left:2px;z-index:2;' +
         'align-items:center;gap:3px;' +
       '}' +
-      // Page controls: vertically center within the li
-      '.live-wysiwyg-nav-controls-wrapper:not(.live-wysiwyg-nav-controls-section){' +
-        'top:50%;transform:translateY(-50%);' +
-      '}' +
-      // Section controls: vertically center with the title row text
-      '.live-wysiwyg-nav-controls-section{' +
-        'top:.625em;transform:translateY(calc(.7em - 50%));' +
-      '}' +
       '.live-wysiwyg-nav-weight-controls{' +
         'display:grid;' +
         'grid-template-columns:12px 12px 12px;grid-template-rows:12px 12px 12px;' +
@@ -11362,6 +13299,18 @@
       '.live-wysiwyg-nav-weight-controls .live-wysiwyg-nav-arrow-left{grid-column:1;grid-row:2;}' +
       '.live-wysiwyg-nav-weight-controls .live-wysiwyg-nav-arrow-right{grid-column:3;grid-row:2;}' +
       '.live-wysiwyg-nav-weight-controls .live-wysiwyg-nav-arrow-down{grid-column:2;grid-row:3;}' +
+      '.live-wysiwyg-nav-target-dot{' +
+        'grid-column:2;grid-row:2;' +
+        'background:none;border:none;cursor:pointer;padding:0;' +
+        'font-size:.5rem;line-height:1;' +
+        'color:var(--md-default-fg-color--light,#777);transition:color .15s;' +
+        'width:12px;height:12px;display:none;align-items:center;justify-content:center;' +
+      '}' +
+      '.live-wysiwyg-nav-edit-mode .live-wysiwyg-nav-target-dot{display:flex;}' +
+      '.live-wysiwyg-nav-target-dot:hover{' +
+        'color:var(--md-accent-fg-color,#007bff);' +
+      '}' +
+      '.live-wysiwyg-nav-item--deleted .live-wysiwyg-nav-target-dot{display:none!important;}' +
       '.live-wysiwyg-nav-settings-gear{' +
         'background:none;border:none;cursor:pointer;padding:1px;' +
         'font-size:.7rem;line-height:1;' +
@@ -11371,10 +13320,8 @@
       '.live-wysiwyg-nav-settings-gear:hover{' +
         'color:var(--md-accent-fg-color,#007bff);' +
       '}' +
-      // Page items: show on li hover (direct child only)
-      '.md-nav__item:not(.md-nav__item--nested):hover>.live-wysiwyg-nav-controls-wrapper{display:flex;}' +
-      // Section items: show only on title hover via JS class (direct child only)
-      '.md-nav__item--nested.live-wysiwyg-nav-title-hover>.live-wysiwyg-nav-controls-wrapper{display:flex;}' +
+      // Show controls on JS-managed hover (unified for pages and sections)
+      '.md-nav__item.live-wysiwyg-nav-hover>.live-wysiwyg-nav-controls-wrapper{display:flex;}' +
       // Focused item: always show its controls (direct child only)
       '.md-nav__item.live-wysiwyg-nav-item--focused>.live-wysiwyg-nav-controls-wrapper{display:flex!important;}' +
 
@@ -11391,7 +13338,7 @@
         'box-shadow:inset 0 0 0 2px rgba(255,255,255,.35);' +
       '}' +
       '.live-wysiwyg-nav-item--focused{' +
-        'outline:2px solid var(--md-accent-fg-color,#007bff);outline-offset:-2px;border-radius:2px;' +
+        'outline:2.5px solid var(--md-accent-fg-color,#007bff);outline-offset:-2px;border-radius:2px;z-index:1;position:relative;' +
       '}' +
 
       // --- Nav edit save/discard/undo/redo buttons ---
@@ -11424,10 +13371,10 @@
       // --- Read-only overlay during nav edit ---
       '.live-wysiwyg-nav-readonly-overlay{' +
         'position:absolute;inset:0;z-index:10;' +
-        'background:rgba(var(--md-default-bg-color-rgb,255,255,255),.7);' +
+        'background:rgba(0,0,0,.55);' +
         'display:flex;align-items:center;justify-content:center;' +
-        'font-size:.8rem;color:var(--md-default-fg-color--light,#777);' +
-        'pointer-events:all;user-select:none;backdrop-filter:blur(1px);' +
+        'font-size:.8rem;color:rgba(255,255,255,.85);' +
+        'pointer-events:all;user-select:none;backdrop-filter:blur(2px);' +
       '}' +
 
       // --- Save/Discard confirmation dialog ---
@@ -11532,6 +13479,9 @@
         'transition:color .15s;' +
       '}' +
       '.live-wysiwyg-nav-caution:hover{color:#ec971f;}' +
+      '.live-wysiwyg-nav-caution-item{' +
+        'outline:1.5px solid #f0ad4e;outline-offset:-1px;border-radius:3px;' +
+      '}' +
       '.live-wysiwyg-nav-warning{' +
         'cursor:pointer;color:#f0ad4e;font-size:.7rem;margin-left:2px;flex-shrink:0;' +
       '}' +
@@ -11541,17 +13491,12 @@
         'margin-left:4px;flex-shrink:0;opacity:.7;transition:opacity .15s;' +
       '}' +
       '.live-wysiwyg-nav-tip-icon:hover{opacity:1;}' +
-      '.live-wysiwyg-nav-question{' +
-        'cursor:pointer;color:var(--md-default-fg-color--lighter,#aaa);font-size:.6rem;' +
-        'margin-left:2px;flex-shrink:0;' +
+      '.live-wysiwyg-nav-info{' +
+        'cursor:pointer;color:var(--md-accent-fg-color,#007bff);font-size:.65rem;' +
+        'margin-left:2px;flex-shrink:0;opacity:.7;transition:opacity .15s,color .15s;' +
       '}' +
-      '.live-wysiwyg-nav-question:hover{color:var(--md-default-fg-color--light,#777);}' +
-
-      // --- Target icon during nav edit ---
-      '.live-wysiwyg-nav-target-icon{display:none;cursor:pointer;margin-left:4px;font-size:.6rem;opacity:.5;transition:opacity .15s;}' +
-      '.live-wysiwyg-nav-target-icon:hover{opacity:1;}' +
-      '.live-wysiwyg-nav-edit-mode .live-wysiwyg-nav-target-icon{display:inline;}' +
-      '.live-wysiwyg-nav-item--deleted .live-wysiwyg-nav-target-icon{display:none!important;}' +
+      '.live-wysiwyg-nav-info:hover{opacity:1;color:var(--md-accent-fg-color,#007bff);}' +
+      '.live-wysiwyg-nav-caution-item .live-wysiwyg-nav-info{display:none;}' +
 
       // --- Tooltip for deleted items ---
       '.live-wysiwyg-nav-item--deleted .live-wysiwyg-nav-deleted-tooltip{' +
@@ -11569,11 +13514,15 @@
         'box-shadow:0 4px 16px rgba(0,0,0,.15);min-width:200px;padding:4px 0;' +
       '}' +
       '.live-wysiwyg-page-submenu button{' +
-        'display:block;width:100%;text-align:left;padding:6px 14px;border:none;' +
+        'display:block;width:calc(100% - 8px);margin:1px 4px;text-align:left;padding:5px 10px;' +
+        'border:1px solid transparent;border-radius:3px;' +
         'background:none;cursor:pointer;font-size:.75rem;' +
-        'color:var(--md-default-fg-color,#333);transition:background .1s;' +
+        'color:var(--md-default-fg-color,#333);transition:background .1s,border-color .1s;' +
       '}' +
-      '.live-wysiwyg-page-submenu button:hover{background:var(--md-default-bg-color--light,#f7f7f7);}' +
+      '.live-wysiwyg-page-submenu button:hover{' +
+        'background:var(--md-accent-fg-color--transparent,#cce5ff);' +
+        'border-color:var(--md-accent-fg-color,#007bff);' +
+      '}' +
       '.live-wysiwyg-page-submenu-arrow{' +
         'display:inline-block;transition:transform .2s;margin-left:4px;font-size:.6rem;' +
       '}' +
@@ -11587,11 +13536,11 @@
         'font-size:.75rem;color:var(--md-default-fg-color,#333);line-height:1.5;' +
       '}' +
       '.live-wysiwyg-nav-popup button{' +
-        'margin-top:8px;padding:4px 10px;border:1px solid var(--md-default-fg-color--lighter,#ccc);' +
+        'padding:4px 10px;border:1px solid var(--md-default-fg-color--lighter,#ccc);' +
         'border-radius:3px;font-size:.7rem;cursor:pointer;background:var(--md-default-bg-color,#fff);' +
         'color:var(--md-default-fg-color,#333);transition:background .15s;margin-right:4px;' +
       '}' +
-      '.live-wysiwyg-nav-popup button:hover{background:var(--md-default-bg-color--light,#f7f7f7);}' +
+      '.live-wysiwyg-nav-popup button:hover{background:var(--md-default-bg-color--light,#f7f7f7);color:var(--md-default-fg-color,#333);}' +
       '.live-wysiwyg-nav-popup .live-wysiwyg-nav-popup-primary{' +
         'background:var(--md-accent-fg-color,#007bff);color:#fff;' +
         'border-color:var(--md-accent-fg-color,#007bff);' +
@@ -11599,19 +13548,21 @@
       '.live-wysiwyg-nav-popup .live-wysiwyg-nav-popup-primary:hover{opacity:.85;}' +
       '.live-wysiwyg-nav-popup .live-wysiwyg-nav-popup-primary:disabled{opacity:.4;cursor:default;}' +
 
-      // --- Early-inject focus overlay (cookie transition, opaque to hide readonly page) ---
+      // --- Early-inject focus overlay (starts opaque to hide page reload) ---
       '.live-wysiwyg-early-overlay{' +
         'position:fixed;inset:0;z-index:99989;' +
-        'background:rgba(0,0,0,.18);' +
+        'background:rgba(0,0,0,1);' +
         'display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;' +
+        'transition:opacity .4s ease;' +
       '}' +
 
       // --- Full-screen transition overlay (shown before navigation) ---
       '.live-wysiwyg-nav-transition-overlay{' +
         'position:fixed;inset:0;z-index:99990;' +
-        'background:rgba(0,0,0,.12);' +
+        'background:rgba(0,0,0,.18);' +
         'display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;' +
-        'animation:live-wysiwyg-transition-fade .15s ease-out;' +
+        'animation:live-wysiwyg-transition-fade .6s ease;' +
+        'transition:background .3s ease,opacity .6s ease-out;' +
       '}' +
       '@keyframes live-wysiwyg-transition-fade{from{opacity:0}to{opacity:1}}' +
       '.live-wysiwyg-nav-transition-spinner{' +
@@ -11622,6 +13573,105 @@
       '.live-wysiwyg-nav-transition-text{' +
         'font-size:.85rem;color:rgba(255,255,255,.85);' +
         'text-shadow:0 1px 3px rgba(0,0,0,.4);' +
+      '}' +
+
+      // --- Dead link panel (overlays the TOC) ---
+      '.live-wysiwyg-dead-link-panel{' +
+        'position:fixed;z-index:99993;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'border:1px solid var(--md-default-fg-color--lightest,#eee);' +
+        'border-radius:6px;box-shadow:0 2px 12px rgba(0,0,0,.1);' +
+        'display:flex;flex-direction:column;' +
+        'font-size:.7rem;overflow:hidden;' +
+      '}' +
+      '.live-wysiwyg-dead-link-panel-header{' +
+        'display:flex;align-items:center;justify-content:space-between;' +
+        'padding:.6rem .6rem .4rem;font-weight:700;' +
+        'color:var(--md-default-fg-color,#333);' +
+        'border-bottom:1px solid var(--md-default-fg-color--lightest,#eee);' +
+      '}' +
+      '.live-wysiwyg-dead-link-panel-close{' +
+        'background:none;border:none;cursor:pointer;font-size:1rem;line-height:1;' +
+        'color:var(--md-default-fg-color--light,#999);padding:0 2px;' +
+      '}' +
+      '.live-wysiwyg-dead-link-panel-close:hover{color:var(--md-default-fg-color,#333);}' +
+      '.live-wysiwyg-dead-link-panel-list{' +
+        'flex:1;overflow-y:auto;padding:.3rem 0;' +
+        'scrollbar-width:thin;' +
+        'scrollbar-color:var(--md-default-fg-color--lighter,#ccc) transparent;' +
+      '}' +
+      '.live-wysiwyg-dead-link-entry{' +
+        'display:flex;align-items:baseline;gap:4px;' +
+        'padding:3px .6rem;cursor:pointer;' +
+        'transition:background .1s;' +
+      '}' +
+      '.live-wysiwyg-dead-link-entry:hover{' +
+        'background:var(--md-default-bg-color--light,#f7f7f7);' +
+      '}' +
+      '.live-wysiwyg-dead-link-entry-text{' +
+        'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+        'color:var(--md-typeset-a-color,#d9534f);' +
+      '}' +
+      '.live-wysiwyg-dead-link-entry-label{' +
+        'flex-shrink:0;font-size:.6rem;padding:1px 4px;border-radius:3px;' +
+        'background:var(--md-default-fg-color--lightest,#eee);' +
+        'color:var(--md-default-fg-color--light,#777);' +
+      '}' +
+      '.live-wysiwyg-dead-link-entry-resolve{' +
+        'flex-shrink:0;background:none;border:none;cursor:pointer;' +
+        'font-size:.65rem;line-height:1;padding:0 2px;' +
+        'color:var(--md-default-fg-color--lighter,#bbb);transition:color .15s;' +
+      '}' +
+      '.live-wysiwyg-dead-link-entry-resolve:hover{color:var(--md-default-fg-color,#333);}' +
+      '.live-wysiwyg-dead-link-panel-actions{' +
+        'padding:.5rem .6rem;display:flex;gap:6px;' +
+        'border-top:1px solid var(--md-default-fg-color--lightest,#eee);' +
+      '}' +
+      '.live-wysiwyg-dead-link-panel-actions button{' +
+        'padding:3px 8px;border:1px solid var(--md-default-fg-color--lighter,#ccc);' +
+        'border-radius:3px;font-size:.65rem;cursor:pointer;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'color:var(--md-default-fg-color,#333);transition:background .15s;' +
+      '}' +
+      '.live-wysiwyg-dead-link-panel-actions button:hover{' +
+        'background:var(--md-default-bg-color--light,#f7f7f7);' +
+      '}' +
+
+      // --- Dead link analysis wizard ---
+      '.live-wysiwyg-dead-link-wizard-row{' +
+        'display:flex;align-items:center;gap:8px;' +
+        'padding:6px 0;border-bottom:1px solid var(--md-default-fg-color--lightest,#eee);' +
+        'font-size:.8rem;transition:opacity .15s;' +
+      '}' +
+      '.live-wysiwyg-dead-link-wizard-row:last-child{border-bottom:none;}' +
+      '.live-wysiwyg-dead-link-wizard-badge{' +
+        'flex-shrink:0;min-width:32px;text-align:center;' +
+        'padding:2px 6px;border-radius:3px;font-size:.7rem;font-weight:600;' +
+        'background:var(--md-default-fg-color--lightest,#eee);' +
+        'color:var(--md-default-fg-color--light,#666);' +
+      '}' +
+      '.live-wysiwyg-dead-link-wizard-desc{' +
+        'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+        'color:var(--md-default-fg-color,#333);' +
+      '}' +
+      '.live-wysiwyg-dead-link-wizard-toggle{' +
+        'flex-shrink:0;padding:3px 10px;border:1px solid var(--md-default-fg-color--lighter,#ccc);' +
+        'border-radius:3px;font-size:.7rem;cursor:pointer;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'color:var(--md-default-fg-color,#333);transition:all .15s;' +
+      '}' +
+      '.live-wysiwyg-dead-link-wizard-toggle:hover{' +
+        'background:var(--md-default-bg-color--light,#f7f7f7);' +
+      '}' +
+      '.live-wysiwyg-dead-link-wizard-excluded{opacity:.45;}' +
+      '.live-wysiwyg-dead-link-wizard-excluded .live-wysiwyg-dead-link-wizard-desc{' +
+        'text-decoration:line-through;' +
+      '}' +
+      '.live-wysiwyg-dead-link-wizard-excluded .live-wysiwyg-dead-link-wizard-toggle{' +
+        'background:#d9534f;color:#fff;border-color:#d9534f;' +
+      '}' +
+      '.live-wysiwyg-dead-link-wizard-other{' +
+        'color:var(--md-default-fg-color--light,#888);font-style:italic;' +
       '}' +
 
       '';
@@ -12048,6 +14098,27 @@
     modeToggle.appendChild(mdBtn);
     drawerControls.appendChild(modeToggle);
 
+    if (_isMaterialThemeDetected()) {
+      var contentBtn = document.createElement('button');
+      contentBtn.type = 'button';
+      contentBtn.className = 'live-wysiwyg-focus-content-btn';
+      contentBtn.title = 'Page Management';
+      contentBtn.innerHTML = 'Content <span class="live-wysiwyg-page-submenu-arrow">\u25B6</span>';
+      contentBtn.addEventListener('click', function () {
+        var existing = document.querySelector('.live-wysiwyg-page-submenu');
+        if (existing) {
+          existing.parentNode.removeChild(existing);
+          var arrow = contentBtn.querySelector('.live-wysiwyg-page-submenu-arrow');
+          if (arrow) arrow.classList.remove('live-wysiwyg-page-submenu-arrow--open');
+        } else {
+          var arrow = contentBtn.querySelector('.live-wysiwyg-page-submenu-arrow');
+          if (arrow) arrow.classList.add('live-wysiwyg-page-submenu-arrow--open');
+          _createPageSubmenu(contentBtn);
+        }
+      });
+      drawerControls.appendChild(contentBtn);
+    }
+
     var saveBtn = document.createElement('button');
     saveBtn.type = 'button';
     saveBtn.className = 'live-wysiwyg-focus-save-btn';
@@ -12057,31 +14128,17 @@
       _doFocusSave().then(function () {
         if (_getCookie('live_wysiwyg_focus_remain') === '1') {
           var currentSrc = _getCurrentSrcPath();
-          if (_ajaxCurrentSrcPath && currentSrc) {
+          if (currentSrc) {
             var transitionOv = _showFullScreenTransition('Reloading...');
             _wsGetContents(currentSrc).then(function (md) {
               if (wysiwygEditor && wysiwygEditor._loadContent) {
                 wysiwygEditor._loadContent(md);
               }
               _refreshFocusToc();
-              if (transitionOv && transitionOv.parentNode) {
-                transitionOv.style.transition = 'opacity .2s ease';
-                transitionOv.style.opacity = '0';
-                setTimeout(function () {
-                  if (transitionOv.parentNode) transitionOv.parentNode.removeChild(transitionOv);
-                }, 220);
-              }
+              _fadeOutOverlay(transitionOv);
             }).catch(function () {
-              if (transitionOv && transitionOv.parentNode) transitionOv.parentNode.removeChild(transitionOv);
+              _fadeOutOverlay(transitionOv);
             });
-          } else {
-            var cursor = _captureEditorSelection();
-            if (cursor) {
-              try { _setCookie('live_wysiwyg_nav_edit_cursor', JSON.stringify(cursor)); } catch (e) {}
-            }
-            _showFullScreenTransition('Saving and reloading...');
-            _setCookie('live_wysiwyg_focus_nav', '1', 60);
-            setTimeout(function () { window.location.href = location.href; }, 500);
           }
         }
       });
@@ -12306,11 +14363,7 @@
     if (window.__liveWysiwygEarlyOverlay) {
       var earlyOv = window.__liveWysiwygEarlyOverlay;
       window.__liveWysiwygEarlyOverlay = null;
-      earlyOv.style.transition = 'opacity .2s ease';
-      earlyOv.style.opacity = '0';
-      setTimeout(function () {
-        if (earlyOv.parentNode) earlyOv.parentNode.removeChild(earlyOv);
-      }, 220);
+      _fadeOutOverlay(earlyOv);
     }
 
     var cursorCookie = _getCookie('live_wysiwyg_nav_edit_cursor');
@@ -12321,6 +14374,31 @@
       } catch (e) { /* parse error */ }
       _deleteCookie('live_wysiwyg_nav_edit_cursor');
     }
+
+    _checkDeadLinksForCurrentPage();
+
+    if (_getCookie('live_wysiwyg_migration_normalize')) {
+      _deleteCookie('live_wysiwyg_migration_normalize');
+      setTimeout(function () { _autoNormalizeAfterMigration(); }, 600);
+    }
+  }
+
+  function _autoNormalizeAfterMigration() {
+    if (typeof liveWysiwygNavData === 'undefined' || !liveWysiwygNavData.length) {
+      _wsRedirectSuppressActive = false;
+      return;
+    }
+    _installReloadGuard();
+    // reload guard now owns redirect suppression; clear the early flag
+    _wsRedirectSuppressActive = false;
+    if (!_ensureNavEditReady()) {
+      _removeReloadGuard(); return;
+    }
+    if (!_navEditMode) {
+      _enterNavEditMode();
+    }
+    _navNormalizeAllPending = true;
+    _executeNavBatchSave();
   }
 
   function exitFocusMode() {
@@ -13039,8 +15117,10 @@
       _pristineContent = markdown;
       if (_upstreamSaveBtn) _upstreamSaveBtn.classList.add('live-edit-hidden');
       if (_upstreamCancelBtn) _upstreamCancelBtn.classList.add('live-edit-hidden');
+      var parsed = parseFrontmatter(markdown);
+      wysiwygEditor._liveWysiwygFrontmatter = parsed.frontmatter;
       if (wysiwygEditor.currentMode === 'wysiwyg') {
-        var html = wysiwygEditor._markdownToHtml(markdown);
+        var html = wysiwygEditor._markdownToHtml(parsed.body);
         if (wysiwygEditor.editableArea) {
           wysiwygEditor.editableArea.innerHTML = html;
           wysiwygEditor._pushToUndoStack(html);
@@ -13058,6 +15138,28 @@
           capturedMarkdownSelection = { start: ma.selectionStart, end: ma.selectionEnd };
         });
       }
+    })();
+
+    (function attachNavTitleSync() {
+      var ma = wysiwygEditor.markdownArea;
+      if (!ma || ma.dataset.liveWysiwygNavTitleSync) return;
+      ma.dataset.liveWysiwygNavTitleSync = '1';
+      var titleTimer = null;
+      var lastTitle = '';
+      ma.addEventListener('input', function () {
+        clearTimeout(titleTimer);
+        titleTimer = setTimeout(function () {
+          var parsed = parseFrontmatter(ma.value);
+          if (!parsed.frontmatter) return;
+          var titleMatch = parsed.frontmatter.match(/^title:\s*(.+)$/m);
+          var title = titleMatch ? titleMatch[1].replace(/^['"]|['"]$/g, '').trim() : '';
+          if (title && title !== lastTitle) {
+            lastTitle = title;
+            _updateNavItemTitle(_getCurrentSrcPath(), title);
+            _refreshFocusTitle(title);
+          }
+        }, 100);
+      });
     })();
 
     (function () {
@@ -17949,31 +20051,6 @@
       wysiwygEditor.toolbar.appendChild(btn);
     })();
 
-    (function attachContentSubmenuButton() {
-      if (!wysiwygEditor || !wysiwygEditor.toolbar) return;
-      if (wysiwygEditor.toolbar.querySelector('.live-wysiwyg-content-btn')) return;
-      if (!_isMaterialThemeDetected()) return;
-      var contentBtn = document.createElement('button');
-      contentBtn.type = 'button';
-      contentBtn.className = 'md-toolbar-button live-wysiwyg-content-btn';
-      contentBtn.title = 'Page Management';
-      contentBtn.innerHTML = 'Content <span class="live-wysiwyg-page-submenu-arrow">\u25B6</span>';
-      contentBtn.style.cssText = 'font-size:.7rem;padding:2px 6px;';
-      var submenuOpen = false;
-      contentBtn.addEventListener('click', function () {
-        submenuOpen = !submenuOpen;
-        var arrow = contentBtn.querySelector('.live-wysiwyg-page-submenu-arrow');
-        if (arrow) arrow.classList.toggle('live-wysiwyg-page-submenu-arrow--open', submenuOpen);
-        if (submenuOpen) {
-          _createPageSubmenu(contentBtn);
-        } else {
-          var existing = document.querySelector('.live-wysiwyg-page-submenu');
-          if (existing) existing.parentNode.removeChild(existing);
-        }
-      });
-      wysiwygEditor.toolbar.appendChild(contentBtn);
-    })();
-
     if (wysiwygEditor) {
       wysiwygEditor.switchToMode(preferredMode, true);
       var appliedReadModeSelection = readonly_to_edit_mode_text_selection(wysiwygEditor);
@@ -18008,8 +20085,9 @@
   function observeForTextarea() {
     var textarea = document.querySelector('.live-edit-source');
     if (!textarea || textarea.classList.contains('live-edit-hidden')) return false;
+    var focusNavRelaunch = !!window.__liveWysiwygEarlyOverlay;
     var cookieEnabled = isEditorEnabledByCookie();
-    var shouldAutoload = cookieEnabled !== null ? cookieEnabled : (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload);
+    var shouldAutoload = focusNavRelaunch || (cookieEnabled !== null ? cookieEnabled : (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload));
     ensureToggleButton(textarea, false);
     if (shouldAutoload) {
       replaceTextareaWithWysiwyg(textarea);
@@ -18028,59 +20106,87 @@
     return false;
   }
 
+  function _watchForEditButton(retryCount) {
+    if (_autoClickEditButton()) {
+      _deleteCookie('live_wysiwyg_focus_nav_retry');
+      return;
+    }
+
+    var controls = document.querySelector('.live-edit-controls');
+    if (controls) {
+      var observer = new MutationObserver(function (mutations) {
+        if (_autoClickEditButton()) {
+          observer.disconnect();
+          _deleteCookie('live_wysiwyg_focus_nav_retry');
+        }
+      });
+      observer.observe(controls, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'disabled'] });
+      setTimeout(function () {
+        observer.disconnect();
+        if (!document.querySelector('.live-edit-source:not(.live-edit-hidden)')) {
+          _handleEditButtonFail(retryCount);
+        } else {
+          _deleteCookie('live_wysiwyg_focus_nav_retry');
+        }
+      }, 8000);
+      return;
+    }
+
+    var bodyObserver = new MutationObserver(function () {
+      if (document.querySelector('.live-edit-controls')) {
+        bodyObserver.disconnect();
+        _watchForEditButton(retryCount);
+      }
+    });
+    bodyObserver.observe(document.body, { childList: true, subtree: true });
+    setTimeout(function () {
+      bodyObserver.disconnect();
+      if (!document.querySelector('.live-edit-source:not(.live-edit-hidden)')) {
+        _handleEditButtonFail(retryCount);
+      } else {
+        _deleteCookie('live_wysiwyg_focus_nav_retry');
+      }
+    }, 8000);
+  }
+
+  function _handleEditButtonFail(retryCount) {
+    if (retryCount < 3) {
+      _setCookie('live_wysiwyg_focus_nav_retry', String(retryCount + 1), 30);
+      _setCookie('live_wysiwyg_focus_nav', '1', 60);
+      var overlay = window.__liveWysiwygEarlyOverlay;
+      if (overlay) {
+        var txt = overlay.querySelector('div[style*="font-size"]');
+        if (txt) txt.textContent = 'Re-establishing connection... (attempt ' + (retryCount + 2) + '/4)';
+      }
+      setTimeout(function () { location.reload(); }, 500);
+    } else {
+      _deleteCookie('live_wysiwyg_focus_nav_retry');
+      var overlay = window.__liveWysiwygEarlyOverlay;
+      if (overlay) {
+        var spinner = overlay.querySelector('div[style*="border-radius:50%"]');
+        if (spinner) spinner.style.display = 'none';
+        var txt = overlay.querySelector('div[style*="font-size"]');
+        if (txt) txt.textContent = 'Connection could not be established. Press ESC to exit focus mode.';
+      }
+      document.addEventListener('keydown', function escExit(e) {
+        if (e.key === 'Escape') {
+          document.removeEventListener('keydown', escExit);
+          if (window.__liveWysiwygEarlyOverlay) {
+            window.__liveWysiwygEarlyOverlay.parentNode.removeChild(window.__liveWysiwygEarlyOverlay);
+            window.__liveWysiwygEarlyOverlay = null;
+          }
+        }
+      });
+    }
+  }
+
   function init() {
     if (!observeForTextarea()) {
       startBodyObserver();
       if (window.__liveWysiwygEarlyOverlay) {
         var retryCookie = _getCookie('live_wysiwyg_focus_nav_retry');
         var retryCount = retryCookie ? parseInt(retryCookie, 10) : 0;
-        var editClickAttempts = 0;
-        var editClickInterval = setInterval(function () {
-          editClickAttempts++;
-          if (_autoClickEditButton()) {
-            clearInterval(editClickInterval);
-            return;
-          }
-          if (editClickAttempts >= 20) {
-            clearInterval(editClickInterval);
-          }
-        }, 250);
-
-        setTimeout(function () {
-          clearInterval(editClickInterval);
-          if (!document.querySelector('.live-edit-source:not(.live-edit-hidden)')) {
-            if (retryCount < 3) {
-              _setCookie('live_wysiwyg_focus_nav_retry', String(retryCount + 1), 30);
-              _setCookie('live_wysiwyg_focus_nav', '1', 60);
-              var overlay = window.__liveWysiwygEarlyOverlay;
-              if (overlay) {
-                var txt = overlay.querySelector('div[style*="font-size"]');
-                if (txt) txt.textContent = 'Re-establishing connection... (attempt ' + (retryCount + 2) + '/4)';
-              }
-              setTimeout(function () { location.reload(); }, 500);
-            } else {
-              _deleteCookie('live_wysiwyg_focus_nav_retry');
-              var overlay = window.__liveWysiwygEarlyOverlay;
-              if (overlay) {
-                var spinner = overlay.querySelector('div[style*="border-radius:50%"]');
-                if (spinner) spinner.style.display = 'none';
-                var txt = overlay.querySelector('div[style*="font-size"]');
-                if (txt) txt.textContent = 'Connection could not be established. Press ESC to exit focus mode.';
-              }
-              document.addEventListener('keydown', function escExit(e) {
-                if (e.key === 'Escape') {
-                  document.removeEventListener('keydown', escExit);
-                  if (window.__liveWysiwygEarlyOverlay) {
-                    window.__liveWysiwygEarlyOverlay.parentNode.removeChild(window.__liveWysiwygEarlyOverlay);
-                    window.__liveWysiwygEarlyOverlay = null;
-                  }
-                }
-              });
-            }
-          } else {
-            _deleteCookie('live_wysiwyg_focus_nav_retry');
-          }
-        }, 5000);
+        _watchForEditButton(retryCount);
       }
     } else if (window.__liveWysiwygEarlyOverlay) {
       _deleteCookie('live_wysiwyg_focus_nav_retry');
@@ -18093,8 +20199,11 @@
     if (state && state.srcPath) {
       _doAjaxNavigate(location.href, '', state.srcPath);
     } else {
+      var popOv = _showFullScreenTransition('Navigating...');
       _setCookie('live_wysiwyg_focus_nav', '1', 60);
-      location.reload();
+      _fadeOverlayToOpaque(popOv, function () {
+        location.reload();
+      });
     }
   });
 

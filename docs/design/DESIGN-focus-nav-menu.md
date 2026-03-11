@@ -180,12 +180,22 @@ Every operation pushes to undo stack, clears redo stack. Undo pops and computes 
 
 ### Arrow Navigation
 
-- **Up/Down**: Reorder within folder, skip sections (unless Shift held)
+- **Up/Down**: Reorder within folder. Sections (folders) are treated as same-level peers — a page moves one position at a time past sections, not over them. The moved page gets a midpoint weight between its new adjacent siblings (which may be section index.md weights via `_getItemWeight`).
 - **Left**: Move to parent folder (no-op and hidden at root)
 - **Right**: Move into adjacent folder below (or above if none below). No folders → new folder prompt
 - **Shift+Up**: Move into deepest child of section above
 - **Shift+Down**: Move into first level of section below
 - **Shift+Right**: Always prompt for new/choose folder
+
+### Root Index (`index.md`)
+
+The root-level `index.md` (src_path `'index.md'`) receives special treatment:
+
+- **Never assigned a weight**: Normalization strips any existing weight (`weight: null` op) and skips it in the weight distribution. `_isRootIndex(item)` helper identifies it.
+- **Always stays first**: `_moveNavItemUp` blocks any item from moving above root index at the top level.
+- **No arrows**: `_createNavWeightControls` hides all arrow buttons (`display:none`) for root index.
+- **Gear with disabled weight**: Settings gear is available (skips `_checkNormalizationPrerequisite`) but the weight input is disabled. Other fields (title, headless, retitled, empty) remain editable. `_applySettingsGearChanges` skips disabled inputs.
+- **No warning/question icons**: Weight-exceeds and unweighted caution icons are suppressed.
 
 ### Nav Item Controls Layout
 
@@ -210,7 +220,13 @@ Before any arrow move is allowed, `_checkNormalizationPrerequisite` verifies tha
 
 ### Weight Adjustment
 
-The effective default weight is `default_page_weight` from the nav-weight config if it is a positive number, otherwise `1000`. This avoids a JavaScript falsy trap where a configured value of `0` would be treated as unset. Increment = `default_page_weight / (count + 1)`. Moving between neighbors: midpoint. Moving to bottom: last weight + increment. Normalization: evenly distributed `weight_i = increment * (i + 1)`, always strictly between `0` and `default_page_weight` (the `+1` in the denominator ensures the last page never reaches `default_page_weight`).
+The effective default weight is `default_page_weight` from the nav-weight config if it is a positive number, otherwise `1000`. This avoids a JavaScript falsy trap where a configured value of `0` would be treated as unset.
+
+**Normalization increment**: `Math.floor(defaultWeight / Math.max(10, count + 1))`. With ≤9 items, the divisor is 10, giving increments of `defaultWeight/10` (e.g., 100 for default 1000). With >9 items the divisor scales to `count+1`. All weights are evenly distributed as `weight_i = increment * (i + 1)`, always strictly between `0` and `default_page_weight`.
+
+**Move increment**: Same formula `Math.max(1, Math.round(defWeight / Math.max(10, count + 1)))`. Moving between neighbors computes the midpoint: `round((prevPrevWeight + prevWeight) / 2)`. Moving to bottom: last weight + increment.
+
+**Folder index.md as peers**: Folder `index.md` pages with `retitled: true` and `empty: true` participate in the same-level weight distribution alongside regular pages. Their effective default for UI warnings is `default_page_weight` (not `index_weight`). The `_executeMoveWeightOp` function uses `_getItemWeight()` (which reads `index_meta.weight` for sections) to correctly include section weights in midpoint calculations. Root index.md is filtered out of the siblings list.
 
 ## Content Integrity
 

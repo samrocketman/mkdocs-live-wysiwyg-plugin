@@ -1,0 +1,48 @@
+---
+description: WebSocket wrapper that intercepts redirect messages from the upstream mkdocs-live-edit-plugin
+alwaysApply: true
+---
+
+# Upstream WebSocket Redirect Suppression
+
+The WYSIWYG plugin wraps `WebSocket.prototype.onmessage` to intercept `redirect` messages sent by the upstream `mkdocs-live-edit-plugin`. This wrapper is critical for preventing unwanted navigation during batch operations and migration.
+
+## Why This Exists
+
+The upstream `mkdocs-live-edit-plugin` (`live-edit.js`) connects a WebSocket on `DOMContentLoaded`. When the server has a pending `new_page["new_url"]` (set after file creation or rename), it sends `{ action: 'redirect', new_url: '...' }` on the next `ready` message. The upstream handler calls `window.location.href = data.new_url`, which navigates the page away.
+
+Chrome does not allow `Object.defineProperty(location, ...)` — all such overrides throw `TypeError: Cannot redefine property`. This means `location.reload`, `location.assign`, `location.replace`, and `location.href` cannot be intercepted via property redefinition.
+
+The WebSocket wrapper is the only reliable cross-browser mechanism to prevent the upstream redirect from firing during batch operations.
+
+## How It Works
+
+1. **Wrapper installed synchronously** at the top of the IIFE, before the upstream script creates its WebSocket (upstream connects on `DOMContentLoaded`; the WYSIWYG `<script>` tag appears earlier in the HTML).
+
+2. **`WebSocket.prototype.onmessage` setter** is patched. Every `ws.onmessage = fn` call (including from upstream code) gets a transparent wrapper that checks `_reloadGuardActive || _wsRedirectSuppressActive` before passing `redirect` messages through.
+
+3. **Two suppress triggers:**
+   - `_wsRedirectSuppressActive` — set early when `live_wysiwyg_migration_normalize` cookie is detected (covers the 600ms gap before Phase 8 installs the reload guard)
+   - `_reloadGuardActive` — set by `_installReloadGuard()` during any batch operation
+
+4. **Suppressed URLs stored** in `_suppressedRedirectUrl` for potential use as a navigation target after the operation completes.
+
+## Rules
+
+1. **The wrapper must remain at the top of the IIFE.** It must execute synchronously before `DOMContentLoaded` so it's installed before the upstream WebSocket is created. Moving it into a `DOMContentLoaded` callback would create a race condition.
+
+2. **Only `redirect` messages are suppressed.** All other WebSocket message types (`connected`, `get_contents`, `set_contents`, `rename_file`, `delete_file`) must pass through unmodified. Never broaden the suppression filter.
+
+3. **The wrapper uses `WebSocket.prototype.onmessage` because the upstream code uses `ws.onmessage = fn`.** If the upstream plugin ever switches to `ws.addEventListener('message', ...)`, the wrapper must also intercept `addEventListener`.
+
+4. **`_wsRedirectSuppressActive` is independent of `_reloadGuardActive`.** The early suppress flag covers the time between page load and reload guard installation (e.g., the 600ms Phase 8 delay). The reload guard covers batch operations. The wrapper checks both with `||`.
+
+5. **`_removeReloadGuard` clears `_wsRedirectSuppressActive`.** This ensures the suppress flag doesn't persist after the operation completes.
+
+## Upstream Dependency
+
+This wrapper depends on the upstream `mkdocs-live-edit-plugin` using `ws.onmessage` (not `addEventListener`) and sending redirect messages as `{ action: 'redirect', new_url: string }`. Changes to the upstream protocol or message dispatch mechanism require updating this wrapper.
+
+## Related: Plugin Load Order
+
+The WYSIWYG plugin is always listed after `mkdocs-live-edit-plugin` in `mkdocs.yml`. Because the WYSIWYG `on_page_content` prepends assets while the upstream appends, the WYSIWYG `<script>` tags appear **before** the upstream `<script>` in the final HTML. This load order is what makes the wrapper possible.

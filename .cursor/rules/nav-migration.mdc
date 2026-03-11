@@ -1,0 +1,52 @@
+# Nav-to-Weight Migration
+
+The WYSIWYG editor migrates sites from `mkdocs.yml` `nav` key to `mkdocs-nav-weight` frontmatter. The migration restructures the filesystem to match the nav hierarchy because `mkdocs-nav-weight` derives section grouping from directories, not from arbitrary nav key groupings.
+
+## Seven Phases (strict order)
+
+1. **Duplicate detection.** Abort with scrollable error dialog if any page path appears more than once in the nav.
+2. **Build relative link index.** Read all markdown files to map every relative link (outbound and resolved). Used by Phases 4 and 7.
+3. **Create directory structure.** Slugify each section title into a directory name. Create `index.md` for sections that lack one. For sections that claim an existing `index.md` child, always split it via `regenerate-index` op: rename the existing content to a slug-based page, create a new thin `index.md` (`retitled: true`, `empty: true`). The section's `index.md` is always a thin template after migration.
+4. **Move documents.** Move every nav-referenced page to its target path derived from the section hierarchy. Rewrite outbound links in moved files. Rewrite inbound links in all files that reference moved files. Uses existing `rename-page` op (delete-then-create + link rewriting).
+5. **Mark hidden.** Any markdown file not in the nav gets `headless: true`.
+6. **Set titles and weights.** Set `title` + `weight` on all pages per nav order (increments of 100). Section indexes also get `retitled: true`. Root `index.md` gets title only — **never a weight**. Remove the `nav` key from mkdocs.yml (dual-write via `_updateMkdocsYml`).
+7. **Consolidate hidden docs.** Re-scan links. For each hidden doc, if ALL inbound links agree on a single target directory (i.e., the directory that would make every reference a same-directory `filename.md` link), move the hidden doc there and rewrite links. Skip if referencing files disagree on target directory.
+
+## Rules
+
+1. **Root `index.md` never gets a weight.** It receives only a title (e.g., `Home`). Its position is controlled by the `index_weight` config default.
+
+2. **Weight sequence starts at 100.** Items at each directory level get weights 100, 200, 300... Sections and pages share the same sequence at their level.
+
+3. **Section directory names are slugified titles.** Use `_migrationSectionSlug`: lowercase, non-alphanumeric → hyphens, trim leading/trailing hyphens.
+
+4. **Existing directories are reused.** If a section slug matches an existing directory, use it — do not create a duplicate.
+
+5. **Non-index pages named `index.md` must be renamed.** If a page reference points to an `index.md` but it's not the section's own index (e.g., `errors/index.md` listed as a leaf page under a different section), rename it to a slug derived from its title to avoid collisions.
+
+6. **Claimed indexes are always split.** Every section `index.md` becomes `retitled: true`, `empty: true` after migration. Existing content is renamed to a slug-based page via `_generateFilename` and receives its own title + weight in Phase 6. The split uses the `regenerate-index` op type (runs in the earliest batch phase).
+
+7. **Link rewriting uses existing infrastructure.** `_rewriteLinksInContent` for outbound, `_rewriteInboundLinks` for inbound, `_findExclusionZones` to protect code blocks. Never rewrite links inside fenced code, inline code, or HTML comments.
+
+8. **Phase 7 is opportunistic.** Hidden doc consolidation must never break links. If inbound links from different directories disagree on where the hidden doc should live, skip it entirely.
+
+9. **All ops go through `_navBatchQueue`.** The migration pushes ops and then the standard batch executor handles phased ordering and sequential execution.
+
+10. **Duplicate check is mandatory before any filesystem changes.** Phase 1 must run and pass before Phases 2–7 begin. A nav with duplicate entries would cause conflicting moves.
+
+11. **The confirmation dialog shows a summary.** Create count, move count, total nav pages, hidden count, and a note about automatic link rewriting. Use `_showNavDialogHtml` for rich HTML content.
+
+## Key Functions
+
+| Function | Purpose |
+|----------|---------|
+| `_migrationCheckDuplicates` | Phase 1: find duplicate page paths in nav |
+| `_migrationSectionSlug` | Slugify section title → directory name |
+| `_migrationComputeTargetTree` | Compute target paths for all pages and indexes |
+| `_buildMigrationOps` | Generate all batch ops for Phases 3–7 |
+| `_startMigrationFlow` | Orchestrate: parse, validate, confirm, queue |
+| `_showNavDialogHtml` | Dialog with scrollable HTML body |
+
+## Design Document
+
+See `docs/design/DESIGN-nav-migration.md` for the full specification with examples.

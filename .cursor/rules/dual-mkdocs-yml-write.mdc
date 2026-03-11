@@ -1,0 +1,24 @@
+---
+description: Any feature that edits mkdocs.yml must use _updateMkdocsYml(transformFn) for automatic dual-write
+alwaysApply: true
+---
+
+# Dual mkdocs.yml Write
+
+When `techdocs-preview.sh` launches the MkDocs server, it copies the user's `mkdocs.yml` to `$TMPDIR/original-mkdocs.yml` and generates a new `mkdocs.yml` with techdocs-core plugins. On shutdown it restores the original. Any feature that edits `mkdocs.yml` must also apply the same edit to the original so the change persists across server restarts.
+
+## Mechanism
+
+- `plugin.py` detects `$TMPDIR/original-mkdocs.yml` in `on_startup` and injects `liveWysiwygOriginalMkdocsYml` (absolute path string or `null`) into the JS preamble.
+- The live-edit-plugin WebSocket accepts absolute paths (Python's `Path(docs_dir) / absolute_path` resolves to the absolute path).
+- `_updateMkdocsYml(transformFn)` is the single centralized function that handles dual-write. It reads `../mkdocs.yml`, applies `transformFn`, writes it back, then does the same for `liveWysiwygOriginalMkdocsYml` if it exists.
+
+## Rules
+
+1. **Always use `_updateMkdocsYml(transformFn)` to modify mkdocs.yml.** Never call `_wsSetContents('../mkdocs.yml', ...)` directly. The central function handles the dual-write automatically.
+
+2. **Express changes as a transform function** `function(yml) { return modifiedYml; }` that receives the current YAML content and returns the updated content. The same transform is applied independently to both the generated and original files.
+
+3. **For batch ops**, set `transform` on the op object: `{ type: 'update-mkdocs-yml', transform: myTransformFn }`. The executor `_executeUpdateMkdocsYmlOp` delegates to `_updateMkdocsYml(op.transform)`.
+
+4. **Do not store pre-computed content on the op.** The two files have different content (the generated one includes techdocs-core plugins, hooks, etc.). The transform function is applied to each file's actual content at execution time.

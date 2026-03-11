@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
-import re
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -119,6 +119,7 @@ class LiveWysiwygPlugin(BasePlugin):
 
     config_scheme = (
         ("autoload_wysiwyg", config_options.Type(bool, default=True)),
+        ("user_docs_dir", config_options.Type(str, default="")),
     )
 
     is_serving: bool = False
@@ -127,9 +128,76 @@ class LiveWysiwygPlugin(BasePlugin):
         self, *, command: Literal["build", "gh-deploy", "serve"], dirty: bool
     ) -> None:
         self.is_serving = command == "serve"
+        self._link_check_port = None
+        self._link_check_server = None
+        self._link_index: dict = {}
+        tmpdir = os.environ.get("TMPDIR", "")
+        original = Path(tmpdir) / "original-mkdocs.yml" if tmpdir else None
+        self._original_mkdocs_yml = (
+            str(original) if original and original.is_file() else None
+        )
 
-    def _collect_nav_tree(self, items) -> list:
-        """Walk nav items recursively, producing a JSON-serializable tree."""
+    def on_config(self, config: MkDocsConfig, **_) -> MkDocsConfig | None:
+        if not self.is_serving:
+            return config
+        if self._link_check_server is not None:
+            return config
+
+        from .link_check_server import start_link_check_server
+
+        dev_addr = config.get("dev_addr")
+        host = dev_addr.host if dev_addr else "127.0.0.1"
+        docs_dir = str(config["docs_dir"])
+        walk_dir = self._resolve_docs_dir(config, docs_dir)
+        server, port = start_link_check_server(
+            host, docs_dir, self._link_index, walk_dir=walk_dir,
+        )
+        self._link_check_server = server
+        self._link_check_port = port
+        return config
+
+    def _resolve_docs_dir(self, config: MkDocsConfig, default: str) -> str:
+        """Return the real docs directory for filesystem walks.
+
+        Resolution order:
+        1. This plugin's ``user_docs_dir`` option.
+        2. The upstream ``mkdocs-live-edit-plugin``'s ``user_docs_dir``.
+        3. The MkDocs ``docs_dir`` config (*default*).
+
+        The monorepo plugin (used by techdocs-core) replaces ``docs_dir``
+        with a temporary directory, so the MkDocs value cannot be relied on.
+        ``user_docs_dir`` points to the real source tree where the
+        WebSocket server reads and writes files.
+        """
+        own = self.config.get("user_docs_dir", "")
+        if own:
+            return str(Path(own).resolve())
+        plugins = config.get("plugins", {})
+        live_edit = plugins.get("live-edit") if plugins else None
+        if live_edit is not None:
+            upstream = getattr(live_edit, "config", {}).get("user_docs_dir")
+            if upstream:
+                return str(Path(upstream).resolve())
+        return default
+
+    @staticmethod
+    def _title_from_src_path(src_path: str) -> str:
+        """Derive a human-readable title from a source file path."""
+        p = Path(src_path)
+        name = p.stem
+        if name == "index":
+            name = p.parent.name or "Home"
+        return name.replace("-", " ").replace("_", " ").title()
+
+    def _collect_nav_tree(self, items, *, title_cache=None) -> list:
+        """Walk nav items recursively, producing a JSON-serializable tree.
+
+        *title_cache* (dict mapping src_path → title) is used to fill in
+        titles that MkDocs hasn't resolved yet (pages processed after the
+        current one during a sequential build).
+        """
+        if title_cache is None:
+            title_cache = {}
         result = []
         for item in items:
             if isinstance(item, Section):
@@ -144,7 +212,9 @@ class LiveWysiwygPlugin(BasePlugin):
                 node = {
                     "type": "section",
                     "title": item.title or "",
-                    "children": self._collect_nav_tree(item.children),
+                    "children": self._collect_nav_tree(
+                        item.children, title_cache=title_cache
+                    ),
                     "src_path": (
                         index_page.file.src_path if index_page else None
                     ),
@@ -161,12 +231,18 @@ class LiveWysiwygPlugin(BasePlugin):
                 }
                 result.append(node)
             elif hasattr(item, "file"):
+                src = item.file.src_path
+                title = (
+                    item.title
+                    or title_cache.get(src)
+                    or self._title_from_src_path(src)
+                )
                 node = {
                     "type": "page",
-                    "title": item.title or "",
+                    "title": title,
                     "url": item.url,
-                    "src_path": item.file.src_path,
-                    "isIndex": item.file.src_path.endswith("index.md"),
+                    "src_path": src,
+                    "isIndex": src.endswith("index.md"),
                     "weight": item.meta.get("weight"),
                     "headless": item.meta.get("headless"),
                     "retitled": item.meta.get("retitled"),
@@ -181,7 +257,7 @@ class LiveWysiwygPlugin(BasePlugin):
         if not self.is_serving:
             return nav
 
-        self._link_index = {}
+        self._nav_title_cache = getattr(self, "_nav_title_cache", {})
 
         self._nav_ref = nav
         self._nav_data = self._collect_nav_tree(nav.items)
@@ -233,11 +309,6 @@ class LiveWysiwygPlugin(BasePlugin):
 
         return nav
 
-    _RE_MD_LINK = re.compile(r'(?<!!)\[([^\]]*)\]\(([^)]+)\)')
-    _RE_MD_IMAGE = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
-    _RE_IMG_TAG = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']')
-    _RE_REF_DEF = re.compile(r'^\[([^\]]+)\]:\s+(\S+)', re.MULTILINE)
-
     def on_page_markdown(
         self, markdown: str, /, *, page, config, files, **_
     ) -> str | None:
@@ -245,48 +316,15 @@ class LiveWysiwygPlugin(BasePlugin):
             return markdown
 
         src = page.file.src_path
-        refs = []
 
-        for m in self._RE_MD_LINK.finditer(markdown):
-            target = m.group(2).split("#")[0].split("?")[0]
-            if target and not target.startswith(
-                ("http://", "https://", "#", "mailto:")
-            ):
-                refs.append(
-                    {"type": "link", "target": target, "offset": m.start()}
-                )
+        if page.title:
+            if not hasattr(self, "_nav_title_cache"):
+                self._nav_title_cache = {}
+            self._nav_title_cache[src] = page.title
 
-        for m in self._RE_MD_IMAGE.finditer(markdown):
-            target = m.group(2).split("#")[0].split("?")[0]
-            if target and not target.startswith(("http://", "https://")):
-                refs.append(
-                    {"type": "image", "target": target, "offset": m.start()}
-                )
+        from .link_check_server import _extract_refs
 
-        for m in self._RE_IMG_TAG.finditer(markdown):
-            target = m.group(1)
-            if target and not target.startswith(
-                ("http://", "https://", "data:")
-            ):
-                refs.append(
-                    {"type": "img_tag", "target": target, "offset": m.start()}
-                )
-
-        for m in self._RE_REF_DEF.finditer(markdown):
-            target = m.group(2).split("#")[0].split("?")[0]
-            if target and not target.startswith(
-                ("http://", "https://", "#", "mailto:")
-            ):
-                refs.append(
-                    {
-                        "type": "ref_def",
-                        "ref_id": m.group(1),
-                        "target": target,
-                        "offset": m.start(),
-                    }
-                )
-
-        self._link_index[src] = refs
+        self._link_index[src] = _extract_refs(markdown)
         return markdown
 
     def on_page_content(
@@ -355,8 +393,11 @@ class LiveWysiwygPlugin(BasePlugin):
         )
 
         nav_ref = getattr(self, "_nav_ref", None)
+        title_cache = getattr(self, "_nav_title_cache", {})
         nav_data = (
-            self._collect_nav_tree(nav_ref.items) if nav_ref else []
+            self._collect_nav_tree(nav_ref.items, title_cache=title_cache)
+            if nav_ref
+            else []
         )
         nw_config = getattr(self, "_nw_config", {"enabled": False})
         has_nav_key = getattr(self, "_has_nav_key", False)
@@ -376,6 +417,13 @@ class LiveWysiwygPlugin(BasePlugin):
         )
         preamble_parts.append(
             f"const liveWysiwygLinkIndex = {json.dumps(link_index)};\n"
+        )
+        preamble_parts.append(
+            f"const liveWysiwygOriginalMkdocsYml = {json.dumps(self._original_mkdocs_yml)};\n"
+        )
+        link_check_port = getattr(self, "_link_check_port", None)
+        preamble_parts.append(
+            f"const liveWysiwygLinkCheckPort = {json.dumps(link_check_port)};\n"
         )
 
         preamble = "".join(preamble_parts)
@@ -441,9 +489,9 @@ class LiveWysiwygPlugin(BasePlugin):
             'var o=document.createElement("div");'
             'o.className="live-wysiwyg-early-overlay";'
             'o.style.cssText="position:fixed;inset:0;z-index:99989;'
-            'background:rgba(0,0,0,.18);'
+            'background:rgba(0,0,0,1);'
             'display:flex;align-items:center;justify-content:center;'
-            'flex-direction:column;gap:12px;";'
+            'flex-direction:column;gap:12px;transition:opacity .6s ease-out;";'
             'var s=document.createElement("div");'
             's.style.cssText="width:24px;height:24px;border:3px solid rgba(255,255,255,.25);'
             'border-top-color:rgba(255,255,255,.75);border-radius:50%;'
@@ -472,3 +520,23 @@ class LiveWysiwygPlugin(BasePlugin):
             f'<script>{preamble}\n{integration_script}</script>'
         )
         return f"{assets}\n{html}"
+
+    def on_post_build(self, *, config, **_) -> None:
+        """Snapshot all resolved page titles after the full build.
+
+        ``_nav_title_cache`` maps ``src_path`` → title and persists across
+        rebuilds.  On the *next* rebuild, ``_collect_nav_tree`` uses the
+        cache to fill in titles for pages that haven't been processed yet
+        (MkDocs processes pages sequentially, so unprocessed pages have
+        empty titles at the time ``on_page_content`` runs for earlier pages).
+        """
+        if not self.is_serving:
+            return
+        nav_ref = getattr(self, "_nav_ref", None)
+        if not nav_ref:
+            return
+        cache = getattr(self, "_nav_title_cache", {})
+        for page in nav_ref.pages:
+            if page.title:
+                cache[page.file.src_path] = page.title
+        self._nav_title_cache = cache

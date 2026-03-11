@@ -1,0 +1,22 @@
+---
+description: Caution system resolve operations must only remove feature-specific reasons
+alwaysApply: true
+---
+
+# Caution Resolve Scoping
+
+Multiple features can add caution reasons to the same page (e.g. nav migration adds "Link integrity may need attention", dead link finder adds "Internal dead links found" / "External dead links found"). When a feature resolves its own cautions, it must **only remove its own reasons** — never clear the entire caution entry or wipe all cautions indiscriminately.
+
+## Rules
+
+1. **Remove only your reasons.** When resolving a caution, filter out only the reason strings your feature created. Use `_stripDeadLinkCautionReasons` or `_removeCautionReason` as the pattern — iterate `reasons[]`, splice only matching entries.
+
+2. **Preserve the entry if other reasons remain.** After removing your reasons, check if `reasons.length` is still > 0. Only delete the caution entry and remove the nav icon when the array is empty.
+
+3. **Never call `_setCautionPages([])` from feature-specific resolve.** Clearing all cautions is only acceptable for an explicit "Resolve All Cautions" action in the caution popup itself, not from feature panels like the dead link panel.
+
+4. **Nav icon removal requires empty reasons.** Only remove `.live-wysiwyg-nav-caution` icon and `.live-wysiwyg-nav-caution-item` class when the page's caution entry is fully deleted (no reasons left from any feature).
+
+5. **Each feature owns its reason strings.** Document which reason strings a feature uses so other features don't accidentally match them. Current inventory:
+   - Nav migration: `"Link integrity may need attention"`
+   - Dead link finder: `"Internal dead links found"`, `"External dead links found"`

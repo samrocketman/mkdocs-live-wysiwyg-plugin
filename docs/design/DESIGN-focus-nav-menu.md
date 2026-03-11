@@ -136,11 +136,16 @@ Operations are assembled in two groups and executed in this order:
 
 **Group A — Normalization (runs first, if `_navNormalizeAllPending`):**
 
-All normalization ops from `_collectNormalizeOps` are expanded and internally ordered:
+All normalization ops from `_collectNormalizeOps` are kept in their generated **bottom-up, level-grouped** order. `_collectNormalizeOps` recurses into children **before** processing the current level, so the deepest folders are fully normalized (rename + create + weights) before their parent folders are touched. This prevents corruption where a parent's index.md rename reads stale child state.
 
-0. **Normalize renames** (`rename-page`) — index.md regeneration renames
-1. **Normalize creates** (`create-page`) — new placeholder index.md files
-2. **Normalize weights** (`set-weight`) — evenly distributed weights across all pages
+Within each level, ops are emitted in this order:
+1. **Rename** (`rename-page`) — rename content-bearing `index.md` to a regular page file
+2. **Create** (`create-page`) — generate a new placeholder `index.md` with `retitled: true` and `empty: true`
+3. **Weights** (`set-weight`) — assign evenly distributed weights to all pages at this level (including the just-renamed file)
+
+The renamed file is included in the weight calculation for its level, ensuring it gets a proper normalized weight. Normalization renames set `skipDoubleRenderCheck: true` because the content is only having links rewritten (string manipulation), not passing through WYSIWYG — the double render check is irrelevant and would block necessary renames.
+
+When a create-page op creates a file at a path that was previously deleted (e.g., `folder/index.md` deleted by rename then recreated as placeholder), `_batchDeletedPaths[path]` is cleared so subsequent ops can correctly reference the file.
 
 Normalization runs first so that weights are in place and index files exist before the user's manual reorganization operations execute.
 
@@ -205,7 +210,7 @@ Before any arrow move is allowed, `_checkNormalizationPrerequisite` verifies tha
 
 ### Weight Adjustment
 
-The effective default weight is `default_page_weight` from the nav-weight config if it is a positive number, otherwise `1000`. This avoids a JavaScript falsy trap where a configured value of `0` would be treated as unset. Increment = `default_page_weight / (count + 1)`. Moving between neighbors: midpoint. Moving to bottom: last weight + increment. Normalization: evenly distributed `weight_i = increment * (i + 1)` up to `default_page_weight`.
+The effective default weight is `default_page_weight` from the nav-weight config if it is a positive number, otherwise `1000`. This avoids a JavaScript falsy trap where a configured value of `0` would be treated as unset. Increment = `default_page_weight / (count + 1)`. Moving between neighbors: midpoint. Moving to bottom: last weight + increment. Normalization: evenly distributed `weight_i = increment * (i + 1)`, always strictly between `0` and `default_page_weight` (the `+1` in the denominator ensures the last page never reaches `default_page_weight`).
 
 ## Content Integrity
 

@@ -9309,23 +9309,20 @@
 
     var orderedOps = [];
 
-    // Normalization FIRST so weights are assigned before user reorganization ops
+    // Normalization FIRST — ops are generated bottom-up (deepest children first)
+    // and kept in level-grouped order (rename, create, weight per level)
     if (_navNormalizeAllPending && typeof liveWysiwygNavData !== 'undefined') {
       var normOps = [];
       _collectNormalizeOps(liveWysiwygNavData, '', normOps);
-      var normRenames = [];
-      var normCreates = [];
-      var normWeights = [];
       normOps.forEach(function (normOp) {
         if (normOp.action === 'rename') {
-          normRenames.push({ type: 'rename-page', oldPath: normOp.oldPath, newPath: normOp.newPath });
+          orderedOps.push({ type: 'rename-page', oldPath: normOp.oldPath, newPath: normOp.newPath, skipDoubleRenderCheck: true });
         } else if (normOp.action === 'create') {
-          normCreates.push({ type: 'create-page', path: normOp.path, content: normOp.content });
+          orderedOps.push({ type: 'create-page', path: normOp.path, content: normOp.content });
         } else {
-          normWeights.push({ type: 'set-weight', src_path: normOp.path, weight: normOp.weight });
+          orderedOps.push({ type: 'set-weight', src_path: normOp.path, weight: normOp.weight });
         }
       });
-      orderedOps = orderedOps.concat(normRenames, normCreates, normWeights);
     }
 
     // Then user operations in phase order
@@ -9595,6 +9592,7 @@
   function _executeCreatePageOp(op) {
     if (!op.path || !op.content) return Promise.resolve();
     return _wsNewFile(op.path, '').then(function () {
+      delete _batchDeletedPaths[op.path];
       return _wsSetContents(op.path, op.content);
     });
   }
@@ -9640,7 +9638,7 @@
         updated = _updateFrontmatter(content, { title: op.newTitle }, actualOldPath.endsWith('index.md'));
       }
       var rewritten = _rewriteLinksInContent(updated, actualOldPath, op.newPath);
-      if (!_doubleRenderCheck(rewritten, actualOldPath)) {
+      if (!op.skipDoubleRenderCheck && !_doubleRenderCheck(rewritten, actualOldPath)) {
         _addCautionPage(op.oldPath);
         return Promise.reject(new Error('Double render check failed for ' + actualOldPath));
       }
@@ -9701,6 +9699,7 @@
       '\nretitled: true\nempty: true\nweight: ' + indexWeight + '\n---\nThis section covers information about ' +
       title + ' and its contents.\n';
     ops.push({ action: 'create', path: folderDir ? folderDir + '/index.md' : 'index.md', content: indexContent });
+    return newPath;
   }
 
   function _executeRecursiveNormalize() {
@@ -9714,6 +9713,7 @@
       chain = chain.then(function () {
         var p;
         if (normOp.action === 'rename') {
+          normOp.skipDoubleRenderCheck = true;
           p = _executeRenamePageOp(normOp);
         } else if (normOp.action === 'create') {
           p = _executeCreatePageOp(normOp);
@@ -9758,17 +9758,18 @@
       } else if (item.type === 'section' && item.children) {
         var indexChild = item.children.find(function (c) { return c.type === 'page' && c.isIndex; });
         var folderDir = _getDir(indexChild ? indexChild.src_path : '');
+        _collectNormalizeOps(item.children, folderDir, allOps);
         if (indexChild && !(indexChild.retitled && indexChild.empty)) {
-          _queueRenameAndRegenerateIndex(indexChild.src_path, indexChild.title || item.title, folderDir, allOps);
+          var renamedPath = _queueRenameAndRegenerateIndex(indexChild.src_path, indexChild.title || item.title, folderDir, allOps);
+          pageItems.push({ src_path: renamedPath });
         } else if (indexChild) {
           pageItems.push(indexChild);
         }
-        _collectNormalizeOps(item.children, folderDir, allOps);
       }
     }
 
     if (pageItems.length) {
-      var increment = defaultWeight / pageItems.length;
+      var increment = defaultWeight / (pageItems.length + 1);
       for (var j = 0; j < pageItems.length; j++) {
         allOps.push({ path: pageItems[j].src_path, weight: Math.round(increment * (j + 1)) });
       }

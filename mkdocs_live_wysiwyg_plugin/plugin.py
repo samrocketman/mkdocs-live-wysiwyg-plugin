@@ -131,6 +131,7 @@ class LiveWysiwygPlugin(BasePlugin):
         self._link_check_port = None
         self._link_check_server = None
         self._link_index: dict = {}
+        self._build_epoch: list[int] = [1]
         tmpdir = os.environ.get("TMPDIR", "")
         original = Path(tmpdir) / "original-mkdocs.yml" if tmpdir else None
         self._original_mkdocs_yml = (
@@ -151,6 +152,7 @@ class LiveWysiwygPlugin(BasePlugin):
         walk_dir = self._resolve_docs_dir(config, docs_dir)
         server, port = start_link_check_server(
             host, docs_dir, self._link_index, walk_dir=walk_dir,
+            build_epoch=self._build_epoch,
         )
         self._link_check_server = server
         self._link_check_port = port
@@ -257,6 +259,7 @@ class LiveWysiwygPlugin(BasePlugin):
         if not self.is_serving:
             return nav
 
+        self._build_epoch[0] += 1
         self._nav_title_cache = getattr(self, "_nav_title_cache", {})
 
         self._nav_ref = nav

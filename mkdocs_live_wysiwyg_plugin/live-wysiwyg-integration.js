@@ -7306,6 +7306,18 @@
   var _focusMdInputHandler = null;
   var _focusMdCursorHandler = null;
 
+  var _focusModeGuardActive = false;
+  var _focusModePollerTimer = null;
+  var _focusModeRebuildPromptOpen = false;
+  var _userActionInProgress = false;
+  var _focusModeBuildEpoch = null;
+  var _fmgOrigXHROpen = null;
+  var _fmgOrigXHRSend = null;
+  var _fmgOrigLocationReload = null;
+  var _fmgOrigLocationAssign = null;
+  var _fmgOrigLocationReplace = null;
+  var _fmgOrigLocationHrefDesc = null;
+
   var FOCUS_MODE_STYLE_ID = 'live-wysiwyg-focus-mode-styles';
   var _ajaxCurrentSrcPath = null;
 
@@ -7341,6 +7353,17 @@
   var _batchDeletedPaths = {};
   var _batchRenamedPaths = {};
   var _batchLinkIndex = null;
+
+  function _resolveChainedRename(path) {
+    var cur = path;
+    var visited = {};
+    while (_batchRenamedPaths[cur] && !visited[cur]) {
+      visited[cur] = true;
+      cur = _batchRenamedPaths[cur];
+    }
+    return cur;
+  }
+
   var _inMemoryRenderMode = false;
   var _isMaterialTheme = false;
 
@@ -7757,11 +7780,14 @@
         if (typeof fn !== 'function') { desc.set.call(this, fn); return; }
         var ws = this;
         desc.set.call(this, function (e) {
-          if (_wsRedirectSuppressActive || _reloadGuardActive) {
+          if (_wsRedirectSuppressActive || _reloadGuardActive || _focusModeGuardActive) {
             try {
               var data = JSON.parse(e.data);
               if (data && data.action === 'redirect' && data.new_url) {
                 _suppressedRedirectUrl = data.new_url;
+                if (_focusModeGuardActive && !_reloadGuardActive && !_userActionInProgress) {
+                  _onExternalRebuild();
+                }
                 return;
               }
             } catch (err) { /* not JSON — pass through */ }
@@ -7787,6 +7813,8 @@
   function _installReloadGuard() {
     if (_reloadGuardActive) { return; }
     _reloadGuardActive = true;
+
+    if (_focusModeGuardActive) return;
 
     _reloadGuardBeforeUnloadHandler = function (e) {
     };
@@ -7860,6 +7888,10 @@
 
   function _removeReloadGuard() {
     _reloadGuardActive = false;
+    _wsRedirectSuppressActive = false;
+
+    if (_focusModeGuardActive) return;
+
     if (_reloadGuardBeforeUnloadHandler) {
       window.removeEventListener('beforeunload', _reloadGuardBeforeUnloadHandler);
       _reloadGuardBeforeUnloadHandler = null;
@@ -7885,7 +7917,248 @@
       try { Object.defineProperty(location, 'href', _origLocationHrefDesc); } catch (e) { }
       _origLocationHrefDesc = null;
     }
-    _wsRedirectSuppressActive = false;
+  }
+
+  // ======================================================================
+  // Focus-mode persistent reload guard
+  // ======================================================================
+
+  function _installFocusModeGuard() {
+    if (_focusModeGuardActive) return;
+    _focusModeGuardActive = true;
+
+    for (var i = 0; i < _trackedLivereloadXHRs.length; i++) {
+      try { _trackedLivereloadXHRs[i].abort(); } catch (e) { /* noop */ }
+    }
+    _trackedLivereloadXHRs = [];
+
+    _fmgOrigXHROpen = XMLHttpRequest.prototype.open;
+    _fmgOrigXHRSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      if (_focusModeGuardActive && typeof url === 'string' && url.indexOf('/livereload/') !== -1) {
+        this._liveWysiwygSuppressed = true;
+        return;
+      }
+      return _fmgOrigXHROpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function () {
+      if (this._liveWysiwygSuppressed) return;
+      return _fmgOrigXHRSend.apply(this, arguments);
+    };
+
+    function _fmgLocationIntercept() {
+      if (_reloadGuardActive || _userActionInProgress) return;
+      _onExternalRebuild();
+    }
+
+    try {
+      _fmgOrigLocationReload = location.reload.bind(location);
+      Object.defineProperty(location, 'reload', {
+        configurable: true,
+        value: function () {
+          if (_focusModeGuardActive) { _fmgLocationIntercept(); return; }
+          return _fmgOrigLocationReload();
+        }
+      });
+    } catch (e) { _fmgOrigLocationReload = null; }
+    try {
+      _fmgOrigLocationAssign = location.assign.bind(location);
+      Object.defineProperty(location, 'assign', {
+        configurable: true,
+        value: function (url) {
+          if (_focusModeGuardActive) { _fmgLocationIntercept(); return; }
+          return _fmgOrigLocationAssign(url);
+        }
+      });
+    } catch (e) { _fmgOrigLocationAssign = null; }
+    try {
+      _fmgOrigLocationReplace = location.replace.bind(location);
+      Object.defineProperty(location, 'replace', {
+        configurable: true,
+        value: function (url) {
+          if (_focusModeGuardActive) { _fmgLocationIntercept(); return; }
+          return _fmgOrigLocationReplace(url);
+        }
+      });
+    } catch (e) { _fmgOrigLocationReplace = null; }
+    try {
+      _fmgOrigLocationHrefDesc = Object.getOwnPropertyDescriptor(Location.prototype, 'href') ||
+        Object.getOwnPropertyDescriptor(location, 'href');
+      if (_fmgOrigLocationHrefDesc && _fmgOrigLocationHrefDesc.set) {
+        Object.defineProperty(location, 'href', {
+          configurable: true,
+          get: _fmgOrigLocationHrefDesc.get ? _fmgOrigLocationHrefDesc.get.bind(location) : function () { return location.toString(); },
+          set: function (v) {
+            if (_focusModeGuardActive) { _fmgLocationIntercept(); return; }
+            _fmgOrigLocationHrefDesc.set.call(location, v);
+          }
+        });
+      }
+    } catch (e) { _fmgOrigLocationHrefDesc = null; }
+
+    _startFocusModeRebuildPoller();
+  }
+
+  function _removeFocusModeGuard() {
+    _focusModeGuardActive = false;
+    _focusModeRebuildPromptOpen = false;
+    _focusModeBuildEpoch = null;
+
+    if (_focusModePollerTimer) {
+      clearTimeout(_focusModePollerTimer);
+      _focusModePollerTimer = null;
+    }
+
+    if (_fmgOrigXHROpen) XMLHttpRequest.prototype.open = _fmgOrigXHROpen;
+    if (_fmgOrigXHRSend) XMLHttpRequest.prototype.send = _fmgOrigXHRSend;
+    _fmgOrigXHROpen = null;
+    _fmgOrigXHRSend = null;
+
+    if (_fmgOrigLocationReload) {
+      try { Object.defineProperty(location, 'reload', { configurable: true, value: _fmgOrigLocationReload }); } catch (e) { }
+      _fmgOrigLocationReload = null;
+    }
+    if (_fmgOrigLocationAssign) {
+      try { Object.defineProperty(location, 'assign', { configurable: true, value: _fmgOrigLocationAssign }); } catch (e) { }
+      _fmgOrigLocationAssign = null;
+    }
+    if (_fmgOrigLocationReplace) {
+      try { Object.defineProperty(location, 'replace', { configurable: true, value: _fmgOrigLocationReplace }); } catch (e) { }
+      _fmgOrigLocationReplace = null;
+    }
+    if (_fmgOrigLocationHrefDesc) {
+      try { Object.defineProperty(location, 'href', _fmgOrigLocationHrefDesc); } catch (e) { }
+      _fmgOrigLocationHrefDesc = null;
+    }
+  }
+
+  function _syncBuildEpoch() {
+    if (typeof liveWysiwygLinkCheckPort === 'undefined' || !liveWysiwygLinkCheckPort) return;
+    var host = window.location.hostname || '127.0.0.1';
+    fetch('http://' + host + ':' + liveWysiwygLinkCheckPort + '/build-epoch', { cache: 'no-store' })
+      .then(function (resp) { return resp.ok ? resp.json() : null; })
+      .then(function (data) { if (data && data.epoch != null) _focusModeBuildEpoch = data.epoch; })
+      .catch(function () {});
+  }
+
+  function _startFocusModeRebuildPoller() {
+    if (!_focusModeGuardActive) return;
+    if (typeof liveWysiwygLinkCheckPort === 'undefined' || !liveWysiwygLinkCheckPort) return;
+    if (_focusModePollerTimer) { clearTimeout(_focusModePollerTimer); _focusModePollerTimer = null; }
+
+    var host = window.location.hostname || '127.0.0.1';
+    var epochUrl = 'http://' + host + ':' + liveWysiwygLinkCheckPort + '/build-epoch';
+
+    function poll() {
+      if (!_focusModeGuardActive) return;
+      fetch(epochUrl, { cache: 'no-store' }).then(function (resp) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.json();
+      }).then(function (data) {
+        if (!_focusModeGuardActive) return;
+        var serverEpoch = data.epoch;
+        if (_focusModeBuildEpoch === null) {
+          _focusModeBuildEpoch = serverEpoch;
+          _focusModePollerTimer = setTimeout(poll, 2000);
+          return;
+        }
+        if (serverEpoch === _focusModeBuildEpoch) {
+          _focusModePollerTimer = setTimeout(poll, 2000);
+          return;
+        }
+        _focusModeBuildEpoch = serverEpoch;
+        if (_userActionInProgress || _reloadGuardActive || _focusModeRebuildPromptOpen) {
+          _focusModePollerTimer = setTimeout(poll, 2000);
+          return;
+        }
+        _onExternalRebuild();
+      }).catch(function () {
+        if (_focusModeGuardActive) _focusModePollerTimer = setTimeout(poll, 2000);
+      });
+    }
+    _focusModePollerTimer = setTimeout(poll, 2000);
+  }
+
+  function _focusModeRefreshContent() {
+    var currentSrc = _getCurrentSrcPath();
+    if (!currentSrc) return Promise.resolve();
+    var transitionOv = _showFullScreenTransition('Refreshing...');
+    return _wsGetContents(currentSrc).then(function (md) {
+      if (wysiwygEditor && wysiwygEditor._loadContent) {
+        wysiwygEditor._loadContent(md);
+      }
+      if (wysiwygEditor && wysiwygEditor._resetPristineContent) {
+        var ta = document.querySelector('.live-edit-source');
+        if (ta) wysiwygEditor._resetPristineContent(ta.value);
+      }
+      _refreshFocusToc();
+      _fadeOutOverlay(transitionOv);
+    }).catch(function () {
+      _fadeOutOverlay(transitionOv);
+    });
+  }
+
+  function _onExternalRebuild() {
+    if (_focusModeRebuildPromptOpen) return;
+    if (!_focusModeGuardActive) return;
+    _focusModeRebuildPromptOpen = true;
+
+    var saveBtn = document.querySelector('.live-edit-save-button');
+    var docDirty = saveBtn && !saveBtn.classList.contains('live-edit-hidden');
+    var navDirty = _navEditMode;
+    var hasPendingChanges = docDirty || navDirty;
+
+    var cmdSHandler = null;
+
+    if (!hasPendingChanges) {
+      _showNavDialog(
+        'An external change triggered a site rebuild.',
+        [{ text: 'Refresh', value: 'refresh', className: 'live-wysiwyg-nav-dialog-primary' }]
+      ).then(function () {
+        _focusModeRebuildPromptOpen = false;
+        _focusModeRefreshContent().then(function () {
+          _startFocusModeRebuildPoller();
+        });
+      });
+    } else {
+      cmdSHandler = function (e) {
+        if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          var primary = document.querySelector('.live-wysiwyg-nav-dialog .live-wysiwyg-nav-dialog-primary');
+          if (primary) primary.click();
+        }
+      };
+      document.addEventListener('keydown', cmdSHandler, true);
+
+      _showNavDialog(
+        'An external change triggered a site rebuild. You have unsaved changes.',
+        [
+          { text: 'Discard and Refresh', value: 'discard' },
+          { text: 'Save changes and Refresh', value: 'save', className: 'live-wysiwyg-nav-dialog-primary' }
+        ]
+      ).then(function (result) {
+        if (cmdSHandler) document.removeEventListener('keydown', cmdSHandler, true);
+        _focusModeRebuildPromptOpen = false;
+        if (result === 'save') {
+          if (_navEditMode) {
+            _confirmNavSave();
+          } else {
+            _doFocusSave().then(function () {
+              return _focusModeRefreshContent();
+            }).then(function () {
+              _startFocusModeRebuildPoller();
+            });
+          }
+        } else {
+          if (_navEditMode) _exitNavEditMode(true);
+          _focusModeRefreshContent().then(function () {
+            _startFocusModeRebuildPoller();
+          });
+        }
+      });
+    }
   }
 
   function _closeBulkWs() {
@@ -7919,9 +8192,27 @@
     });
   }
 
+  function _refreshLinkCheckPort() {
+    return fetch(window.location.href, { cache: 'no-store' })
+      .then(function (resp) { return resp.text(); })
+      .then(function (html) {
+        var m = html.match(/liveWysiwygLinkCheckPort\s*=\s*(\d+)/);
+        if (m) {
+          var newPort = parseInt(m[1], 10);
+          if (newPort && newPort !== liveWysiwygLinkCheckPort) {
+            console.info('[wysiwyg] Link check port changed: ' + liveWysiwygLinkCheckPort + ' → ' + newPort);
+            liveWysiwygLinkCheckPort = newPort;
+          }
+        }
+      })
+      .catch(function () { /* page fetch failed, keep current port */ });
+  }
+
   function _waitForRebuildAndReconnect() {
     _closeBulkWs();
     return _waitForRebuild().then(function () {
+      return _refreshLinkCheckPort();
+    }).then(function () {
       return _getOrCreateBulkWs();
     }).catch(function () {
       return _getOrCreateBulkWs();
@@ -8120,17 +8411,21 @@
 
   function _fetchLinkIndex() {
     if (typeof liveWysiwygLinkCheckPort === 'undefined' || !liveWysiwygLinkCheckPort) {
+      console.warn('[fetchLinkIndex] No port configured, using static fallback');
       var fallback = typeof liveWysiwygLinkIndex !== 'undefined' ? liveWysiwygLinkIndex : {};
       return Promise.resolve(fallback);
     }
     var host = window.location.hostname || '127.0.0.1';
     var url = 'http://' + host + ':' + liveWysiwygLinkCheckPort + '/link-index';
+    console.log('[fetchLinkIndex] Fetching from', url);
     return fetch(url).then(function (resp) {
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       return resp.json();
     }).then(function (idx) {
+      console.log('[fetchLinkIndex] SUCCESS — got', Object.keys(idx).length, 'entries from server');
       return idx;
     }).catch(function (err) {
+      console.error('[fetchLinkIndex] FAILED — using static fallback:', err.message || err);
       return typeof liveWysiwygLinkIndex !== 'undefined' ? liveWysiwygLinkIndex : {};
     });
   }
@@ -8212,7 +8507,7 @@
     var chain = Promise.resolve();
     pagesToUpdate.forEach(function (pagePath) {
       chain = chain.then(function () {
-        var actualPagePath = _batchRenamedPaths[pagePath] || pagePath;
+        var actualPagePath = _resolveChainedRename(pagePath);
         if (_batchDeletedPaths[actualPagePath]) {
           return;
         }
@@ -8379,14 +8674,28 @@
 
     var navTitle = document.createElement('label');
     navTitle.className = 'md-nav__title';
+
+    var hiddenCb = document.createElement('input');
+    hiddenCb.type = 'checkbox';
+    hiddenCb.className = 'live-wysiwyg-nav-hidden-cb';
+    hiddenCb.title = 'Show hidden pages';
+    var hiddenCookie = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_show_hidden=(\d)/) || [])[1];
+    hiddenCb.checked = hiddenCookie === '1';
+    hiddenCb.addEventListener('change', function () {
+      document.cookie = 'live_wysiwyg_show_hidden=' + (this.checked ? '1' : '0') + ';path=/;max-age=31536000;SameSite=Lax';
+      _toggleHiddenPages(sidebarEl, this.checked);
+    });
+    navTitle.appendChild(hiddenCb);
+
     var siteTitle = document.title ? document.title.split(' - ').pop().trim() : 'Navigation';
-    navTitle.textContent = siteTitle;
+    navTitle.appendChild(document.createTextNode(siteTitle));
     if (typeof liveWysiwygNavWeightConfig !== 'undefined' && !liveWysiwygNavWeightConfig.enabled) {
       var tipIcon = document.createElement('span');
       tipIcon.className = 'live-wysiwyg-nav-caution';
       tipIcon.textContent = '\u26A0';
       tipIcon.title = 'mkdocs-nav-weight not configured';
       tipIcon.addEventListener('click', function (e) {
+        e.preventDefault();
         e.stopPropagation();
         _showNavWeightTip(tipIcon);
       });
@@ -8399,6 +8708,7 @@
       coexistWarn.textContent = '\u26A0';
       coexistWarn.title = 'Nav coexistence';
       coexistWarn.addEventListener('click', function (e) {
+        e.preventDefault();
         e.stopPropagation();
         _showNavPopup(coexistWarn,
           'Both mkdocs-nav-weight and the nav key are present in mkdocs.yml. ' +
@@ -8426,6 +8736,7 @@
         weightWarn.textContent = '\u26A0';
         weightWarn.title = 'Page weights exceed default';
         weightWarn.addEventListener('click', function (e) {
+          e.preventDefault();
           e.stopPropagation();
           _showNavPopup(weightWarn,
             'Page weights in content are higher than default page weight. Increase default_page_weight to ' + suggested + '?',
@@ -8447,6 +8758,298 @@
     requestAnimationFrame(function () { _alignAllNavControls(); });
 
     sidebarEl.addEventListener('mouseleave', function () {});
+
+    _checkHiddenIndexes(sidebarEl);
+    _fetchAndInsertHiddenPages(sidebarEl);
+  }
+
+  // ======================================================================
+  // NAV MENU - Detect hidden index pages (removed from nav by plugins)
+  // ======================================================================
+
+  function _collectSectionsNeedingIndexCheck(items, out) {
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (item.type !== 'section') continue;
+      if (!item.src_path && !item.index_meta) {
+        var hasIndexChild = item.children && item.children.some(function (c) {
+          return c.type === 'page' && c.isIndex;
+        });
+        if (!hasIndexChild) {
+          var dir = _getSectionFolderDir(item) || '';
+          if (dir) out.push({ item: item, indexPath: dir + '/index.md' });
+        }
+      }
+      if (item.children) _collectSectionsNeedingIndexCheck(item.children, out);
+    }
+  }
+
+  function _checkHiddenIndexes(sidebarEl) {
+    if (typeof liveWysiwygLinkCheckPort === 'undefined' || !liveWysiwygLinkCheckPort) return;
+    if (typeof liveWysiwygNavData === 'undefined' || !liveWysiwygNavData.length) return;
+
+    var needed = [];
+    _collectSectionsNeedingIndexCheck(liveWysiwygNavData, needed);
+    if (!needed.length) return;
+
+    var paths = needed.map(function (n) { return n.indexPath; });
+    var host = window.location.hostname || '127.0.0.1';
+    var url = 'http://' + host + ':' + liveWysiwygLinkCheckPort + '/file-exists';
+
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: paths })
+    }).then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    }).then(function (data) {
+      var results = data.results || {};
+      for (var i = 0; i < needed.length; i++) {
+        var entry = needed[i];
+        var info = results[entry.indexPath];
+        if (!info || !info.exists) continue;
+        var meta = info.meta || {};
+        entry.item.src_path = entry.indexPath;
+        entry.item.index_meta = {
+          weight: meta.weight != null ? meta.weight : null,
+          headless: meta.headless || null,
+          retitled: meta.retitled || null,
+          empty: meta.empty || null
+        };
+        if (sidebarEl) {
+          var li = sidebarEl.querySelector('[data-nav-folder-dir="' + _getDir(entry.indexPath) + '"]');
+          if (li) li.setAttribute('data-nav-index-path', entry.indexPath);
+        }
+      }
+    }).catch(function () {});
+  }
+
+  // ======================================================================
+  // NAV MENU - Hidden (headless) page detection & insertion
+  // ======================================================================
+
+  function _collectNavTreePaths(items, out) {
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (item.type === 'page' && item.src_path) out[item.src_path] = true;
+      if (item.type === 'section') {
+        if (item.src_path) out[item.src_path] = true;
+        if (item.children) _collectNavTreePaths(item.children, out);
+      }
+    }
+  }
+
+  function _titleFromSrcPath(srcPath) {
+    var name = srcPath.split('/').pop().replace(/\.md$/, '');
+    if (name === 'index') {
+      var parts = srcPath.split('/');
+      name = parts.length > 1 ? parts[parts.length - 2] : 'Index';
+    }
+    return name.replace(/[-_]/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+  }
+
+  function _fetchAndInsertHiddenPages(sidebarEl) {
+    if (typeof liveWysiwygLinkCheckPort === 'undefined' || !liveWysiwygLinkCheckPort) return;
+    if (typeof liveWysiwygAllMdSrcPaths === 'undefined') return;
+    if (typeof liveWysiwygNavData === 'undefined' || !liveWysiwygNavData.length) return;
+
+    var inNav = {};
+    _collectNavTreePaths(liveWysiwygNavData, inNav);
+    var hidden = [];
+    for (var i = 0; i < liveWysiwygAllMdSrcPaths.length; i++) {
+      var p = liveWysiwygAllMdSrcPaths[i];
+      if (!inNav[p]) hidden.push(p);
+    }
+    if (!hidden.length) return;
+
+    var host = window.location.hostname || '127.0.0.1';
+    var url = 'http://' + host + ':' + liveWysiwygLinkCheckPort + '/file-exists';
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: hidden })
+    }).then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    }).then(function (data) {
+      var results = data.results || {};
+      var currentSrcPath = _getCurrentSrcPath();
+      var showHidden = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_show_hidden=(\d)/) || [])[1] === '1';
+      for (var j = 0; j < hidden.length; j++) {
+        var srcPath = hidden[j];
+        var info = results[srcPath];
+        if (!info || !info.exists) continue;
+        var meta = info.meta || {};
+        var isCurrentPage = srcPath === currentSrcPath;
+        _insertHiddenPageLi(sidebarEl, srcPath, meta, showHidden, isCurrentPage);
+      }
+      requestAnimationFrame(function () { _alignAllNavControls(); });
+    }).catch(function () {});
+  }
+
+  function _insertHiddenPageLi(sidebarEl, srcPath, meta, showByCheckbox, isCurrentPage) {
+    var dir = _getDir(srcPath);
+    var isIndex = srcPath.endsWith('index.md');
+
+    var targetUl;
+    if (dir) {
+      var sectionLi = sidebarEl.querySelector('[data-nav-folder-dir="' + dir + '"]');
+      if (sectionLi) {
+        var childNav = sectionLi.querySelector(':scope > .md-nav');
+        if (childNav) {
+          targetUl = childNav.querySelector(':scope > .md-nav__list');
+        }
+      }
+    }
+    if (!targetUl) {
+      targetUl = sidebarEl.querySelector('.md-nav--primary > .md-nav__list');
+    }
+    if (!targetUl) return;
+
+    var li = document.createElement('li');
+    li.className = 'md-nav__item live-wysiwyg-nav-hidden-page';
+    li.setAttribute('data-nav-src-path', srcPath);
+
+    if (isCurrentPage) {
+      li.classList.add('live-wysiwyg-nav-hidden-page--current');
+    }
+
+    var visible = showByCheckbox || isCurrentPage;
+    if (!visible) li.style.display = 'none';
+
+    var title = meta.title || _titleFromSrcPath(srcPath);
+
+    var syntheticItem = {
+      type: 'page',
+      title: title,
+      src_path: srcPath,
+      url: isIndex ? (dir ? dir + '/' : '') : srcPath.replace(/\.md$/, '/'),
+      isIndex: isIndex,
+      weight: meta.weight != null ? meta.weight : null,
+      headless: meta.headless || null,
+      retitled: meta.retitled || null,
+      empty: meta.empty || null
+    };
+
+    if (!isIndex &&
+        ((_navEditMode || (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)) &&
+        !(typeof liveWysiwygHasNavKey !== 'undefined' && liveWysiwygHasNavKey))) {
+      var arrowsDiv = document.createElement('div');
+      arrowsDiv.className = 'live-wysiwyg-nav-weight-controls';
+      var phUp = document.createElement('button');
+      phUp.type = 'button'; phUp.textContent = '\u25B2';
+      phUp.className = 'live-wysiwyg-nav-arrow live-wysiwyg-nav-arrow-up';
+      phUp.style.visibility = 'hidden'; phUp.disabled = true;
+      var phLeft = document.createElement('button');
+      phLeft.type = 'button'; phLeft.textContent = '\u25C0';
+      phLeft.className = 'live-wysiwyg-nav-arrow live-wysiwyg-nav-arrow-left';
+      phLeft.style.visibility = 'hidden'; phLeft.disabled = true;
+      var phTarget = document.createElement('button');
+      phTarget.type = 'button'; phTarget.textContent = '\u25CF';
+      phTarget.className = 'live-wysiwyg-nav-target-dot';
+      phTarget.style.visibility = 'hidden'; phTarget.disabled = true;
+      var phRight = document.createElement('button');
+      phRight.type = 'button'; phRight.textContent = '\u25B6';
+      phRight.className = 'live-wysiwyg-nav-arrow live-wysiwyg-nav-arrow-right';
+      phRight.style.visibility = 'hidden'; phRight.disabled = true;
+      var phDown = document.createElement('button');
+      phDown.type = 'button'; phDown.textContent = '\u25BC';
+      phDown.className = 'live-wysiwyg-nav-arrow live-wysiwyg-nav-arrow-down';
+      phDown.style.visibility = 'hidden'; phDown.disabled = true;
+      arrowsDiv.appendChild(phUp);
+      arrowsDiv.appendChild(phLeft);
+      arrowsDiv.appendChild(phTarget);
+      arrowsDiv.appendChild(phRight);
+      arrowsDiv.appendChild(phDown);
+      var gearBtn = document.createElement('button');
+      gearBtn.type = 'button';
+      gearBtn.textContent = '\u2699';
+      gearBtn.title = 'Settings';
+      gearBtn.className = 'live-wysiwyg-nav-settings-gear';
+      gearBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        _showSettingsGear(syntheticItem, 'page', gearBtn);
+      });
+      var gearWrapper = document.createElement('div');
+      gearWrapper.className = 'live-wysiwyg-nav-controls-wrapper';
+      gearWrapper.appendChild(arrowsDiv);
+      gearWrapper.appendChild(gearBtn);
+      gearWrapper.addEventListener('mouseenter', function () { _showNavItemControls(this.parentNode); });
+      gearWrapper.addEventListener('mouseleave', function () { _scheduleNavItemHide(this.parentNode); });
+      li.appendChild(gearWrapper);
+    }
+
+    var a = document.createElement('a');
+    a.className = 'md-nav__link';
+    a.href = '/' + (isIndex ? (dir ? dir + '/' : '') : srcPath.replace(/\.md$/, '/'));
+    a.setAttribute('data-src-path', srcPath);
+    if (isCurrentPage) {
+      a.classList.add('md-nav__link--active');
+      li.classList.add('md-nav__item--active');
+    }
+
+    (function (pLi, pLink) {
+      pLink.addEventListener('mouseenter', function () { _showNavItemControls(pLi); });
+      pLink.addEventListener('mouseleave', function () { _scheduleNavItemHide(pLi); });
+    })(li, a);
+
+    var pageEllipsis = document.createElement('span');
+    pageEllipsis.className = 'md-ellipsis';
+    pageEllipsis.textContent = title;
+    a.appendChild(pageEllipsis);
+
+    var infoIcon = document.createElement('span');
+    infoIcon.className = 'live-wysiwyg-nav-hidden-info';
+    infoIcon.textContent = '\u24D8';
+    infoIcon.title = 'This page is normally hidden. See "hidden" in page settings.';
+    a.appendChild(infoIcon);
+
+    li.appendChild(a);
+
+    a.addEventListener('click', function (e) {
+      e.preventDefault();
+      var targetPath = this.getAttribute('data-src-path');
+      if (_navEditMode) {
+        _setNavFocusTarget(targetPath);
+        return;
+      }
+      _navigateToPage(this.href, this.textContent, targetPath);
+    });
+
+    if (isIndex) {
+      var firstChild = targetUl.firstElementChild;
+      if (firstChild) {
+        targetUl.insertBefore(li, firstChild);
+      } else {
+        targetUl.appendChild(li);
+      }
+    } else {
+      targetUl.appendChild(li);
+    }
+
+    if (isCurrentPage) {
+      var parentSection = li.closest('.md-nav__item--nested');
+      while (parentSection) {
+        parentSection.classList.add('md-nav__item--active');
+        var parentNav = parentSection.querySelector(':scope > .md-nav');
+        if (parentNav) parentNav.setAttribute('aria-expanded', 'true');
+        parentSection = parentSection.parentElement ? parentSection.parentElement.closest('.md-nav__item--nested') : null;
+      }
+    }
+  }
+
+  function _toggleHiddenPages(sidebarEl, show) {
+    if (!sidebarEl) return;
+    var items = sidebarEl.querySelectorAll('.live-wysiwyg-nav-hidden-page');
+    for (var i = 0; i < items.length; i++) {
+      var li = items[i];
+      if (li.classList.contains('live-wysiwyg-nav-hidden-page--current')) {
+        li.style.display = '';
+      } else {
+        li.style.display = show ? '' : 'none';
+      }
+    }
   }
 
   function _buildNavItems(parentUl, items, depth) {
@@ -8455,6 +9058,8 @@
       var item = items[i];
       var li = document.createElement('li');
       li.className = 'md-nav__item';
+
+      if (item._renamed) li.classList.add('live-wysiwyg-nav-item--renamed');
 
       (function (liEl) {
         liEl.addEventListener('mouseenter', function (e) {
@@ -8475,6 +9080,10 @@
           var indexChild = item.children.find(function (c) { return c.type === 'page' && c.isIndex; });
           if (indexChild && indexChild.src_path) {
             li.setAttribute('data-nav-index-path', indexChild.src_path);
+            if (!item.src_path) item.src_path = indexChild.src_path;
+            if (!item.index_meta) {
+              item.index_meta = { weight: indexChild.weight, headless: indexChild.headless, retitled: indexChild.retitled, empty: indexChild.empty };
+            }
           }
         }
 
@@ -8488,10 +9097,10 @@
         var expandIcon = document.createElement('span');
         expandIcon.className = 'md-nav__icon md-icon';
         sectionLabel.appendChild(expandIcon);
+        var folderDir = _getSectionFolderDir(item) || (item.src_path ? _getDir(item.src_path) : '');
+        if (folderDir) li.setAttribute('data-nav-folder-dir', folderDir);
         if (_isSectionEmpty(item)) {
-          var folderDir = _getSectionFolderDir(item) || (item.src_path ? _getDir(item.src_path) : '');
           if (folderDir) {
-            li.setAttribute('data-nav-folder-dir', folderDir);
             var emptyCaution = document.createElement('span');
             emptyCaution.className = 'live-wysiwyg-nav-empty-folder-caution';
             emptyCaution.textContent = '\u26A0';
@@ -8549,7 +9158,7 @@
           childNav.appendChild(childUl);
           li.appendChild(childNav);
 
-          if (hasCurrentPage) {
+          if (hasCurrentPage || item._renamed) {
             li.classList.add('md-nav__item--active');
             childNav.setAttribute('aria-expanded', 'true');
           } else {
@@ -8599,7 +9208,7 @@
                 ? nwCfg.frontmatter_defaults.index_weight
                 : (nwCfg.index_weight !== undefined ? nwCfg.index_weight : -10));
             if (item.weight > defWeight) {
-              var weightSrcPath = item.src_path || (item.index_meta && item.index_meta.src_path);
+              var weightSrcPath = _getItemSrcPath(item);
               if (weightSrcPath) {
                 _addCautionPage(weightSrcPath,
                   'Weight ' + item.weight + ' exceeds default page weight ' + defWeight + '. See caution at top of nav menu to resolve.');
@@ -8703,7 +9312,7 @@
     targetBtn.className = 'live-wysiwyg-nav-target-dot';
     targetBtn.addEventListener('click', function (e) {
       e.stopPropagation();
-      var targetPath = item.src_path || (item.index_meta && item.index_meta.src_path);
+      var targetPath = _getItemSrcPath(item);
       if (targetPath) _setNavFocusTarget(targetPath);
     });
 
@@ -8717,11 +9326,23 @@
     return result;
   }
 
+  function _updateLeftArrowVisibility(li, parentSectionLi) {
+    if (!li) return;
+    var leftBtn = li.querySelector('.live-wysiwyg-nav-arrow-left');
+    if (!leftBtn) return;
+    leftBtn.style.visibility = parentSectionLi ? '' : 'hidden';
+  }
+
   // ======================================================================
   // NAV MENU - Arrow click handler (enters nav edit mode)
   // ======================================================================
   function _isRootIndex(item) {
     return item && item.type === 'page' && item.isIndex && item.src_path === 'index.md';
+  }
+
+  function _getItemSrcPath(item) {
+    if (!item) return '';
+    return item.src_path || '';
   }
 
   function _getItemWeight(navItem) {
@@ -8736,8 +9357,7 @@
     var hasWeighted = siblings.some(function (s) { return _getItemWeight(s) != null; });
     if (hasWeighted) return true;
     _showNavDialog(
-      'No pages at this level have nav weights assigned. You must normalize nav weights before reorganizing.\n\n' +
-      'Example YAML frontmatter:\n---\ntitle: My Page\nweight: 10\n---',
+      'No pages at this level have nav weights assigned. You must normalize nav weights before reorganizing.',
       [
         { text: 'Cancel', value: 'cancel' },
         { text: 'Normalize Nav Weights', value: 'normalize', className: 'live-wysiwyg-nav-dialog-primary' }
@@ -8750,8 +9370,9 @@
 
   function _findNavSiblings(item) {
     var result = [];
+    var itemPath = _getItemSrcPath(item);
     function isSameItem(navItem) {
-      if (item.src_path && navItem.src_path === item.src_path) return true;
+      if (itemPath && itemPath === _getItemSrcPath(navItem)) return true;
       if (item.type === 'section' && navItem.type === 'section' && item.title === navItem.title) return true;
       return false;
     }
@@ -8835,56 +9456,123 @@
 
   function _handleArrowClick(item, itemType, direction, shiftKey) {
     if (_isNormalizeLocked()) return;
-    if (!_ensureNavEditReady()) return;
     if (!_checkNormalizationPrerequisite(item)) return;
-    if (!_navEditMode) _enterNavEditMode();
-
-    _navKeyboardActiveItem = item;
 
     var isLeft = direction.indexOf('left') !== -1;
     var isRight = direction.indexOf('right') !== -1;
     var isUp = direction.indexOf('up') !== -1;
     var isDown = direction.indexOf('down') !== -1;
 
-    var srcPath = item.src_path || '';
-    var li = _findNavLiByPath(srcPath);
+    var srcPath = _getItemSrcPath(item);
+    var currentSrc = _getCurrentSrcPath();
+    var isCurrentPage = srcPath === currentSrc ||
+      (item.type === 'section' && item.children && item.children.some(function (c) {
+        return c.type === 'page' && c.src_path === currentSrc;
+      }));
+    var isSimpleVertical = (isUp || isDown) && !shiftKey && isCurrentPage;
+
+    if (!isSimpleVertical) {
+      if (!_ensureNavEditReady()) return;
+      if (!_navEditMode) _enterNavEditMode();
+    }
+
+    _navKeyboardActiveItem = item;
+
+    var li = _findNavLi(item);
     if (!li) return;
 
     if (isUp) {
-      _moveNavItemUp(li, item, shiftKey);
+      if (isSimpleVertical) {
+        _moveNavItemUpDirect(li, item);
+      } else {
+        _moveNavItemUp(li, item, shiftKey);
+      }
     } else if (isDown) {
-      _moveNavItemDown(li, item, shiftKey);
+      if (isSimpleVertical) {
+        _moveNavItemDownDirect(li, item);
+      } else {
+        _moveNavItemDown(li, item, shiftKey);
+      }
     } else if (isLeft) {
       _moveNavItemLeft(li, item);
     } else if (isRight) {
       _moveNavItemRight(li, item, shiftKey);
     }
 
-    if (isUp || isDown) {
-      _updateInMemoryWeightFromDom(item);
+    var moveDir = isUp ? 'up' : isDown ? 'down' : isLeft ? 'up' : 'down';
+    var movedLi = _findNavLi(item);
+    var movedUl = movedLi ? movedLi.parentNode : null;
+    var parentSectionLi = movedUl ? _getSectionLiFromUl(movedUl) : null;
+    _updateLeftArrowVisibility(movedLi, parentSectionLi);
+    if (parentSectionLi && (parentSectionLi.classList.contains('live-wysiwyg-nav-item--new') ||
+        parentSectionLi.classList.contains('live-wysiwyg-nav-item--renamed'))) {
+      _autoNormalizeFolderWeights(movedUl);
+    } else {
+      _updateInMemoryWeightFromDom(item, moveDir);
     }
 
-    var updatedPath = _resolveNavPathThroughQueue(srcPath);
-    var focusLi = updatedPath ? _findNavLiByPath(updatedPath) : li;
-    _setNavFocus(focusLi || li);
+    if (!isSimpleVertical) {
+      var updatedPath = _resolveNavPathThroughQueue(srcPath);
+      var focusLi;
+      if (updatedPath && item.type === 'section') {
+        focusLi = _navSidebarEl && _navSidebarEl.querySelector('[data-nav-index-path="' + updatedPath + '"]');
+      }
+      if (!focusLi && updatedPath) focusLi = _findNavLiByPath(updatedPath);
+      _setNavFocus(focusLi || li);
+    } else {
+      _setNavFocus(li);
+    }
   }
 
-  function _updateInMemoryWeightFromDom(item) {
+  function _moveNavItemUpDirect(li, item) {
+    var parentUl = li.parentNode;
+    if (!parentUl) return;
+    var prev = li.previousElementSibling;
+    if (prev && prev.getAttribute('data-nav-src-path') === 'index.md' && !_getSectionLiFromUl(parentUl)) return;
+    if (prev) {
+      parentUl.insertBefore(li, prev);
+    }
+  }
+
+  function _moveNavItemDownDirect(li, item) {
+    var parentUl = li.parentNode;
+    if (!parentUl) return;
+    var next = li.nextElementSibling;
+    if (next) {
+      parentUl.insertBefore(li, next.nextSibling);
+    }
+  }
+
+  function _updateInMemoryWeightFromDom(item, direction) {
     if (!item || typeof liveWysiwygNavData === 'undefined') return;
-    var srcPath = item.src_path || (item.index_meta && item.index_meta.src_path) || '';
+    var srcPath = _getItemSrcPath(item);
     if (!srcPath) return;
-    var li = _findNavLiByPath(srcPath);
+    var li = _findNavLi(item);
     if (!li || !li.parentNode) return;
     var ul = li.parentNode;
+    var parentSectionLi = _getSectionLiFromUl(ul);
+    var parentIndexPath = parentSectionLi ? parentSectionLi.getAttribute('data-nav-index-path') : null;
     var domItems = [];
     for (var i = 0; i < ul.children.length; i++) {
       var child = ul.children[i];
-      var childPath = child.getAttribute('data-nav-src-path') || child.getAttribute('data-nav-index-path');
-      if (!childPath) continue;
-      var navItem = _findNavItemByPath(liveWysiwygNavData, childPath);
-      if (!navItem && child.getAttribute('data-nav-index-path')) {
-        navItem = _findSectionByIndexPath(liveWysiwygNavData, child.getAttribute('data-nav-index-path'));
+      var indexPath = child.getAttribute('data-nav-index-path');
+      var folderDir = child.getAttribute('data-nav-folder-dir');
+      var childPath = child.getAttribute('data-nav-src-path') || indexPath;
+      if (childPath && parentIndexPath && childPath === parentIndexPath) continue;
+      var navItem = null;
+      if (indexPath) {
+        navItem = _findSectionByIndexPath(liveWysiwygNavData, indexPath);
       }
+      if (!navItem && folderDir) {
+        navItem = _findSectionByFolderDir(liveWysiwygNavData, folderDir);
+      }
+      if (!navItem && childPath) {
+        navItem = _findNavItemByPath(liveWysiwygNavData, childPath);
+      }
+      if (!childPath && navItem) {
+        childPath = _getItemSrcPath(navItem) || folderDir || '';
+      }
+      if (!childPath) continue;
       var w = navItem ? _getItemWeight(navItem) : null;
       domItems.push({ path: childPath, weight: w != null ? w : 0, navItem: navItem, isTarget: childPath === srcPath });
     }
@@ -8895,14 +9583,15 @@
     if (targetIdx === -1) return;
     var prevW = targetIdx > 0 ? domItems[targetIdx - 1].weight : null;
     var nextW = targetIdx < domItems.length - 1 ? domItems[targetIdx + 1].weight : null;
+    var rounder = direction === 'up' ? Math.floor : Math.ceil;
     var newWeight;
     if (prevW != null && nextW != null) {
-      newWeight = Math.round((prevW + nextW) / 2);
+      newWeight = rounder((prevW + nextW) / 2);
       if (newWeight === prevW || newWeight === nextW) newWeight = prevW + 1;
     } else if (prevW != null) {
       newWeight = prevW + 100;
     } else if (nextW != null) {
-      newWeight = nextW - 100;
+      newWeight = rounder(nextW / 2);
     } else {
       newWeight = (targetIdx + 1) * 100;
     }
@@ -8911,26 +9600,65 @@
   }
 
   function _setItemWeight(navItem, weight) {
-    if (navItem.type === 'page') { navItem.weight = weight; }
-    else if (navItem.type === 'section' && navItem.index_meta) { navItem.index_meta.weight = weight; }
+    if (navItem.type === 'page') {
+      navItem.weight = weight;
+    } else if (navItem.type === 'section') {
+      if (navItem.index_meta) navItem.index_meta.weight = weight;
+      if (navItem.children) {
+        for (var i = 0; i < navItem.children.length; i++) {
+          if (navItem.children[i].type === 'page' && navItem.children[i].isIndex) {
+            navItem.children[i].weight = weight;
+            break;
+          }
+        }
+      }
+    }
   }
 
   function _syncCurrentPageWeight(srcPath, weight) {
     if (srcPath !== _getCurrentSrcPath()) return;
     if (typeof wysiwygEditor === 'undefined' || !wysiwygEditor) return;
-    var ma = wysiwygEditor.markdownArea;
-    if (!ma) return;
-    var content = ma.value;
+
     var isIndex = srcPath.endsWith('index.md');
-    var updated = _updateFrontmatter(content, { weight: weight }, isIndex);
-    if (updated !== content) {
-      var start = ma.selectionStart;
-      var end = ma.selectionEnd;
-      ma.value = updated;
-      var delta = updated.length - content.length;
-      ma.selectionStart = Math.max(0, start + delta);
-      ma.selectionEnd = Math.max(0, end + delta);
+    var fmStr = wysiwygEditor._liveWysiwygFrontmatter || '';
+    var withBody = fmStr ? (fmStr + '\n') : '';
+    var updatedFull = _updateFrontmatter(withBody, { weight: weight }, isIndex);
+    var parsed = parseFrontmatter(updatedFull);
+    wysiwygEditor._liveWysiwygFrontmatter = parsed.frontmatter;
+
+    if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
+      var ma = wysiwygEditor.markdownArea;
+      var content = ma.value;
+      var updatedContent = _updateFrontmatter(content, { weight: weight }, isIndex);
+      if (updatedContent !== content) {
+        var start = ma.selectionStart;
+        var end = ma.selectionEnd;
+        ma.value = updatedContent;
+        var delta = updatedContent.length - content.length;
+        ma.selectionStart = Math.max(0, start + delta);
+        ma.selectionEnd = Math.max(0, end + delta);
+      }
     }
+
+    if (wysiwygEditor._finalizeUpdate) {
+      wysiwygEditor._finalizeUpdate();
+    }
+  }
+
+  function _findSectionByFolderDir(items, folderDir) {
+    if (!items || !folderDir) return null;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (it.type === 'section') {
+        var fd = _getSectionFolderDir(it);
+        if (fd === folderDir) return it;
+        if (it.children) {
+          var found = _findSectionByFolderDir(it.children, folderDir);
+          if (found) return found;
+        }
+      }
+    }
+    return null;
   }
 
   function _findSectionByIndexPath(items, indexPath) {
@@ -8938,7 +9666,7 @@
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
       if (it.type === 'section') {
-        if (it.index_meta && it.index_meta.src_path === indexPath) return it;
+        if (it.src_path === indexPath) return it;
         if (it.children) {
           var found = _findSectionByIndexPath(it.children, indexPath);
           if (found) return found;
@@ -9000,6 +9728,9 @@
         var found = _findNavItemByPath(it.children, path);
         if (found) return found;
       }
+    }
+    for (var j = 0; j < items.length; j++) {
+      if (items[j].type === 'section' && items[j].src_path === path) return items[j];
     }
     return null;
   }
@@ -9090,6 +9821,12 @@
     if (!grandparentUl) return;
     var origIdx = Array.from(parentUl.children).indexOf(li);
     grandparentUl.insertBefore(li, sectionLi.nextSibling);
+    if (sectionLi.classList.contains('live-wysiwyg-nav-item--renamed') ||
+        sectionLi.classList.contains('live-wysiwyg-nav-item--new')) {
+      li.classList.remove('live-wysiwyg-nav-item--renamed');
+      li.classList.remove('live-wysiwyg-nav-item--new');
+      if (item) delete item._renamed;
+    }
     _pushNavOperation({ type: 'move-left', item: item, fromSection: sectionLi, originalIndex: origIdx });
     _collapseIfEmpty(sectionLi);
   }
@@ -9180,8 +9917,29 @@
       dialogOverlay.parentNode.removeChild(dialogOverlay);
 
       var parentUl = li.parentNode;
+      var parentDir = item && item.src_path ? _getDir(item.src_path) : '';
+      var indexPath = (parentDir ? parentDir + '/' : '') + folderName + '/index.md';
+      var parentDepth = 0;
+      var ancestor = parentUl;
+      while (ancestor) {
+        var sec = _getSectionLiFromUl(ancestor);
+        if (sec) { parentDepth++; ancestor = sec.parentNode; }
+        else break;
+      }
+
+      var syntheticSection = {
+        type: 'section',
+        title: folderTitle,
+        src_path: indexPath,
+        children: [item],
+        index_meta: { weight: _getItemWeight(item) || 100, headless: false, retitled: true, empty: true }
+      };
+
       var sectionLi = document.createElement('li');
       sectionLi.className = 'md-nav__item md-nav__item--nested md-nav__item--active live-wysiwyg-nav-item--new';
+      sectionLi.setAttribute('data-nav-index-path', indexPath);
+      sectionLi.setAttribute('data-nav-folder-dir', (parentDir ? parentDir + '/' : '') + folderName);
+
       var sectionLabel = document.createElement('label');
       sectionLabel.className = 'md-nav__link';
       sectionLabel.tabIndex = 0;
@@ -9189,7 +9947,35 @@
       sectionEllipsis.className = 'md-ellipsis';
       sectionEllipsis.textContent = folderTitle;
       sectionLabel.appendChild(sectionEllipsis);
+      var expandIcon = document.createElement('span');
+      expandIcon.className = 'md-nav__icon md-icon';
+      sectionLabel.appendChild(expandIcon);
+      sectionLabel.addEventListener('click', function () {
+        var childNavEl = this.parentNode.querySelector(':scope > .md-nav');
+        if (!childNavEl) return;
+        var expanded = childNavEl.getAttribute('aria-expanded') !== 'false';
+        childNavEl.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+        this.parentNode.classList.toggle('md-nav__item--active', !expanded);
+        requestAnimationFrame(function () { _alignNavControls(sectionLi); });
+      });
+      (function (sLi, sLabel) {
+        sLabel.addEventListener('mouseenter', function () { _showNavItemControls(sLi); });
+        sLabel.addEventListener('mouseleave', function () { _scheduleNavItemHide(sLi); });
+      })(sectionLi, sectionLabel);
       sectionLi.appendChild(sectionLabel);
+
+      if ((_navEditMode || (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)) &&
+          !(typeof liveWysiwygHasNavKey !== 'undefined' && liveWysiwygHasNavKey)) {
+        var sectionCtrl = _createNavWeightControls(syntheticSection, 'section', parentDepth);
+        var sectionWrapper = document.createElement('div');
+        sectionWrapper.className = 'live-wysiwyg-nav-controls-wrapper live-wysiwyg-nav-controls-section';
+        sectionWrapper.appendChild(sectionCtrl.arrows);
+        sectionWrapper.appendChild(sectionCtrl.gear);
+        sectionWrapper.addEventListener('mouseenter', function () { _showNavItemControls(this.parentNode); });
+        sectionWrapper.addEventListener('mouseleave', function () { _scheduleNavItemHide(this.parentNode); });
+        sectionLi.insertBefore(sectionWrapper, sectionLabel);
+      }
+
       var childNav = document.createElement('nav');
       childNav.className = 'md-nav';
       childNav.setAttribute('aria-expanded', 'true');
@@ -9200,8 +9986,6 @@
       sectionLi.appendChild(childNav);
       parentUl.insertBefore(sectionLi, li.nextSibling || null);
 
-      var parentDir = item && item.src_path ? _getDir(item.src_path) : '';
-      var indexPath = (parentDir ? parentDir + '/' : '') + folderName + '/index.md';
       if (_batchClaimedPaths) _batchClaimedPaths.add(indexPath);
       _pushNavOperation({
         type: 'create-folder',
@@ -9209,9 +9993,60 @@
         folderName: folderName,
         folderTitle: folderTitle,
         folderSection: sectionLi,
-        originalParentUl: parentUl
+        originalParentUl: parentUl,
+        syntheticSection: syntheticSection
       });
+      var navItems = typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : [];
+      var itemSrcPath = _getItemSrcPath(item);
+      function _removeFromNavArr(arr) {
+        for (var ri = arr.length - 1; ri >= 0; ri--) {
+          if (arr[ri] === item || (_getItemSrcPath(arr[ri]) === itemSrcPath && arr[ri].type === item.type)) {
+            arr.splice(ri, 1, syntheticSection);
+            return true;
+          }
+          if (arr[ri].type === 'section' && arr[ri].children) {
+            for (var rj = arr[ri].children.length - 1; rj >= 0; rj--) {
+              if (arr[ri].children[rj] === item || (_getItemSrcPath(arr[ri].children[rj]) === itemSrcPath && arr[ri].children[rj].type === item.type)) {
+                arr[ri].children.splice(rj, 1, syntheticSection);
+                return true;
+              }
+            }
+            if (_removeFromNavArr(arr[ri].children)) return true;
+          }
+        }
+        return false;
+      }
+      _removeFromNavArr(navItems);
+
+      _setItemWeight(item, 100);
+      _syncCurrentPageWeight(itemSrcPath, 100);
+      _updateInMemoryWeightFromDom(syntheticSection, 'down');
     });
+  }
+
+  function _autoNormalizeFolderWeights(ul) {
+    if (!ul) return;
+    var parentSectionLi = _getSectionLiFromUl(ul);
+    var parentIndexPath = parentSectionLi ? parentSectionLi.getAttribute('data-nav-index-path') : null;
+    var items = [];
+    for (var i = 0; i < ul.children.length; i++) {
+      var child = ul.children[i];
+      var indexPath = child.getAttribute('data-nav-index-path');
+      var folderDir = child.getAttribute('data-nav-folder-dir');
+      var childPath = child.getAttribute('data-nav-src-path') || indexPath;
+      if (childPath && parentIndexPath && childPath === parentIndexPath) continue;
+      var navItem = null;
+      if (indexPath) navItem = _findSectionByIndexPath(liveWysiwygNavData, indexPath);
+      if (!navItem && folderDir) navItem = _findSectionByFolderDir(liveWysiwygNavData, folderDir);
+      if (!navItem && childPath) navItem = _findNavItemByPath(liveWysiwygNavData, childPath);
+      if (navItem) items.push(navItem);
+    }
+    for (var j = 0; j < items.length; j++) {
+      var w = (j + 1) * 100;
+      _setItemWeight(items[j], w);
+      var sp = _getItemSrcPath(items[j]);
+      if (sp) _syncCurrentPageWeight(sp, w);
+    }
   }
 
   // ======================================================================
@@ -9310,7 +10145,7 @@
       else if (e.key === 'ArrowRight') dir = 'right';
       if (dir) {
         e.preventDefault();
-        _handleArrowClick(_navKeyboardActiveItem, 'page', dir, e.shiftKey);
+        _handleArrowClick(_navKeyboardActiveItem, _navKeyboardActiveItem.type || 'page', dir, e.shiftKey);
       }
     };
     document.addEventListener('keydown', _navArrowKeyHandler, true);
@@ -9366,6 +10201,8 @@
     _navRedoStack = [];
     _navNormalizeAllPending = false;
     _navNormalizePending = false;
+    _pendingFolderDelete = null;
+    _navPostSaveDeadLinkFolder = null;
     _navFocusTarget = null;
     _clearNavFocus();
 
@@ -9672,8 +10509,14 @@
   }
 
   function _findNavLi(item) {
-    if (!_navSidebarEl || !item || !item.src_path) return null;
-    return _findNavLiByPath(item.src_path);
+    if (!_navSidebarEl || !item) return null;
+    var p = _getItemSrcPath(item);
+    if (!p) return null;
+    if (item.type === 'section') {
+      var sectionEl = _navSidebarEl.querySelector('[data-nav-index-path="' + p + '"]');
+      if (sectionEl) return sectionEl;
+    }
+    return _findNavLiByPath(p);
   }
 
   function _findNavLiByPath(path) {
@@ -9699,8 +10542,9 @@
   function _consolidateMoveOps(rawOps) {
     var movedPaths = {};
     rawOps.forEach(function (op) {
-      if ((op.type === 'move-up' || op.type === 'move-down') && op.item && op.item.src_path) {
-        movedPaths[op.item.src_path] = op.item;
+      if ((op.type === 'move-up' || op.type === 'move-down') && op.item) {
+        var p = _getItemSrcPath(op.item);
+        if (p) movedPaths[p] = op.item;
       }
     });
     var pathKeys = Object.keys(movedPaths);
@@ -9711,7 +10555,8 @@
 
     for (var k = 0; k < pathKeys.length; k++) {
       var srcPath = pathKeys[k];
-      var li = _findNavLiByPath(srcPath);
+      var movedItem = movedPaths[srcPath];
+      var li = movedItem ? _findNavLi(movedItem) : _findNavLiByPath(srcPath);
       if (!li || !li.parentNode) continue;
       var ul = li.parentNode;
       if (processedUls.indexOf(ul) !== -1) continue;
@@ -9725,6 +10570,9 @@
         if (!childPath) continue;
         var navItem = typeof liveWysiwygNavData !== 'undefined'
           ? _findNavItemByPath(liveWysiwygNavData, childPath) : null;
+        if (!navItem && typeof liveWysiwygNavData !== 'undefined') {
+          navItem = _findSectionByIndexPath(liveWysiwygNavData, childPath);
+        }
         var origW = navItem ? _getItemWeight(navItem) : null;
         domItems.push({
           srcPath: childPath,
@@ -9754,7 +10602,8 @@
         } else {
           newWeight = (j + 1) * 100;
         }
-        var isIdx = domItems[j].item && domItems[j].item.isIndex;
+        var isIdx = domItems[j].srcPath.endsWith('index.md');
+        if (!isIdx && domItems[j].item) isIdx = domItems[j].item.isIndex;
         if (!isIdx && domItems[j].navItem) isIdx = domItems[j].navItem.isIndex;
         if (isIdx && newWeight < 0) newWeight = 0;
         result.push({ type: 'set-weight', src_path: domItems[j].srcPath, weight: newWeight });
@@ -9766,7 +10615,7 @@
   function _countUniqueAffectedDocs(rawOps) {
     var paths = {};
     rawOps.forEach(function (op) {
-      var p = op.src_path || (op.item && op.item.src_path) || op.path || op.oldPath;
+      var p = op.src_path || (op.item && _getItemSrcPath(op.item)) || op.path || op.oldPath;
       if (p) paths[p] = true;
     });
     return Object.keys(paths).length;
@@ -9786,6 +10635,42 @@
   }
 
   function _confirmNavSave() {
+    if (_pendingFolderDelete && _pendingFolderDelete.brokenLinks && _pendingFolderDelete.brokenLinks.length) {
+      var pfd = _pendingFolderDelete;
+      var bl = pfd.brokenLinks;
+      var uniquePages = {};
+      bl.forEach(function (l) { uniquePages[l.from] = true; });
+      var pageCount = Object.keys(uniquePages).length;
+      var targetFiles = {};
+      bl.forEach(function (l) { targetFiles[l.resolvedTarget] = true; });
+      var targetList = Object.keys(targetFiles);
+
+      _showNavDialog(
+        'Deleting "' + pfd.folderDir + '" will break ' + bl.length + ' link' + (bl.length !== 1 ? 's' : '') +
+        ' in ' + pageCount + ' page' + (pageCount !== 1 ? 's' : '') +
+        '. Do you want to skip deleting the files that will break links?',
+        [
+          { text: 'Cancel', value: 'cancel' },
+          { text: 'Skip breaking files', value: 'skip', className: 'live-wysiwyg-nav-dialog-primary' },
+          { text: 'Delete All', value: 'delete-all', className: 'live-wysiwyg-nav-dialog-danger' }
+        ]
+      ).then(function (result) {
+        if (result === 'cancel') return;
+        if (result === 'skip') {
+          _pushNavOperation({ type: 'delete-folder', folder: pfd.folderDir, exclusions: targetList });
+        } else {
+          _pushNavOperation({ type: 'delete-folder', folder: pfd.folderDir });
+        }
+        _pendingFolderDelete = null;
+        _proceedWithNavSave(result === 'delete-all' ? pfd.folderDir : null);
+      });
+      return;
+    }
+
+    _proceedWithNavSave(null);
+  }
+
+  function _proceedWithNavSave(runDeadLinkScanFolder) {
     var normalizeCount = (_navNormalizeAllPending || _navNormalizePending) ? _countNormalizeTargets() : 0;
     var uniqueUserDocs = _countUniqueAffectedDocs(_navBatchQueue);
     var count = uniqueUserDocs + normalizeCount;
@@ -9796,9 +10681,14 @@
         { text: 'Save', value: 'save', className: 'live-wysiwyg-nav-dialog-primary' }
       ]
     ).then(function (result) {
-      if (result === 'save') _executeNavBatchSave();
+      if (result === 'save') {
+        _navPostSaveDeadLinkFolder = runDeadLinkScanFolder;
+        _executeNavBatchSave();
+      }
     });
   }
+
+  var _navPostSaveDeadLinkFolder = null;
 
   function _confirmNavDiscard() {
     var count = _navBatchQueue.length;
@@ -9832,7 +10722,14 @@
 
     var orderedOps = [];
 
-    // Normalization FIRST
+    // Folder renames FIRST — they change paths on disk, so all subsequent
+    // ops (normalization, set-weight, moves) must run against the new paths.
+    orderedOps = orderedOps.concat(
+      phaseFilter(['rename-folder']),
+      phaseFilter(['rewrite-folder-links'])
+    );
+
+    // Normalization (set-weight, index renames/creates)
     var normOps = [];
     if (_navNormalizeAllPending && typeof liveWysiwygNavData !== 'undefined') {
       _collectNormalizeOps(liveWysiwygNavData, '', normOps);
@@ -9857,7 +10754,7 @@
       phaseFilter(['rename-page', 'move-left', 'move-right', 'move-into-section', 'set-headless', 'set-frontmatter']),
       consolidatedMoves,
       phaseFilter(['set-weight']),
-      phaseFilter(['delete-page', 'update-mkdocs-yml']),
+      phaseFilter(['delete-page', 'delete-folder', 'update-mkdocs-yml']),
       phaseFilter(['consolidate-hidden'])
     );
 
@@ -9871,7 +10768,10 @@
 
   function _getOpLabel(op) {
     if (op.type === 'consolidate-hidden') return 'Consolidating hidden documents';
-    return op.path || op.src_path || (op.item && op.item.src_path) ||
+    if (op.type === 'rename-folder') return 'Renaming folder ' + op.oldFolder + ' \u2192 ' + op.newFolder;
+    if (op.type === 'delete-folder') return 'Deleting folder ' + op.folder;
+    if (op.type === 'rewrite-folder-links') return 'Rewriting links for folder rename';
+    return op.path || op.src_path || (op.item && _getItemSrcPath(op.item)) ||
       (op.newPath ? op.newPath : null) || (op.item && op.item.title) || op.type;
   }
 
@@ -9884,6 +10784,9 @@
     if (op.type === 'convert-folder-to-page') return _executeConvertFolderToPageOp(op);
     if (op.type === 'delete-page') return _executeDeletePageOp(op);
     if (op.type === 'rename-page') return _executeRenamePageOp(op);
+    if (op.type === 'rename-folder') return _executeRenameFolderOp(op);
+    if (op.type === 'delete-folder') return _executeDeleteFolderOp(op);
+    if (op.type === 'rewrite-folder-links') return _executeRewriteFolderLinksOp(op);
     if (op.type === 'set-weight') return _executeSetWeightOp(op);
     if (op.type === 'set-headless') return _executeSetHeadlessOp(op);
     if (op.type === 'set-frontmatter') return _executeSetFrontmatterOp(op);
@@ -9898,6 +10801,7 @@
       return;
     }
 
+    _userActionInProgress = true;
     _batchDeletedPaths = {};
     _batchRenamedPaths = {};
     _installReloadGuard();
@@ -9911,9 +10815,12 @@
     _showNavStatus(statusContainer, 'Saving nav changes...', { showProgress: true, percent: 0 });
 
     _getOrCreateBulkWs().then(function () {
+      console.log('[batch-save] WS connected. Link check port:', typeof liveWysiwygLinkCheckPort !== 'undefined' ? liveWysiwygLinkCheckPort : 'UNDEFINED');
       return _fetchLinkIndex();
     }).then(function (freshIndex) {
       _batchLinkIndex = freshIndex;
+      var indexKeys = freshIndex && typeof freshIndex === 'object' ? Object.keys(freshIndex).length : 0;
+      console.log('[batch-save] Link index loaded:', indexKeys, 'entries. Ops:', orderedOps.length, orderedOps.map(function (o) { return o.type; }));
       var chain = Promise.resolve();
       for (var i = 0; i < orderedOps.length; i++) {
         (function (op, idx) {
@@ -9950,11 +10857,15 @@
   }
 
   function _finishBatchSave(container, failures, focusTarget) {
+    _userActionInProgress = false;
+    _syncBuildEpoch();
     _setCookie('live_wysiwyg_focus_nav', '1', 60);
     _removeReloadGuard();
     _batchDeletedPaths = {};
     _batchRenamedPaths = {};
     _batchLinkIndex = null;
+    var shouldRunDeadLinkScan = !!_navPostSaveDeadLinkFolder;
+    _navPostSaveDeadLinkFolder = null;
 
     if (failures && failures.length) {
       failures.forEach(function (f) {
@@ -9973,7 +10884,12 @@
       _showNavStatus(container, 'All changes saved. Reloading...', {
         showProgress: true, percent: 100, indeterminate: true
       });
-      setTimeout(function () { _navigateAfterBatchComplete(focusTarget); }, 1500);
+      setTimeout(function () {
+        _navigateAfterBatchComplete(focusTarget);
+        if (shouldRunDeadLinkScan) {
+          setTimeout(function () { _scanDeadLinks('internal'); }, 2000);
+        }
+      }, 1500);
     }
   }
 
@@ -10012,8 +10928,9 @@
   }
 
   function _executeMoveWeightOp(op) {
-    if (!op.item || !op.item.src_path) return Promise.resolve();
-    var actualPath = _batchRenamedPaths[op.item.src_path] || op.item.src_path;
+    var itemPath = _getItemSrcPath(op.item);
+    if (!op.item || !itemPath) return Promise.resolve();
+    var actualPath = _resolveChainedRename(itemPath);
     if (_batchDeletedPaths[actualPath]) return Promise.resolve();
     var siblings = _findNavSiblings(op.item).filter(function (s) { return !_isRootIndex(s); });
     function w(navItem) {
@@ -10023,8 +10940,9 @@
     var sorted = siblings.slice().sort(function (a, b) { return w(a) - w(b); });
     var idx = -1;
     for (var i = 0; i < sorted.length; i++) {
-      if (sorted[i].src_path === op.item.src_path) { idx = i; break; }
+      if (_getItemSrcPath(sorted[i]) === itemPath) { idx = i; break; }
     }
+    var isIndex = actualPath.endsWith('index.md');
     return _wsGetContents(actualPath).then(function (content) {
       var fm = _parseFrontmatter(content);
       var currentWeight = fm.fields.weight !== undefined ? fm.fields.weight : 0;
@@ -10048,29 +10966,44 @@
         }
       }
       if (newWeight === currentWeight) newWeight = op.type === 'move-up' ? currentWeight - 1 : currentWeight + 1;
-      var updated = _updateFrontmatter(content, { weight: newWeight }, op.item.isIndex);
+      var updated = _updateFrontmatter(content, { weight: newWeight }, isIndex);
       return _wsSetContents(actualPath, updated);
     });
   }
 
+  function _collectSectionFilePaths(sectionItem) {
+    var paths = [];
+    if (sectionItem.src_path) {
+      paths.push(sectionItem.src_path);
+    }
+    if (sectionItem.children) {
+      for (var i = 0; i < sectionItem.children.length; i++) {
+        var child = sectionItem.children[i];
+        if (child.type === 'page' && child.src_path) {
+          paths.push(child.src_path);
+        } else if (child.type === 'section') {
+          paths = paths.concat(_collectSectionFilePaths(child));
+        }
+      }
+    }
+    return paths;
+  }
+
   function _executeMoveFolderOp(op) {
-    if (!op.item || !op.item.src_path) return Promise.resolve();
-    var oldPath = op.item.src_path;
-    if (_batchRenamedPaths[oldPath]) oldPath = _batchRenamedPaths[oldPath];
+    var itemPath = _getItemSrcPath(op.item);
+    if (!op.item || !itemPath) return Promise.resolve();
+
+    if (op.item.type === 'section') {
+      return _executeSectionMoveFolderOp(op);
+    }
+
+    var oldPath = _resolveChainedRename(itemPath);
     if (_batchDeletedPaths[oldPath]) {
-      _addCautionPage(op.item.src_path, 'File was already deleted when move was attempted');
+      _addCautionPage(itemPath, 'File was already deleted when move was attempted');
       return Promise.reject(new Error('File already deleted: ' + oldPath));
     }
     var fileName = oldPath.split('/').pop();
-    var targetDir = '';
-    if (op.targetSection && op.targetSection.querySelector) {
-      var firstPageInSection = op.targetSection.querySelector('[data-nav-src-path]');
-      if (firstPageInSection) {
-        var sectionPath = firstPageInSection.getAttribute('data-nav-src-path');
-        if (_batchRenamedPaths[sectionPath]) sectionPath = _batchRenamedPaths[sectionPath];
-        targetDir = _getDir(sectionPath);
-      }
-    }
+    var targetDir = _resolveTargetDirFromOp(op);
     var newPath = targetDir ? targetDir + '/' + fileName : fileName;
     if (newPath === oldPath) return Promise.resolve();
 
@@ -10085,21 +11018,142 @@
         });
       });
     }).then(function () {
-      _batchRenamedPaths[op.item.src_path] = newPath;
+      _batchRenamedPaths[itemPath] = newPath;
       _migrateCautionForRename(oldPath, newPath);
       var linkIndex = _batchLinkIndex;
       return _rewriteInboundLinks(oldPath, newPath, linkIndex).then(function () {
         _updateLinkIndexForMove(oldPath, newPath);
       });
     }).catch(function (err) {
-      _addCautionPage(op.item.src_path, 'Move failed: ' + (err && err.message ? err.message : String(err)));
+      _addCautionPage(itemPath, 'Move failed: ' + (err && err.message ? err.message : String(err)));
       return Promise.reject(err);
     });
   }
 
+  function _resolveTargetDirFromOp(op) {
+    if (op.type === 'move-left' && op.fromSection) {
+      var fromIndexPath = op.fromSection.getAttribute && op.fromSection.getAttribute('data-nav-index-path');
+      if (fromIndexPath) {
+        fromIndexPath = _resolveChainedRename(fromIndexPath);
+        var parentOfFrom = _getDir(_getDir(fromIndexPath));
+        return parentOfFrom;
+      }
+      var grandparentUl = op.fromSection.parentNode;
+      if (grandparentUl) {
+        var grandSectionLi = _getSectionLiFromUl(grandparentUl);
+        if (grandSectionLi) {
+          var gip = grandSectionLi.getAttribute('data-nav-index-path');
+          if (gip) {
+            gip = _resolveChainedRename(gip);
+            return _getDir(gip);
+          }
+        }
+      }
+      return '';
+    }
+    if (op.targetSection && op.targetSection.querySelector) {
+      var targetIndexPath = op.targetSection.getAttribute && op.targetSection.getAttribute('data-nav-index-path');
+      if (targetIndexPath) {
+        targetIndexPath = _resolveChainedRename(targetIndexPath);
+        return _getDir(targetIndexPath);
+      }
+      var firstPageInSection = op.targetSection.querySelector('[data-nav-src-path]');
+      if (firstPageInSection) {
+        var sectionPath = _resolveChainedRename(firstPageInSection.getAttribute('data-nav-src-path'));
+        return _getDir(sectionPath);
+      }
+    }
+    return '';
+  }
+
+  function _executeSectionMoveFolderOp(op) {
+    var indexPath = _getItemSrcPath(op.item);
+    if (!indexPath) return Promise.resolve();
+    var sectionDir = _getDir(indexPath);
+    var folderName = sectionDir.split('/').pop();
+    if (!folderName) return Promise.resolve();
+
+    var targetParentDir = _resolveTargetDirFromOp(op);
+    var newSectionDir = targetParentDir ? targetParentDir + '/' + folderName : folderName;
+    if (newSectionDir === sectionDir) return Promise.resolve();
+
+    var allPaths = _collectSectionFilePaths(op.item);
+    if (!allPaths.length) return Promise.resolve();
+
+    var resolvedFirst = _resolveChainedRename(allPaths[0] || indexPath);
+    var actualSectionDir = _getDir(resolvedFirst);
+
+    var oldPrefix = actualSectionDir + '/';
+    var newPrefix = newSectionDir + '/';
+
+    return _apiPost('/rename-folder', { old_path: actualSectionDir, new_path: newSectionDir })
+      .then(function () {
+        var globalPaths = typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [];
+        for (var g = 0; g < globalPaths.length; g++) {
+          if (globalPaths[g].indexOf(oldPrefix) === 0) {
+            _batchRenamedPaths[globalPaths[g]] = newPrefix + globalPaths[g].substring(oldPrefix.length);
+          }
+        }
+        for (var rk in _batchRenamedPaths) {
+          if (Object.prototype.hasOwnProperty.call(_batchRenamedPaths, rk)) {
+            var cur = _batchRenamedPaths[rk];
+            if (cur.indexOf(oldPrefix) === 0) {
+              _batchRenamedPaths[rk] = newPrefix + cur.substring(oldPrefix.length);
+            }
+          }
+        }
+        var idx = _batchLinkIndex;
+        if (idx && typeof idx === 'object') {
+          var keysToMove = [];
+          for (var ik in idx) {
+            if (Object.prototype.hasOwnProperty.call(idx, ik) && ik.indexOf(oldPrefix) === 0) {
+              keysToMove.push(ik);
+            }
+          }
+          for (var km = 0; km < keysToMove.length; km++) {
+            var oKey = keysToMove[km];
+            var nKey = newPrefix + oKey.substring(oldPrefix.length);
+            idx[nKey] = idx[oKey];
+            delete idx[oKey];
+          }
+        }
+        return _waitForRebuildAndReconnect();
+      }).then(function () {
+        var chain = Promise.resolve();
+        for (var i = 0; i < allPaths.length; i++) {
+          (function (origPath) {
+            chain = chain.then(function () {
+              var relPart = origPath.substring(sectionDir.length);
+              var oldActualPath = actualSectionDir + relPart;
+              var newFilePath = newSectionDir + relPart;
+              if (_batchDeletedPaths[oldActualPath]) return Promise.resolve();
+              var oldDir = _getDir(oldActualPath);
+              var newDir = _getDir(newFilePath);
+              return _wsGetContents(newFilePath).then(function (content) {
+                var rewritten = _rewriteOutboundLinks(content, oldDir, newDir);
+                if (rewritten !== content) {
+                  return _wsSetContents(newFilePath, rewritten);
+                }
+              }).then(function () {
+                _batchRenamedPaths[origPath] = newFilePath;
+                _migrateCautionForRename(oldActualPath, newFilePath);
+                return _rewriteInboundLinks(oldActualPath, newFilePath, _batchLinkIndex).then(function () {
+                  _updateLinkIndexForMove(oldActualPath, newFilePath);
+                });
+              });
+            });
+          })(allPaths[i]);
+        }
+        return chain;
+      }).catch(function (err) {
+        _addCautionPage(indexPath, 'Section move failed: ' + (err && err.message ? err.message : String(err)));
+        return Promise.reject(err);
+      });
+  }
+
   function _executeRegenerateIndexOp(op) {
     if (!op.oldPath || !op.newPath || !op.indexPath || !op.indexContent) return Promise.resolve();
-    var actualOldPath = _batchRenamedPaths[op.oldPath] || op.oldPath;
+    var actualOldPath = _resolveChainedRename(op.oldPath);
     if (_batchDeletedPaths[actualOldPath]) {
       _addCautionPage(op.oldPath, 'File was already deleted when index regeneration was attempted');
       return Promise.reject(new Error('File already deleted: ' + actualOldPath));
@@ -10147,7 +11201,7 @@
 
   function _executeConvertFolderToPageOp(op) {
     if (!op.indexPath || !op.newPath || !op.content) return Promise.resolve();
-    var actualIndexPath = _batchRenamedPaths[op.indexPath] || op.indexPath;
+    var actualIndexPath = _resolveChainedRename(op.indexPath);
     if (_batchDeletedPaths[actualIndexPath]) {
       _addCautionPage(op.indexPath, 'File was already deleted when folder-to-page conversion was attempted');
       return Promise.reject(new Error('File already deleted: ' + actualIndexPath));
@@ -10176,7 +11230,7 @@
 
   function _executeRenamePageOp(op) {
     if (!op.oldPath || !op.newPath) return Promise.resolve();
-    var actualOldPath = _batchRenamedPaths[op.oldPath] || op.oldPath;
+    var actualOldPath = _resolveChainedRename(op.oldPath);
     if (_batchDeletedPaths[actualOldPath]) {
       _addCautionPage(op.oldPath, 'File was already deleted when rename was attempted');
       return Promise.reject(new Error('File already deleted: ' + actualOldPath));
@@ -10209,7 +11263,7 @@
 
   function _executeSetWeightOp(op) {
     if (!op.src_path) return Promise.resolve();
-    var actualPath = _batchRenamedPaths[op.src_path] || op.src_path;
+    var actualPath = _resolveChainedRename(op.src_path);
     if (_batchDeletedPaths[actualPath]) return Promise.resolve();
     return _wsGetContents(actualPath).then(function (content) {
       var isIndex = actualPath.endsWith('index.md');
@@ -10222,7 +11276,7 @@
 
   function _executeSetHeadlessOp(op) {
     if (!op.src_path) return Promise.resolve();
-    var actualPath = _batchRenamedPaths[op.src_path] || op.src_path;
+    var actualPath = _resolveChainedRename(op.src_path);
     if (_batchDeletedPaths[actualPath]) return Promise.resolve();
     return _wsGetContents(actualPath).then(function (content) {
       var isIndex = actualPath.endsWith('index.md');
@@ -10233,7 +11287,7 @@
 
   function _executeSetFrontmatterOp(op) {
     if (!op.src_path || !op.updates) return Promise.resolve();
-    var actualPath = _batchRenamedPaths[op.src_path] || op.src_path;
+    var actualPath = _resolveChainedRename(op.src_path);
     if (_batchDeletedPaths[actualPath]) return Promise.resolve();
     return _wsGetContents(actualPath).then(function (content) {
       var isIndex = op.isIndex || actualPath.endsWith('index.md');
@@ -10253,7 +11307,7 @@
       var scanChain = Promise.resolve();
       allPaths.forEach(function (srcPath) {
         scanChain = scanChain.then(function () {
-          var actualPath = _batchRenamedPaths[srcPath] || srcPath;
+          var actualPath = _resolveChainedRename(srcPath);
           if (_batchDeletedPaths[actualPath]) return;
           return _wsGetContents(actualPath).then(function (content) {
             var srcDir = _getDir(actualPath);
@@ -10290,7 +11344,7 @@
       var moveChain = Promise.resolve();
       op.hiddenPaths.forEach(function (hiddenPath) {
         moveChain = moveChain.then(function () {
-          var actualHidden = _batchRenamedPaths[hiddenPath] || hiddenPath;
+          var actualHidden = _resolveChainedRename(hiddenPath);
           if (_batchDeletedPaths[actualHidden]) return;
           var refs = scannedLinks[actualHidden];
           if (!refs || !refs.length) return;
@@ -10332,6 +11386,281 @@
     });
 
     return chain;
+  }
+
+  // ------------------------------------------------------------------
+  // Folder rename / delete / link-rewrite batch executors
+  // ------------------------------------------------------------------
+
+  function _apiPost(endpoint, body) {
+    if (typeof liveWysiwygLinkCheckPort === 'undefined' || !liveWysiwygLinkCheckPort) {
+      return Promise.reject(new Error('Link check server not available'));
+    }
+    var host = window.location.hostname || '127.0.0.1';
+    var maxRetries = 5;
+    var retryDelay = 3000;
+    var jsonBody = JSON.stringify(body);
+
+    function attempt(retriesLeft) {
+      var currentPort = liveWysiwygLinkCheckPort;
+      var url = 'http://' + host + ':' + currentPort + endpoint;
+      console.log('[apiPost] ' + endpoint + ' → port ' + currentPort + ' (retries left: ' + retriesLeft + ')');
+      return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: jsonBody
+      }).then(function (resp) {
+        console.log('[apiPost] ' + endpoint + ' responded: ' + resp.status);
+        if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
+        return resp.json();
+      }).catch(function (err) {
+        var msg = err && err.message ? err.message : String(err);
+        var isHttpError = msg.indexOf('HTTP ') === 0;
+        console.error('[apiPost] ' + endpoint + ' error (isHttp=' + isHttpError + ', retries=' + retriesLeft + '):', msg);
+        if (retriesLeft > 0 && !isHttpError) {
+          return new Promise(function (resolve) { setTimeout(resolve, retryDelay); })
+            .then(function () { return _refreshLinkCheckPort(); })
+            .then(function () {
+              console.log('[apiPost] port after refresh: ' + liveWysiwygLinkCheckPort);
+              return attempt(retriesLeft - 1);
+            });
+        }
+        throw err;
+      });
+    }
+
+    return attempt(maxRetries);
+  }
+
+  function _executeRenameFolderOp(op) {
+    if (!op.oldFolder || !op.newFolder) return Promise.resolve();
+    return _apiPost('/rename-folder', { old_path: op.oldFolder, new_path: op.newFolder }).then(function () {
+      var oldPrefix = op.oldFolder + '/';
+      var newPrefix = op.newFolder + '/';
+      var allPaths = typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [];
+      for (var i = 0; i < allPaths.length; i++) {
+        if (allPaths[i].indexOf(oldPrefix) === 0) {
+          var newP = newPrefix + allPaths[i].substring(oldPrefix.length);
+          _batchRenamedPaths[allPaths[i]] = newP;
+        }
+      }
+      for (var oldP in _batchRenamedPaths) {
+        if (Object.prototype.hasOwnProperty.call(_batchRenamedPaths, oldP)) {
+          var cur = _batchRenamedPaths[oldP];
+          if (cur.indexOf(oldPrefix) === 0) {
+            _batchRenamedPaths[oldP] = newPrefix + cur.substring(oldPrefix.length);
+          }
+        }
+      }
+      var idx = _batchLinkIndex;
+      if (idx && typeof idx === 'object') {
+        var keysToMove = [];
+        for (var key in idx) {
+          if (Object.prototype.hasOwnProperty.call(idx, key) && key.indexOf(oldPrefix) === 0) {
+            keysToMove.push(key);
+          }
+        }
+        for (var k = 0; k < keysToMove.length; k++) {
+          var oldKey = keysToMove[k];
+          var newKey = newPrefix + oldKey.substring(oldPrefix.length);
+          idx[newKey] = idx[oldKey];
+          delete idx[oldKey];
+        }
+      }
+      return _waitForRebuildAndReconnect();
+    });
+  }
+
+  function _executeDeleteFolderOp(op) {
+    if (!op.folder) return Promise.resolve();
+    var body = { folder: op.folder };
+    if (op.exclusions && op.exclusions.length) body.exclusions = op.exclusions;
+    return _apiPost('/delete-folder', body).then(function (result) {
+      if (result && result.deleted_files) {
+        result.deleted_files.forEach(function (f) { _batchDeletedPaths[f] = true; });
+      }
+      var allPaths = typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [];
+      var prefix = op.folder + '/';
+      for (var i = 0; i < allPaths.length; i++) {
+        if (allPaths[i].indexOf(prefix) === 0) {
+          var excl = op.exclusions || [];
+          if (excl.indexOf(allPaths[i]) === -1) {
+            _batchDeletedPaths[allPaths[i]] = true;
+          }
+        }
+      }
+      return _waitForRebuildAndReconnect();
+    });
+  }
+
+  function _executeRewriteFolderLinksOp(op) {
+    if (!op.oldFolder || !op.newFolder) return Promise.resolve();
+
+    var renameOccurred = false;
+    for (var rk in _batchRenamedPaths) {
+      if (Object.prototype.hasOwnProperty.call(_batchRenamedPaths, rk)) {
+        if (rk.indexOf(op.oldFolder + '/') === 0 || _batchRenamedPaths[rk].indexOf(op.newFolder + '/') === 0) {
+          renameOccurred = true;
+          break;
+        }
+      }
+    }
+    if (!renameOccurred) {
+      console.warn('[rewrite-folder-links] Skipping — rename of ' + op.oldFolder + ' → ' + op.newFolder + ' did not occur');
+      return Promise.resolve();
+    }
+
+    var linkIndex = _batchLinkIndex;
+    if (!linkIndex || typeof linkIndex !== 'object') return Promise.resolve();
+
+    var oldPrefix = op.oldFolder + '/';
+    var newPrefix = op.newFolder + '/';
+    var pagesToUpdate = {};
+
+    for (var srcPath in linkIndex) {
+      if (!Object.prototype.hasOwnProperty.call(linkIndex, srcPath)) continue;
+      var refs = linkIndex[srcPath];
+      if (!Array.isArray(refs)) continue;
+      var pageDir = _getDir(srcPath);
+      for (var i = 0; i < refs.length; i++) {
+        var ref = refs[i];
+        var target = ref && ref.target;
+        if (!target) continue;
+        var absTarget = _resolvePath(pageDir, target);
+        if (absTarget.indexOf(oldPrefix) === 0 || absTarget === op.oldFolder) {
+          pagesToUpdate[srcPath] = true;
+          break;
+        }
+      }
+    }
+
+    var pages = Object.keys(pagesToUpdate);
+    var chain = Promise.resolve();
+    pages.forEach(function (pagePath) {
+      chain = chain.then(function () {
+        var actualPagePath = _resolveChainedRename(pagePath);
+        if (_batchDeletedPaths[actualPagePath]) return;
+        return _wsGetContents(actualPagePath).then(function (content) {
+          var updated = _rewriteFolderLinksInPage(content, op.oldFolder, op.newFolder, actualPagePath);
+          if (updated !== content) {
+            return _wsSetContents(actualPagePath, updated).then(function () {
+              var pageRefs = linkIndex[actualPagePath] || linkIndex[pagePath];
+              if (Array.isArray(pageRefs)) {
+                var pDir = _getDir(actualPagePath);
+                for (var ri = 0; ri < pageRefs.length; ri++) {
+                  if (!pageRefs[ri] || !pageRefs[ri].target) continue;
+                  var absT = _resolvePath(pDir, pageRefs[ri].target);
+                  if (absT.indexOf(oldPrefix) === 0 || absT === op.oldFolder) {
+                    var newAbsT = absT.indexOf(oldPrefix) === 0
+                      ? newPrefix + absT.substring(oldPrefix.length)
+                      : op.newFolder;
+                    pageRefs[ri].target = _computeRelativePath(pDir, newAbsT);
+                  }
+                }
+              }
+            });
+          }
+        }).catch(function (err) {
+          console.error('[rewrite-folder-links] FAILED for', pagePath, ':', err);
+          _addCautionPage(pagePath, 'Failed to rewrite links after folder rename');
+        });
+      });
+    });
+    return chain;
+  }
+
+  function _rewriteFolderLinksInPage(content, oldFolder, newFolder, pageSrcPath) {
+    var pageDir = _getDir(pageSrcPath);
+    var zones = _findExclusionZones(content);
+    var patterns = [
+      { re: /(?<!!)\[([^\]]*)\]\(([^)]+)\)/g, group: 2 },
+      { re: /!\[([^\]]*)\]\(([^)]+)\)/g, group: 2 },
+      { re: /<img([^>]+)src=["']([^"']+)["']/g, group: 2 },
+      { re: /^\[([^\]]+)\]:\s+(\S+)/gm, group: 2 }
+    ];
+    var replacements = [];
+    var oldPrefix = oldFolder + '/';
+    var newPrefix = newFolder + '/';
+
+    for (var p = 0; p < patterns.length; p++) {
+      var pat = patterns[p];
+      pat.re.lastIndex = 0;
+      var m;
+      while ((m = pat.re.exec(content)) !== null) {
+        if (_isInExclusionZone(m.index, zones)) continue;
+        var fullTarget = m[pat.group];
+        if (!fullTarget || /^(https?:|mailto:|data:|#)/.test(fullTarget)) continue;
+        var anchorIdx = fullTarget.indexOf('#');
+        var queryIdx = fullTarget.indexOf('?');
+        var splitIdx = -1;
+        if (anchorIdx !== -1 && queryIdx !== -1) splitIdx = Math.min(anchorIdx, queryIdx);
+        else if (anchorIdx !== -1) splitIdx = anchorIdx;
+        else if (queryIdx !== -1) splitIdx = queryIdx;
+        var pathPart = splitIdx >= 0 ? fullTarget.substring(0, splitIdx) : fullTarget;
+        var suffix = splitIdx >= 0 ? fullTarget.substring(splitIdx) : '';
+        if (!pathPart) continue;
+        var decoded = decodeURIComponent(pathPart);
+        var absTarget = _resolvePath(pageDir, decoded);
+        var changed = false;
+        var newAbs;
+        if (absTarget.indexOf(oldPrefix) === 0) {
+          newAbs = newPrefix + absTarget.substring(oldPrefix.length);
+          changed = true;
+        } else if (absTarget === oldFolder) {
+          newAbs = newFolder;
+          changed = true;
+        }
+        if (!changed) continue;
+        var newRelative = _computeRelativePath(pageDir, newAbs);
+        var needsEncode = pathPart !== decoded;
+        if (needsEncode) newRelative = encodeURIComponent(newRelative).replace(/%2F/g, '/');
+        var newTarget = newRelative + suffix;
+        if (newTarget !== fullTarget) {
+          var targetStart = m.index + m[0].indexOf(fullTarget);
+          replacements.push({ start: targetStart, end: targetStart + fullTarget.length, replacement: newTarget });
+        }
+      }
+    }
+
+    if (!replacements.length) return content;
+    replacements.sort(function (a, b) { return b.start - a.start; });
+    var result = content;
+    for (var r = 0; r < replacements.length; r++) {
+      result = result.substring(0, replacements[r].start) + replacements[r].replacement + result.substring(replacements[r].end);
+    }
+    return result;
+  }
+
+  // ------------------------------------------------------------------
+  // Folder dead-link scanning (pre-delete)
+  // ------------------------------------------------------------------
+
+  function _scanFolderForDeadLinksWithIndex(folderDir, linkIndex) {
+    if (!linkIndex || typeof linkIndex !== 'object') linkIndex = {};
+    var folderPrefix = folderDir + '/';
+    var brokenLinks = [];
+
+    for (var srcPath in linkIndex) {
+      if (!Object.prototype.hasOwnProperty.call(linkIndex, srcPath)) continue;
+      if (srcPath.indexOf(folderPrefix) === 0) continue;
+      var refs = linkIndex[srcPath];
+      if (!Array.isArray(refs)) continue;
+      var pageDir = _getDir(srcPath);
+      for (var i = 0; i < refs.length; i++) {
+        var ref = refs[i];
+        var target = ref && ref.target;
+        if (!target) continue;
+        var absTarget = _resolvePath(pageDir, target);
+        if (absTarget.indexOf(folderPrefix) === 0 || absTarget === folderDir) {
+          brokenLinks.push({ from: srcPath, target: target, resolvedTarget: absTarget });
+        }
+      }
+    }
+    return brokenLinks;
+  }
+
+  function _listFolderItems(folderDir, includeAll) {
+    return _apiPost('/list-items', { folder: folderDir, all: !!includeAll });
   }
 
   function _updateMkdocsYml(transformFn) {
@@ -10386,7 +11715,7 @@
         } else if (normOp.action === 'create') {
           p = _executeCreatePageOp(normOp);
         } else {
-          var weightPath = _batchRenamedPaths[normOp.path] || normOp.path;
+          var weightPath = _resolveChainedRename(normOp.path);
           if (_batchDeletedPaths[weightPath]) { p = Promise.resolve(); }
           else {
             p = (function (wp) {
@@ -10426,7 +11755,7 @@
         pageItems.push(item);
       } else if (item.type === 'section' && item.children) {
         var indexChild = item.children.find(function (c) { return c.type === 'page' && c.isIndex; });
-        var folderDir = _getDir(indexChild ? indexChild.src_path : '');
+        var folderDir = _getDir(indexChild ? indexChild.src_path : (item.src_path || ''));
         _collectNormalizeOps(item.children, folderDir, allOps);
         if (indexChild && !(indexChild.retitled && indexChild.empty)) {
           var renamedPath = _queueRenameAndRegenerateIndex(indexChild.src_path, indexChild.title || item.title, folderDir, allOps);
@@ -10435,6 +11764,8 @@
           pageItems.push({ src_path: renamedPath });
         } else if (indexChild) {
           pageItems.push({ src_path: indexChild.src_path, _isIndex: true });
+        } else if (item.src_path && item.index_meta) {
+          pageItems.push({ src_path: item.src_path, _isIndex: true });
         }
       }
     }
@@ -10479,6 +11810,8 @@
         var indexChild = (child.children || []).find(function (c) { return c.type === 'page' && c.isIndex; });
         if (indexChild && indexChild.retitled && indexChild.empty) {
           pageItems.push({ src_path: indexChild.src_path, _isIndex: true });
+        } else if (!indexChild && child.src_path && child.index_meta) {
+          pageItems.push({ src_path: child.src_path, _isIndex: true });
         }
       }
     }
@@ -10496,6 +11829,7 @@
   // NAV MENU - Navigation between pages
   // ======================================================================
   function _navigateToPage(url, title, srcPath) {
+    if (srcPath && srcPath === _getCurrentSrcPath()) return;
     var saveBtn = document.querySelector('.live-edit-save-button');
     if (saveBtn && !saveBtn.classList.contains('live-edit-hidden')) {
       _showNavDialog(
@@ -10594,7 +11928,9 @@
 
   function _refreshNavActiveState(srcPath) {
     if (!_focusOverlay) return;
-    var links = _focusOverlay.querySelectorAll('.live-wysiwyg-focus-sidebar-left .md-nav__link');
+    var sidebar = _focusOverlay.querySelector('.live-wysiwyg-focus-sidebar-left');
+    if (!sidebar) return;
+    var links = sidebar.querySelectorAll('.md-nav__link');
     for (var i = 0; i < links.length; i++) {
       var a = links[i];
       var li = a.closest('.md-nav__item');
@@ -10615,6 +11951,25 @@
       }
     }
     _syncAllSectionActiveState();
+
+    var prevCurrent = sidebar.querySelectorAll('.live-wysiwyg-nav-hidden-page--current');
+    for (var p = 0; p < prevCurrent.length; p++) {
+      prevCurrent[p].classList.remove('live-wysiwyg-nav-hidden-page--current');
+      var showCb = sidebar.querySelector('.live-wysiwyg-nav-hidden-cb');
+      if (!showCb || !showCb.checked) prevCurrent[p].style.display = 'none';
+    }
+    var hiddenLi = sidebar.querySelector('.live-wysiwyg-nav-hidden-page[data-nav-src-path="' + srcPath + '"]');
+    if (hiddenLi) {
+      hiddenLi.classList.add('live-wysiwyg-nav-hidden-page--current');
+      hiddenLi.style.display = '';
+      var parentSection = hiddenLi.closest('.md-nav__item--nested');
+      while (parentSection) {
+        parentSection.classList.add('md-nav__item--active');
+        var parentNav = parentSection.querySelector(':scope > .md-nav');
+        if (parentNav) parentNav.setAttribute('aria-expanded', 'true');
+        parentSection = parentSection.parentElement ? parentSection.parentElement.closest('.md-nav__item--nested') : null;
+      }
+    }
   }
 
   function _syncAllSectionActiveState() {
@@ -10648,6 +12003,7 @@
   }
 
   function _doFocusSave() {
+    _userActionInProgress = true;
     var path = _getCurrentSrcPath();
     var content = '';
     if (wysiwygEditor) {
@@ -10667,13 +12023,41 @@
         if (wysiwygEditor && wysiwygEditor._resetPristineContent) {
           wysiwygEditor._resetPristineContent(content);
         }
+        return _waitForRebuild();
+      }).then(function () {
         _removeReloadGuard();
+        _userActionInProgress = false;
+        _syncBuildEpoch();
       }).catch(function (err) {
         _removeReloadGuard();
+        _userActionInProgress = false;
+        _syncBuildEpoch();
         throw err;
       });
     }
+    _userActionInProgress = false;
     return Promise.resolve();
+  }
+
+  function _doFocusModeSave() {
+    if (_navEditMode) { _confirmNavSave(); return; }
+    _doFocusSave().then(function () {
+      if (_getCookie('live_wysiwyg_focus_remain') === '1') {
+        var currentSrc = _getCurrentSrcPath();
+        if (currentSrc) {
+          var transitionOv = _showFullScreenTransition('Reloading...');
+          _wsGetContents(currentSrc).then(function (md) {
+            if (wysiwygEditor && wysiwygEditor._loadContent) {
+              wysiwygEditor._loadContent(md);
+            }
+            _refreshFocusToc();
+            _fadeOutOverlay(transitionOv);
+          }).catch(function () {
+            _fadeOutOverlay(transitionOv);
+          });
+        }
+      }
+    });
   }
 
   // ======================================================================
@@ -10685,7 +12069,7 @@
     for (var i = 0; i < _navBatchQueue.length; i++) {
       var op = _navBatchQueue[i];
       if (op.type === 'rename-page' && op.oldPath === resolved) resolved = op.newPath;
-      if ((op.type === 'move-left' || op.type === 'move-right' || op.type === 'move-into-section') && op.item && op.item.src_path === resolved) {
+      if ((op.type === 'move-left' || op.type === 'move-right' || op.type === 'move-into-section') && op.item && _getItemSrcPath(op.item) === resolved) {
         var targetDir = '';
         if (op.targetSection && op.targetSection.querySelector) {
           var firstPage = op.targetSection.querySelector('[data-nav-src-path]');
@@ -10729,12 +12113,218 @@
     return '';
   }
 
+  // ------------------------------------------------------------------
+  // Folder rename / delete initiation (from settings gear)
+  // ------------------------------------------------------------------
+
+  function _initiateFolderRename(item, oldFolder, newFolder) {
+    if (!_navEditMode) {
+      if (!_ensureNavEditReady()) return;
+      _enterNavEditMode();
+    }
+
+    _fetchLinkIndex().then(function (linkIndex) {
+      var folderPrefix = oldFolder + '/';
+      var affectedPages = [];
+      for (var srcPath in linkIndex) {
+        if (!Object.prototype.hasOwnProperty.call(linkIndex, srcPath)) continue;
+        if (srcPath.indexOf(folderPrefix) === 0) continue;
+        var refs = linkIndex[srcPath];
+        if (!Array.isArray(refs)) continue;
+        var pageDir = _getDir(srcPath);
+        for (var i = 0; i < refs.length; i++) {
+          var ref = refs[i];
+          var target = ref && ref.target;
+          if (!target) continue;
+          var absTarget = _resolvePath(pageDir, target);
+          if (absTarget.indexOf(folderPrefix) === 0 || absTarget === oldFolder) {
+            affectedPages.push(srcPath);
+            break;
+          }
+        }
+      }
+
+      var msg = 'Rename folder "' + oldFolder + '" to "' + newFolder + '"?';
+      if (affectedPages.length) {
+        msg += '\n\n' + affectedPages.length + ' page' + (affectedPages.length !== 1 ? 's' : '') +
+          ' with links pointing into this folder will be automatically updated.';
+      }
+
+      _showNavDialog(msg, [
+        { text: 'Cancel', value: 'cancel' },
+        { text: 'Rename', value: 'rename', className: 'live-wysiwyg-nav-dialog-primary' }
+      ]).then(function (result) {
+        if (result !== 'rename') return;
+        _pushNavOperation({ type: 'rename-folder', oldFolder: oldFolder, newFolder: newFolder });
+        _pushNavOperation({ type: 'rewrite-folder-links', oldFolder: oldFolder, newFolder: newFolder });
+
+        var oldPrefix = oldFolder + '/';
+        var newPrefix = newFolder + '/';
+        _walkNavData(function (navItem) {
+          var sp = _getItemSrcPath(navItem);
+          if (sp && sp.indexOf(oldPrefix) === 0) {
+            var newSp = newPrefix + sp.substring(oldPrefix.length);
+            navItem.src_path = newSp;
+            if (navItem.index_meta && navItem.index_meta.src_path) {
+              navItem.index_meta.src_path = newPrefix + navItem.index_meta.src_path.substring(oldPrefix.length);
+            }
+          }
+        });
+
+        item._renamed = true;
+        _markChildrenRenamed(item);
+
+        _collectRecursiveNormalizeOpsForSection(item);
+
+        if (_navSidebarEl) {
+          _navEditActionsEl = null;
+          _buildNavMenu(_navSidebarEl);
+          if (_navEditMode) _addNavEditActions(_navSidebarEl);
+        }
+
+        if (_navEditActionsEl && !_navEditActionsEl.querySelector('.live-wysiwyg-nav-rename-badge')) {
+          var badge = document.createElement('span');
+          badge.className = 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-rename-badge';
+          badge.textContent = 'Rename "' + oldFolder.split('/').pop() + '" \u2192 "' + newFolder.split('/').pop() + '" + normalize';
+          _navEditActionsEl.appendChild(badge);
+        }
+      });
+    });
+  }
+
+  function _markChildrenRenamed(sectionItem) {
+    if (!sectionItem || !sectionItem.children) return;
+    for (var i = 0; i < sectionItem.children.length; i++) {
+      var child = sectionItem.children[i];
+      child._renamed = true;
+      if (child.type === 'section' && child.children) {
+        _markChildrenRenamed(child);
+      }
+    }
+  }
+
+  function _walkNavData(fn) {
+    var navItems = typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : [];
+    (function walk(items) {
+      for (var i = 0; i < items.length; i++) {
+        fn(items[i]);
+        if (items[i].children) walk(items[i].children);
+      }
+    })(navItems);
+  }
+
+  function _collectRecursiveNormalizeOpsForSection(sectionItem) {
+    if (!sectionItem || !sectionItem.children) return;
+    _normalizeChildWeightsInMemory(sectionItem.children);
+    for (var i = 0; i < sectionItem.children.length; i++) {
+      var child = sectionItem.children[i];
+      if (child.type === 'page') {
+        if (_isRootIndex(child)) continue;
+        if (child.src_path && child.weight != null) {
+          _navBatchQueue.push({ type: 'set-weight', src_path: child.src_path, weight: child.weight, inverse: null });
+        }
+      } else if (child.type === 'section') {
+        var indexSp = child.src_path || (child.index_meta && child.index_meta.src_path) || '';
+        var indexW = child.index_meta ? child.index_meta.weight : undefined;
+        if (indexSp && indexW != null) {
+          _navBatchQueue.push({ type: 'set-weight', src_path: indexSp, weight: indexW, inverse: null });
+        }
+        _collectRecursiveNormalizeOpsForSection(child);
+      }
+    }
+  }
+
+  function _normalizeChildWeightsInMemory(children) {
+    if (!children || !children.length) return;
+    var orderedItems = [];
+    for (var i = 0; i < children.length; i++) {
+      var child = children[i];
+      if (child.type === 'page') {
+        if (_isRootIndex(child)) continue;
+        orderedItems.push(child);
+      } else if (child.type === 'section') {
+        orderedItems.push(child);
+      }
+    }
+    for (var j = 0; j < orderedItems.length; j++) {
+      var w = (j + 1) * 100;
+      var item = orderedItems[j];
+      if (item.type === 'page') {
+        if (item.isIndex && w < 0) w = 0;
+        item.weight = w;
+      } else if (item.type === 'section' && item.index_meta) {
+        if (w < 0) w = 0;
+        item.index_meta.weight = w;
+      }
+    }
+  }
+
+  function _initiateFolderDelete(item, folderDir) {
+    _showNavDialog(
+      'Are you sure you want to delete the folder "' + folderDir + '" and all its contents? This action will be performed when you save.',
+      [
+        { text: 'Cancel', value: 'cancel' },
+        { text: 'Delete Folder', value: 'delete', className: 'live-wysiwyg-nav-dialog-danger' }
+      ]
+    ).then(function (result) {
+      if (result !== 'delete') return;
+      if (!_navEditMode) {
+        if (!_ensureNavEditReady()) return;
+        _enterNavEditMode();
+      }
+
+      _fetchLinkIndex().then(function (freshIndex) {
+        var brokenLinks = _scanFolderForDeadLinksWithIndex(folderDir, freshIndex);
+
+        if (brokenLinks.length) {
+          _pendingFolderDelete = { item: item, folderDir: folderDir, brokenLinks: brokenLinks };
+        } else {
+          _pushNavOperation({ type: 'delete-folder', folder: folderDir });
+        }
+
+        _removeSectionFromNav(item);
+        if (_navSidebarEl) {
+          _navEditActionsEl = null;
+          _buildNavMenu(_navSidebarEl);
+          if (_navEditMode) _addNavEditActions(_navSidebarEl);
+        }
+
+        if (_navEditActionsEl) {
+          var badgeText = brokenLinks.length
+            ? 'Delete "' + folderDir.split('/').pop() + '" (has ' + brokenLinks.length + ' broken link' + (brokenLinks.length !== 1 ? 's' : '') + ')'
+            : 'Delete "' + folderDir.split('/').pop() + '"';
+          if (!_navEditActionsEl.querySelector('.live-wysiwyg-nav-delete-badge')) {
+            var badge = document.createElement('span');
+            badge.className = 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-delete-badge';
+            badge.style.background = '#d9534f';
+            badge.textContent = badgeText;
+            _navEditActionsEl.appendChild(badge);
+          }
+        }
+      });
+    });
+  }
+
+  var _pendingFolderDelete = null;
+
+  function _removeSectionFromNav(item) {
+    var navItems = typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : [];
+    (function remove(items) {
+      for (var i = 0; i < items.length; i++) {
+        if (items[i] === item) { items.splice(i, 1); return true; }
+        if (items[i].children && remove(items[i].children)) return true;
+      }
+      return false;
+    })(navItems);
+  }
+
   function _showSettingsGear(item, itemType, gearBtn) {
     var existing = document.querySelector('.live-wysiwyg-nav-settings-dropdown');
     if (existing) { existing.parentNode.removeChild(existing); return; }
-    var isCurrentPage = item.src_path === _getCurrentSrcPath();
+    var isCurrentPage = _getItemSrcPath(item) === _getCurrentSrcPath();
     if (!isCurrentPage && _isNormalizeLocked()) return;
-    if (itemType === 'page' && !isCurrentPage && !_isRootIndex(item) && !_checkNormalizationPrerequisite(item)) return;
+    var isHeadless = item.headless || (item.index_meta && item.index_meta.headless);
+    if (itemType === 'page' && !isCurrentPage && !isHeadless && !_isRootIndex(item) && !_checkNormalizationPrerequisite(item)) return;
 
     var dropdown = document.createElement('div');
     dropdown.className = 'live-wysiwyg-nav-settings-dropdown';
@@ -10742,6 +12332,7 @@
 
     var sectionHasIndex = itemType === 'section' && (
       (item.src_path != null && item.src_path !== '') ||
+      (item.index_meta != null) ||
       (item.children && item.children.some(function (c) { return c.type === 'page' && c.isIndex; }))
     );
     if (itemType === 'section' && !sectionHasIndex) {
@@ -10796,9 +12387,15 @@
       dropdown.appendChild(row);
     }
 
+    var effectiveMeta = (itemType === 'section' && item.index_meta) ? item.index_meta : item;
+    var effectiveIsIndex = itemType === 'section' || (item.isIndex === true);
+    var defaultWeight = effectiveIsIndex
+      ? (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined
+        ? nwConfig.frontmatter_defaults.index_weight : -10)
+      : (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.weight !== undefined
+        ? nwConfig.frontmatter_defaults.weight : 0);
     addField('Title', 'text', 'title', item.title || '');
-    addField('Weight', 'number', 'weight', item.weight !== undefined && item.weight !== null ? item.weight :
-      (nwConfig.frontmatter_defaults ? nwConfig.frontmatter_defaults.weight : 0));
+    addField('Weight', 'number', 'weight', effectiveMeta.weight !== undefined && effectiveMeta.weight !== null ? effectiveMeta.weight : defaultWeight);
     if (_isRootIndex(item)) {
       var weightInput = dropdown.querySelector('[data-fm-key="weight"]');
       if (weightInput) {
@@ -10807,10 +12404,10 @@
       }
     }
     if (nwConfig.enabled) {
-      addField('Headless', 'checkbox', 'headless', item.headless || false);
-      if (item.isIndex) {
-        addField('Retitled', 'checkbox', 'retitled', item.retitled || false);
-        addField('Empty', 'checkbox', 'empty', item.empty || false);
+      addField('Headless', 'checkbox', 'headless', effectiveMeta.headless || false);
+      if (effectiveIsIndex) {
+        addField('Retitled', 'checkbox', 'retitled', effectiveMeta.retitled || false);
+        addField('Empty', 'checkbox', 'empty', effectiveMeta.empty || false);
       }
     }
 
@@ -10819,6 +12416,54 @@
     dropdown.appendChild(hr);
 
     if (nwConfig.enabled && itemType === 'section') {
+      var folderDir = _getSectionFolderDir(item);
+
+      if (folderDir) {
+        var renameRow = document.createElement('div');
+        renameRow.className = 'live-wysiwyg-nav-settings-row';
+        var renameLabel = document.createElement('span');
+        renameLabel.textContent = 'Folder name';
+        renameRow.appendChild(renameLabel);
+        var renameFolderInput = document.createElement('input');
+        renameFolderInput.type = 'text';
+        var folderBaseName = folderDir.indexOf('/') >= 0 ? folderDir.substring(folderDir.lastIndexOf('/') + 1) : folderDir;
+        renameFolderInput.value = folderBaseName;
+        renameFolderInput.setAttribute('data-folder-rename', 'true');
+        renameRow.appendChild(renameFolderInput);
+        dropdown.appendChild(renameRow);
+
+        var renameFolderBtn = document.createElement('button');
+        renameFolderBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
+        renameFolderBtn.textContent = 'Rename Folder';
+        renameFolderBtn.addEventListener('click', function () {
+          var newName = renameFolderInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+          if (!newName || newName === folderBaseName) return;
+          var parentDir = folderDir.indexOf('/') >= 0 ? folderDir.substring(0, folderDir.lastIndexOf('/')) : '';
+          var newFolder = parentDir ? parentDir + '/' + newName : newName;
+          dropdown.parentNode.removeChild(dropdown);
+          _initiateFolderRename(item, folderDir, newFolder);
+        });
+        dropdown.appendChild(renameFolderBtn);
+
+        var deleteFolderHr = document.createElement('hr');
+        deleteFolderHr.className = 'live-wysiwyg-nav-settings-divider';
+        dropdown.appendChild(deleteFolderHr);
+
+        var deleteFolderBtn = document.createElement('button');
+        deleteFolderBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
+        deleteFolderBtn.style.background = '#d9534f';
+        deleteFolderBtn.textContent = 'Delete Folder';
+        deleteFolderBtn.addEventListener('click', function () {
+          dropdown.parentNode.removeChild(dropdown);
+          _initiateFolderDelete(item, folderDir);
+        });
+        dropdown.appendChild(deleteFolderBtn);
+      }
+
+      var normalizeHr2 = document.createElement('hr');
+      normalizeHr2.className = 'live-wysiwyg-nav-settings-divider';
+      dropdown.appendChild(normalizeHr2);
+
       var normalizeBtn = document.createElement('button');
       normalizeBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
       normalizeBtn.textContent = 'Normalize Nav Weights';
@@ -10878,9 +12523,23 @@
 
     var rect = gearBtn.getBoundingClientRect();
     dropdown.style.position = 'fixed';
-    dropdown.style.top = (rect.bottom + 4) + 'px';
-    dropdown.style.left = Math.max(4, rect.left - 100) + 'px';
+    dropdown.style.visibility = 'hidden';
     document.body.appendChild(dropdown);
+
+    var ddRect = dropdown.getBoundingClientRect();
+    var vpW = window.innerWidth;
+    var vpH = window.innerHeight;
+    var top = rect.bottom + 4;
+    var left = Math.max(4, rect.left - 100);
+    if (top + ddRect.height > vpH - 8) {
+      top = Math.max(4, rect.top - ddRect.height - 4);
+    }
+    if (left + ddRect.width > vpW - 8) {
+      left = Math.max(4, vpW - ddRect.width - 8);
+    }
+    dropdown.style.top = top + 'px';
+    dropdown.style.left = left + 'px';
+    dropdown.style.visibility = '';
 
     var closeHandler = function (e) {
       if (!dropdown.contains(e.target) && e.target !== gearBtn) {
@@ -10889,6 +12548,30 @@
       }
     };
     setTimeout(function () { document.addEventListener('click', closeHandler, true); }, 0);
+  }
+
+  function _computeUnhideWeight(item) {
+    var srcPath = _getItemSrcPath(item) || '';
+    var dir = _getDir(srcPath);
+    var navItems = typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : [];
+    var siblingArr = navItems;
+    function findSection(items) {
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].type === 'section') {
+          var fd = _getSectionFolderDir(items[i]);
+          if (fd === dir) { siblingArr = items[i].children || items; return true; }
+          if (items[i].children && findSection(items[i].children)) return true;
+        }
+      }
+      return false;
+    }
+    if (dir) findSection(navItems);
+    var maxW = 0;
+    for (var i = 0; i < siblingArr.length; i++) {
+      var w = _getItemWeight(siblingArr[i]);
+      if (w != null && w > maxW) maxW = w;
+    }
+    return maxW + 100;
   }
 
   function _applySettingsGearChanges(dropdown, item, itemType) {
@@ -10903,10 +12586,19 @@
       updates[key] = val;
     });
 
-    if (item.src_path === _getCurrentSrcPath()) {
+    var wasHeadless = item.headless || (item.index_meta && item.index_meta.headless);
+    var isBeingUnhidden = wasHeadless && updates.headless === false;
+    if (isBeingUnhidden) {
+      updates.weight = _computeUnhideWeight(item);
+    }
+
+    var effectivePath = _getItemSrcPath(item);
+    var effectiveIsIndex = itemType === 'section' || (item.isIndex === true);
+
+    if (effectivePath === _getCurrentSrcPath()) {
       if (wysiwygEditor) {
         var md = wysiwygEditor.getValue ? wysiwygEditor.getValue() : '';
-        var updated = _updateFrontmatter(md, updates, item.isIndex);
+        var updated = _updateFrontmatter(md, updates, effectiveIsIndex);
         var parsed = parseFrontmatter(updated);
         wysiwygEditor._liveWysiwygFrontmatter = parsed.frontmatter;
         if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
@@ -10918,13 +12610,71 @@
         _updateNavItemTitle(_getCurrentSrcPath(), updates.title);
         _refreshFocusTitle(updates.title);
       }
+      if (updates.weight != null && itemType === 'section' && item.index_meta) {
+        item.index_meta.weight = updates.weight;
+      } else if (updates.weight != null) {
+        item.weight = updates.weight;
+      }
     } else {
       if (!_navEditMode) {
         if (!_ensureNavEditReady()) return;
         _enterNavEditMode();
       }
-      _pushNavOperation({ type: 'set-frontmatter', src_path: item.src_path, updates: updates, isIndex: item.isIndex });
-      if (updates.title) _updateNavItemTitle(item.src_path, updates.title);
+      _pushNavOperation({ type: 'set-frontmatter', src_path: effectivePath, updates: updates, isIndex: effectiveIsIndex });
+      if (updates.title) _updateNavItemTitle(effectivePath, updates.title);
+      if (updates.weight != null && itemType === 'section' && item.index_meta) {
+        item.index_meta.weight = updates.weight;
+      } else if (updates.weight != null && item.type === 'page') {
+        item.weight = updates.weight;
+      }
+    }
+
+    if (isBeingUnhidden && effectivePath) {
+      _promoteHiddenToNav(item, updates);
+    }
+  }
+
+  function _promoteHiddenToNav(item, updates) {
+    var srcPath = _getItemSrcPath(item);
+    if (!srcPath) return;
+
+    item.headless = false;
+    if (updates.weight != null) item.weight = updates.weight;
+    if (updates.title) item.title = updates.title;
+
+    var dir = _getDir(srcPath);
+    var navItems = typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : [];
+    var targetArr = navItems;
+    function findSection(items) {
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].type === 'section') {
+          var fd = _getSectionFolderDir(items[i]);
+          if (fd === dir) { targetArr = items[i].children || items; return true; }
+          if (items[i].children && findSection(items[i].children)) return true;
+        }
+      }
+      return false;
+    }
+    if (dir) findSection(navItems);
+
+    var alreadyInNav = targetArr.some(function (c) { return _getItemSrcPath(c) === srcPath; });
+    if (!alreadyInNav) {
+      targetArr.push(item);
+      targetArr.sort(function (a, b) {
+        var wa = _getItemWeight(a); var wb = _getItemWeight(b);
+        if (wa == null) wa = 99999;
+        if (wb == null) wb = 99999;
+        return wa - wb;
+      });
+    }
+
+    if (_navSidebarEl) {
+      var wasInEditMode = _navEditMode;
+      _navEditActionsEl = null;
+      _buildNavMenu(_navSidebarEl);
+      if (wasInEditMode) {
+        _addNavEditActions(_navSidebarEl);
+      }
     }
   }
 
@@ -11572,7 +13322,7 @@
   }
 
   function _addCautionPage(srcPath, reason) {
-    var actualPath = _batchRenamedPaths[srcPath] || srcPath;
+    var actualPath = _resolveChainedRename(srcPath);
     var msg = reason || 'Link integrity may need attention';
     var pages = _getCautionPages();
     for (var i = 0; i < pages.length; i++) {
@@ -13541,6 +15291,7 @@
         'position:absolute;z-index:99995;background:var(--md-default-bg-color,#fff);' +
         'border:1px solid var(--md-default-fg-color--lightest,#ddd);border-radius:6px;' +
         'box-shadow:0 4px 16px rgba(0,0,0,.15);padding:12px 14px;min-width:220px;' +
+        'max-height:80vh;overflow-y:auto;' +
         'font-size:.75rem;color:var(--md-default-fg-color,#333);' +
       '}' +
       '.live-wysiwyg-nav-settings-dropdown label{' +
@@ -13767,6 +15518,40 @@
         'color:var(--md-default-fg-color--light,#888);font-style:italic;' +
       '}' +
 
+      // --- Hidden (headless) pages in nav ---
+      '.live-wysiwyg-nav-hidden-cb{' +
+        'appearance:none;-webkit-appearance:none;width:13px;height:13px;' +
+        'border:2px solid var(--md-default-fg-color--lighter,#bbb);border-radius:3px;' +
+        'cursor:pointer;position:relative;flex-shrink:0;margin-right:4px;vertical-align:middle;' +
+        'transition:background-color .15s,border-color .15s;' +
+      '}' +
+      '.live-wysiwyg-nav-hidden-cb:checked{' +
+        'background-color:var(--md-accent-fg-color,#7c4dff);' +
+        'border-color:var(--md-accent-fg-color,#7c4dff);' +
+      '}' +
+      '.live-wysiwyg-nav-hidden-cb:checked::after{' +
+        'content:"";position:absolute;left:2px;top:0px;width:4px;height:7px;' +
+        'border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg);' +
+      '}' +
+      '.live-wysiwyg-nav-hidden-page{' +
+        'border-left:2px solid var(--md-default-fg-color--lighter,#bbb);' +
+      '}' +
+      '.live-wysiwyg-nav-hidden-page>.md-nav__link{' +
+        'opacity:.6;' +
+      '}' +
+      '.live-wysiwyg-nav-hidden-page>.md-nav__link:hover{opacity:.85;}' +
+      '.live-wysiwyg-nav-hidden-page--current{' +
+        'border-left-color:var(--md-accent-fg-color,#7c4dff);' +
+      '}' +
+      '.live-wysiwyg-nav-hidden-page--current>.md-nav__link{opacity:1;}' +
+      '.live-wysiwyg-nav-hidden-info{' +
+        'display:inline-flex;align-items:center;justify-content:center;' +
+        'margin-left:4px;flex-shrink:0;font-size:.55rem;' +
+        'color:var(--md-default-fg-color--lighter,#aaa);cursor:help;' +
+        'transition:color .15s;' +
+      '}' +
+      '.live-wysiwyg-nav-hidden-info:hover{color:var(--md-accent-fg-color,#7c4dff);}' +
+
       '';
   }
 
@@ -13985,6 +15770,7 @@
     var savedSelection = _captureEditorSelection();
 
     isFocusModeActive = true;
+    _installFocusModeGuard();
 
     var styleEl = document.getElementById(FOCUS_MODE_STYLE_ID);
     if (!styleEl) {
@@ -13999,7 +15785,7 @@
 
     var overlay = document.createElement('div');
     overlay.className = 'live-wysiwyg-focus-overlay';
-    if ((document.cookie.match(/(?:^|;\s*)live_wysiwyg_focus_toolbar=(\d)/) || [])[1] === '1') {
+    if ((document.cookie.match(/(?:^|;\s*)live_wysiwyg_focus_toolbar=(\d)/) || [])[1] !== '0') {
       overlay.classList.add('live-wysiwyg-focus-toolbar-open');
     }
     _focusOverlay = overlay;
@@ -14217,24 +16003,7 @@
     saveBtn.className = 'live-wysiwyg-focus-save-btn';
     saveBtn.textContent = 'Save';
     saveBtn.addEventListener('click', function () {
-      if (_navEditMode) { _confirmNavSave(); return; }
-      _doFocusSave().then(function () {
-        if (_getCookie('live_wysiwyg_focus_remain') === '1') {
-          var currentSrc = _getCurrentSrcPath();
-          if (currentSrc) {
-            var transitionOv = _showFullScreenTransition('Reloading...');
-            _wsGetContents(currentSrc).then(function (md) {
-              if (wysiwygEditor && wysiwygEditor._loadContent) {
-                wysiwygEditor._loadContent(md);
-              }
-              _refreshFocusToc();
-              _fadeOutOverlay(transitionOv);
-            }).catch(function () {
-              _fadeOutOverlay(transitionOv);
-            });
-          }
-        }
-      });
+      _doFocusModeSave();
     });
     drawerControls.appendChild(saveBtn);
 
@@ -14520,6 +16289,8 @@
 
   function exitFocusMode() {
     if (!isFocusModeActive) return;
+
+    _removeFocusModeGuard();
 
     if (_navEditMode) _exitNavEditMode(false);
     _navSidebarEl = null;
@@ -20163,6 +21934,10 @@
                          (ma && (activeEl === ma || ma.contains(activeEl)));
         if (!isInEditor) return;
         e.preventDefault();
+        if (isFocusModeActive) {
+          _doFocusModeSave();
+          return;
+        }
         if (wysiwygEditor._finalizeUpdate) {
           if (wysiwygEditor.currentMode === 'wysiwyg' && ea) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);

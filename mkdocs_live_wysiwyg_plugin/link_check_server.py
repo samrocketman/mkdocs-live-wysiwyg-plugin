@@ -1,18 +1,24 @@
 """Batch link-check HTTP server for the WYSIWYG dead-link finder.
 
 Runs in a daemon thread alongside the MkDocs dev server.  Exposes
-``POST /check-links`` and ``GET /link-index`` endpoints.
+``POST /check-links``, ``POST /file-exists``, ``POST /list-items``,
+``POST /rename-folder``, ``POST /delete-folder``,
+and ``GET /link-index``, ``GET /build-epoch`` endpoints.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import threading
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+
+import yaml
 
 _RE_MD_LINK = re.compile(r'(?<!!)\[([^\]]*)\]\(([^)]+)\)')
 _RE_MD_IMAGE = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
@@ -20,11 +26,31 @@ _RE_IMG_TAG = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']')
 _RE_REF_DEF = re.compile(r'^\[([^\]]+)\]:\s+(\S+)', re.MULTILINE)
 
 
+def _parse_frontmatter(text: str) -> dict:
+    """Extract YAML frontmatter from markdown *text*.
+
+    Returns the parsed dict (or ``{}`` if absent / invalid).
+    """
+    if not text.startswith("---"):
+        return {}
+    end = text.find("\n---", 3)
+    if end == -1:
+        return {}
+    try:
+        return yaml.safe_load(text[3:end]) or {}
+    except yaml.YAMLError:
+        return {}
+
+
 class _LinkCheckHandler(BaseHTTPRequestHandler):
-    """Handles POST /check-links and GET /link-index requests."""
+    """Handles POST /check-links, POST /file-exists, POST /list-items,
+    POST /rename-folder, POST /delete-folder, GET /link-index,
+    and GET /build-epoch."""
 
     docs_dir: str = ""
+    walk_dir: str = ""
     link_index: dict = {}
+    build_epoch: list[int] = [1]
 
     def log_message(self, format, *args):  # noqa: A002
         pass
@@ -34,10 +60,54 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def do_GET(self):
-        if self.path != "/link-index":
-            self.send_error(404)
+        if self.path == "/link-index":
+            payload = json.dumps(self.link_index).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(payload)
             return
-        payload = json.dumps(self.link_index).encode("utf-8")
+        if self.path == "/build-epoch":
+            payload = json.dumps({"epoch": self.build_epoch[0]}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        self.send_error(404)
+
+    # ------------------------------------------------------------------
+    # POST /check-links
+    # ------------------------------------------------------------------
+
+    def do_POST(self):
+        if self.path == "/check-links":
+            return self._handle_check_links()
+        if self.path == "/file-exists":
+            return self._handle_file_exists()
+        if self.path == "/list-items":
+            return self._handle_list_items()
+        if self.path == "/rename-folder":
+            return self._handle_rename_folder()
+        if self.path == "/delete-folder":
+            return self._handle_delete_folder()
+        self.send_error(404)
+
+    def _read_json_body(self) -> dict | None:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            return json.loads(self.rfile.read(length))
+        except (ValueError, json.JSONDecodeError):
+            self.send_error(400, "Invalid JSON")
+            return None
+
+    def _send_json(self, obj: object) -> None:
+        payload = json.dumps(obj).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
@@ -49,21 +119,14 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
     # POST /check-links
     # ------------------------------------------------------------------
 
-    def do_POST(self):
-        if self.path != "/check-links":
-            self.send_error(404)
-            return
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length))
-        except (ValueError, json.JSONDecodeError):
-            self.send_error(400, "Invalid JSON")
+    def _handle_check_links(self):
+        body = self._read_json_body()
+        if body is None:
             return
 
         checks = body.get("checks", [])
         results: list[dict] = []
         for item in checks:
-            # Abort early when the client has disconnected.
             try:
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionError, OSError):
@@ -75,13 +138,242 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             else:
                 results.append({"ok": False, "error": "Unknown check type"})
 
-        payload = json.dumps({"results": results}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(payload)
+        self._send_json({"results": results})
+
+    # ------------------------------------------------------------------
+    # POST /file-exists  — batch file-existence check (docs-scoped)
+    # ------------------------------------------------------------------
+
+    def _handle_file_exists(self):
+        body = self._read_json_body()
+        if body is None:
+            return
+
+        paths = body.get("paths", [])
+        docs = Path(self.walk_dir or self.docs_dir)
+        results: dict[str, dict] = {}
+        for rel in paths:
+            if not isinstance(rel, str) or not rel:
+                continue
+            resolved = (docs / rel).resolve()
+            try:
+                resolved.relative_to(docs.resolve())
+            except ValueError:
+                results[rel] = {"exists": False}
+                continue
+            if resolved.is_file():
+                try:
+                    text = resolved.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    results[rel] = {"exists": True, "meta": {}}
+                    continue
+                meta = _parse_frontmatter(text)
+                results[rel] = {
+                    "exists": True,
+                    "meta": {
+                        "title": meta.get("title"),
+                        "weight": meta.get("weight"),
+                        "headless": meta.get("headless"),
+                        "retitled": meta.get("retitled"),
+                        "empty": meta.get("empty"),
+                    },
+                }
+            else:
+                results[rel] = {"exists": False}
+
+        self._send_json({"results": results})
+
+    # ------------------------------------------------------------------
+    # POST /list-items  — recursive directory listing (docs-scoped)
+    # ------------------------------------------------------------------
+
+    def _handle_list_items(self):
+        body = self._read_json_body()
+        if body is None:
+            return
+
+        folder = body.get("folder", "")
+        include_all = body.get("all", False)
+        docs = Path(self.walk_dir or self.docs_dir).resolve()
+
+        target = (docs / folder).resolve() if folder else docs
+        if not self._is_within_docs(target, docs):
+            self.send_error(403, "Path escapes docs_dir")
+            return
+        if not target.is_dir():
+            self._send_json({"items": []})
+            return
+
+        items: list[dict] = []
+        for root, dirs, files in os.walk(target):
+            root_path = Path(root)
+            rel_root = str(root_path.relative_to(docs)).replace("\\", "/")
+            if rel_root == ".":
+                rel_root = ""
+            for d in sorted(dirs):
+                items.append({
+                    "path": (rel_root + "/" + d if rel_root else d),
+                    "type": "directory",
+                })
+            for f in sorted(files):
+                if not include_all and not f.endswith(".md"):
+                    continue
+                items.append({
+                    "path": (rel_root + "/" + f if rel_root else f),
+                    "type": "file",
+                })
+        self._send_json({"items": items})
+
+    # ------------------------------------------------------------------
+    # POST /rename-folder  — rename a directory within docs
+    # ------------------------------------------------------------------
+
+    def _handle_rename_folder(self):
+        body = self._read_json_body()
+        if body is None:
+            return
+
+        old_path = body.get("old_path", "")
+        new_path = body.get("new_path", "")
+        if not old_path or not new_path:
+            self.send_error(400, "old_path and new_path are required")
+            return
+
+        docs = Path(self.walk_dir or self.docs_dir).resolve()
+        old_abs = (docs / old_path).resolve()
+        new_abs = (docs / new_path).resolve()
+
+        if not self._is_within_docs(old_abs, docs):
+            self.send_error(403, "old_path escapes docs_dir")
+            return
+        if not self._is_within_docs(new_abs, docs):
+            self.send_error(403, "new_path escapes docs_dir")
+            return
+        if not old_abs.is_dir():
+            self.send_error(404, "Source directory not found")
+            return
+        if new_abs.exists():
+            self.send_error(409, "Destination already exists")
+            return
+
+        try:
+            new_abs.parent.mkdir(parents=True, exist_ok=True)
+            old_abs.rename(new_abs)
+        except OSError as e:
+            self.send_error(500, f"Rename failed: {e}")
+            return
+        self._send_json({"ok": True})
+
+    # ------------------------------------------------------------------
+    # POST /delete-folder  — delete a directory (with optional exclusions)
+    # ------------------------------------------------------------------
+
+    def _handle_delete_folder(self):
+        body = self._read_json_body()
+        if body is None:
+            return
+
+        folder = body.get("folder", "")
+        exclusions = set(body.get("exclusions", []))
+        if not folder:
+            self.send_error(400, "folder is required")
+            return
+
+        docs = Path(self.walk_dir or self.docs_dir).resolve()
+        target = (docs / folder).resolve()
+
+        if not self._is_within_docs(target, docs):
+            self.send_error(403, "Path escapes docs_dir")
+            return
+        if not target.is_dir():
+            self.send_error(404, "Directory not found")
+            return
+
+        if not exclusions:
+            try:
+                shutil.rmtree(target)
+            except OSError as e:
+                self.send_error(500, f"Delete failed: {e}")
+                return
+            self._send_json({"ok": True, "deleted": True, "partial": False})
+            return
+
+        deleted_files: list[str] = []
+        skipped_files: list[str] = []
+        self._delete_tree_with_exclusions(
+            target, docs, exclusions, deleted_files, skipped_files,
+        )
+        self._send_json({
+            "ok": True,
+            "deleted": not target.exists(),
+            "partial": bool(skipped_files),
+            "deleted_files": deleted_files,
+            "skipped_files": skipped_files,
+        })
+
+    def _delete_tree_with_exclusions(
+        self,
+        directory: Path,
+        docs: Path,
+        exclusions: set[str],
+        deleted_files: list[str],
+        skipped_files: list[str],
+    ) -> bool:
+        """Recursively delete *directory* contents, skipping exclusions.
+
+        Returns True if the directory itself was fully deleted (empty after
+        processing).  Files/folders whose relative path (from docs root)
+        appears in *exclusions* are preserved.
+        """
+        all_removed = True
+        for child in sorted(directory.iterdir()):
+            rel = str(child.relative_to(docs)).replace("\\", "/")
+            if rel in exclusions:
+                skipped_files.append(rel)
+                all_removed = False
+                continue
+            if child.is_dir():
+                has_excluded_child = any(
+                    ex.startswith(rel + "/") for ex in exclusions
+                )
+                if has_excluded_child:
+                    sub_clear = self._delete_tree_with_exclusions(
+                        child, docs, exclusions, deleted_files, skipped_files,
+                    )
+                    if not sub_clear:
+                        all_removed = False
+                else:
+                    try:
+                        shutil.rmtree(child)
+                        deleted_files.append(rel + "/")
+                    except OSError:
+                        all_removed = False
+            else:
+                try:
+                    child.unlink()
+                    deleted_files.append(rel)
+                except OSError:
+                    all_removed = False
+
+        if all_removed:
+            try:
+                directory.rmdir()
+            except OSError:
+                all_removed = False
+        return all_removed
+
+    # ------------------------------------------------------------------
+    # Path sandboxing helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_within_docs(resolved: Path, docs_resolved: Path) -> bool:
+        """Return True if *resolved* is within or equal to *docs_resolved*."""
+        try:
+            resolved.relative_to(docs_resolved)
+            return True
+        except ValueError:
+            return False
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -204,6 +496,7 @@ def start_link_check_server(
     link_index: dict | None = None,
     *,
     walk_dir: str | None = None,
+    build_epoch: list[int] | None = None,
 ) -> tuple[HTTPServer, int]:
     """Start the link-check HTTP server on *host* (port chosen by the OS).
 
@@ -219,10 +512,17 @@ def start_link_check_server(
         link_index = build_link_index(scan_dir)
     elif not link_index:
         link_index.update(build_link_index(scan_dir))
+    if build_epoch is None:
+        build_epoch = [1]
     handler = type(
         "_BoundLinkCheckHandler",
         (_LinkCheckHandler,),
-        {"docs_dir": docs_dir, "link_index": link_index},
+        {
+            "docs_dir": docs_dir,
+            "walk_dir": scan_dir,
+            "link_index": link_index,
+            "build_epoch": build_epoch,
+        },
     )
     server = HTTPServer((host, 0), handler)
     port = server.server_address[1]

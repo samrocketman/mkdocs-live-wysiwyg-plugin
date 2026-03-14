@@ -273,7 +273,7 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
         try:
             new_abs.parent.mkdir(parents=True, exist_ok=True)
             if new_abs.is_dir():
-                for child in old_abs.iterdir():
+                for child in list(old_abs.iterdir()):
                     dest = new_abs / child.name
                     if dest.exists():
                         if child.is_dir() and dest.is_dir():

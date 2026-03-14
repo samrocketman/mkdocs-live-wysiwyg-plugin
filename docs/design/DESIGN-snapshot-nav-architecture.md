@@ -10,10 +10,11 @@ All code lives in `live-wysiwyg-integration.js`.
 
 1. **Actions only modify data.** No action handler touches the DOM. Actions modify `liveWysiwygNavData`, set data flags (`_renamed`, `_new`, `_originalPath`, `_warnings`, `_deadLinks`), then call `_commitNavSnapshot()`.
 2. **DOM renders from active snapshot.** `_renderNavFromSnapshot()` applies `_navSnapshots[_navSnapshotIndex]` to globals and calls `_buildNavMenu`. All visual state — including caution icons — comes from data on navData items.
-3. **Save computes a phased plan from diff.** No batch queue is maintained during editing. On save, `_computeSavePlan()` diffs snapshot 0 vs the active snapshot and produces a 2-batch execution plan.
+3. **Save is a two-step process: desired state then disk planning.** No batch queue is maintained during editing. On save, `_computeSavePlan()` diffs snapshot 0 vs the active snapshot and produces a declarative desired state (where every page should end up, with what frontmatter). Then `_planDiskOperations()` converts that desired state into an optimized 2-batch execution plan, detecting folder renames to minimize disk writes.
 4. **Content refactoring is a decoupled diff phase.** Link rewriting, title/weight updates, headless changes are computed from the diff and applied in Batch 2d, after all structural changes.
 5. **UIDs for cross-snapshot matching.** Every navData item gets a stable `_uid` via `_generateUid()`. UIDs survive renames and moves, enabling robust diffing.
 6. **Warnings are snapshot-tracked.** Per-item `_warnings` and `_deadLinks` arrays live on navData items. They are deep-cloned into snapshots and naturally participate in undo/redo.
+7. **Single snapshot diff, declarative desired state.** The migration, normalization, and all user edits are expressed as mutations to `liveWysiwygNavData`. A single diff between snapshot 0 (original state) and the active snapshot (current state) produces a declarative desired state — not operations. The desired state describes where every page and section should end up, with what frontmatter and content. A separate disk planning phase then converts this into the minimum set of operations (folder renames, file moves, creates, deletes, frontmatter writes) needed to achieve that state.
 
 ## Snapshot System
 
@@ -30,8 +31,9 @@ Each snapshot captures the full editor state:
 
 ```
 {
-  navData: [...]              // deep-cloned nav tree (with _uid, _renamed, _new,
-                              //   _originalPath, _warnings, _deadLinks)
+  navData: [...]              // deep-cloned nav tree (with _uid, _fm, _renamed, _new,
+                              //   _originalPath, _warnings, _deadLinks, _indexContent,
+                              //   setContent)
   batchQueue: [...]           // shallow-cloned operation descriptors
   badges: [...]               // badge descriptors for the actions bar
   migrationPending: bool      // migration was staged
@@ -69,6 +71,11 @@ Each snapshot captures the full editor state:
 3. Push to `_navSnapshots`, advance `_navSnapshotIndex`
 4. Call `_renderNavFromSnapshot()`
 
+**`_takeNavSnapshot()`:**
+1. `_syncFmFields(navData)` — synchronize item-level fields into `_fm` objects
+2. `_deepCloneNavData(navData)` — deep-clone the nav tree
+3. Shallow-clone `_navBatchQueue`, copy all other global state
+
 **`_renderNavFromSnapshot()`:**
 1. Apply `_navSnapshots[_navSnapshotIndex]` data to globals via `_applySnapshotToGlobals`
 2. Reset `_navEditActionsEl`
@@ -90,14 +97,71 @@ Each snapshot captures the full editor state:
 `_deepCloneNavData(items)` recursively clones the nav tree:
 - `children` → recursed
 - `index_meta` → shallow object copy
+- `_fm` → shallow object copy (all values are primitives)
 - `_warnings` → array of `{reason, renames}` objects, each copied
 - `_deadLinks` → `{internal: [...], external: [...]}`, each link object copied
 - All other properties → direct assignment (primitives, strings, booleans)
+
+This includes `_indexContent` (string, copied by value) and `setContent` (string, copied by value).
 
 ### Discard / Exit
 
 - **Discard**: Restore `_navSnapshots[0]` to navData. Reset to `[initial]; index = 0`. Re-render.
 - **Exit after save**: `_persistWarningsFromSnapshot()` writes to localStorage, then `_exitNavEditMode(false)`.
+
+## Virtualized Frontmatter (`_fm`)
+
+### Purpose
+
+Each page item in `navData` carries an `_fm` object representing its complete YAML frontmatter state. The `_fm` is the source of truth for what frontmatter will be written to disk on save. All frontmatter changes — weight updates, title changes, headless toggling, migration — are expressed as mutations to `_fm`.
+
+### Population
+
+`_fm` is populated from `liveWysiwygFrontmatterMap` (a global injected by `plugin.py` containing full parsed frontmatter for every page). When items are created or modified:
+- `_precomputeHiddenPages` sets `_fm` from `liveWysiwygFrontmatterMap` on hidden items
+- `_applyMigrationToNavData` sets `_fm` on migrated items from `liveWysiwygFrontmatterMap` or from existing items
+- Action handlers that modify weight, title, headless, etc. update the corresponding `_fm` fields
+
+### Synchronization (`_syncFmFields`)
+
+Called by `_takeNavSnapshot()` before cloning. Walks the entire nav tree and ensures `_fm` reflects the current item-level fields:
+
+- `item.weight` → `_fm.weight` (deleted if null)
+- `item.headless` → `_fm.headless` (deleted if not true)
+- `item.retitled` → `_fm.retitled` (deleted if not true)
+- `item.empty` → `_fm.empty` (deleted if not true)
+- `item.title` → `_fm.title` (only if `_fm` already has `title` or item is `_new`)
+
+This ensures the snapshot always contains a consistent `_fm` even when action handlers modify item-level fields directly without touching `_fm`.
+
+### Key Ordering in `_buildFrontmatterFromFm`
+
+When writing `_fm` to disk, key ordering is preserved from the original file:
+
+1. Keys that existed in `origFm` (passed from the snapshot diff) are written in their original order
+2. New keys not in `origFm` follow a positional rule: `title` is inserted first, `weight` is appended last
+3. Keys whose values match `mkdocs-nav-weight` defaults are stripped (e.g., `weight: 0` when default is 0, `headless: false`)
+
+### `newFrontmatter` Flag
+
+When the snapshot diff detects that `origFm` has no `mkdocs-nav-weight` keys (`weight`, `headless`, `retitled`, `empty` are all `undefined`), the `set-frontmatter` op is flagged with `newFrontmatter: true`. The executor then reads the actual file content to discover any pre-existing non-nav-weight frontmatter keys (and their order), using `_parseFrontmatter(content).fields` as the effective `origFm`. This ensures existing frontmatter is preserved when nav-weight fields are added for the first time.
+
+## Pre-Computation Content Scan (`_preComputationContentScan`)
+
+### Purpose
+
+Before migration or normalization, index pages that have body content (not just frontmatter) need to be identified so their content can be split into a separate page. The scan reads the full raw content of qualifying index files and stores it on the navData item as `_indexContent`.
+
+### Mechanism
+
+1. Walks `liveWysiwygNavData` looking for section children with `type: 'page'`, `isIndex: true`, and NOT already `retitled && empty` (thin indexes are skipped)
+2. For each qualifying index, calls `_wsGetContents(item.src_path)` to read the full file content
+3. Stores the raw content (frontmatter + body) as `item._indexContent`
+4. Returns a Promise that resolves when all reads complete
+
+### Snapshot Persistence
+
+`_indexContent` is a string, so `_deepCloneNavData` copies it by value. It persists in snapshots and is used by `_applyMigrationToNavData` to extract body content when splitting indexes. The extracted body is stored as `setContent` on the content page item, which the `set-frontmatter` executor uses instead of reading from disk.
 
 ## Warning System
 
@@ -151,6 +215,8 @@ Set to `true` in `_executeNavBatchSave` before `_runBatchOps`. Reset to `false` 
                     │     navData items                 │
                     │  item._warnings = [...]           │
                     │  item._deadLinks = {...}          │
+                    │  item._fm = {...}                 │
+                    │  item._indexContent = '...'       │
                     └──────┬──────────────▲────────────┘
                            │              │
            _takeNavSnapshot│              │ _applySnapshotToGlobals
@@ -190,7 +256,7 @@ Caution icons are rendered inline during `_buildNavItems`, not via a separate pa
 
 **Section items:** If the section's own `_warnings` or its index child's `_warnings` has entries, a caution icon is appended to the section label.
 
-**Weight-exceeds warnings:** Rendered as direct DOM elements (not stored in `_warnings`). A `⚠` icon with `data-weight-caution="1"` appears inline when `item.weight > defaultPageWeight`. This is computed state, not user-generated — it appears/disappears based on current data without snapshot tracking.
+**Weight-exceeds warnings:** Rendered as direct DOM elements (not stored in `_warnings`). A `⚠` icon with `data-weight-caution="1"` appears inline when `item.weight > defaultPageWeight` and `item.isIndex` is false (section indexes are excluded from this warning). This is computed state, not user-generated — it appears/disappears based on current data without snapshot tracking.
 
 ### Caution Popup
 
@@ -236,6 +302,9 @@ Both actions create a snapshot, so they can be undone.
 | Flag | Set by | Meaning |
 |------|--------|---------|
 | `_uid` | `_assignUids` | Stable unique identifier for cross-snapshot matching |
+| `_fm` | `_syncFmFields`, action handlers, migration | Complete frontmatter key-value map; source of truth for disk writes |
+| `_indexContent` | `_preComputationContentScan`, `_scanClaimedIndexContent` | Full raw file content (frontmatter + body) for index pages; used to extract body for `setContent` |
+| `setContent` | Migration `buildTree` | Body content (frontmatter stripped) for content pages split from indexes; carried in snapshot; executor writes this instead of reading from disk |
 | `_renamed` | Rename handlers | Renderer applies `.live-wysiwyg-nav-item--renamed` |
 | `_new` | Create handlers | Renderer applies `.live-wysiwyg-nav-item--new` |
 | `_originalPath` | Rename/move handlers | Original `src_path` before rename; used by diff |
@@ -257,41 +326,135 @@ Truthiness check `if (_navEditMode)` works for both `'light'` and `'heavy'`.
 
 Escalation from `'light'` to `'heavy'` prompts user to save content first.
 
-## Diff-Based Save (2-Batch Execution)
+## Diff-Based Save (2-Phase Planning + 2-Batch Execution)
 
-### `_computeSavePlan(originalSnap, currentSnap)`
+The save process separates **what** the end state should look like from **how** to achieve it:
 
-Flattens both snapshots via `_flattenNavTree` (UID-keyed maps), then diffs:
+1. **`_computeSavePlan`** — produces a declarative desired state (where every page and section should end up, with what frontmatter and content)
+2. **`_planDiskOperations`** — converts the desired state into an optimized 2-batch execution plan, detecting folder renames to minimize disk writes
+
+### `_flattenNavTree`
+
+Recursively walks the nav tree and produces a flat `{ uid → entry }` map. Each entry contains:
+
+```
+{
+  item: <reference to navData item>,
+  parentUid: <parent item's _uid or null>,
+  index: <position among siblings>,
+  srcPath: <page src_path or null>,
+  folderDir: <section directory or null>,
+  weight: <item weight>,
+  title: <item title>,
+  headless: <boolean>,
+  parentDir: <parent section directory or ''>
+}
+```
+
+Items with `_deleted: true` are excluded. The `item` reference preserves access to `_fm`, `setContent`, `_indexContent`, and all other data flags.
+
+### Phase 1: Desired State Diff (`_computeSavePlan`)
+
+Flattens both snapshots via `_flattenNavTree` (UID-keyed maps), compares them by UID, and produces a declarative output:
+
+```
+{
+  pages: [
+    {
+      uid: <stable UID>,
+      diskPath: <current on-disk path or null if new>,
+      desiredPath: <target path or null if deleted>,
+      desiredFm: <target _fm object>,
+      origFm: <original _fm object>,
+      setContent: <full raw content for split content pages or null>,
+      createContent: <content for brand-new pages or null>,
+      isNew: <boolean>,
+      isDeleted: <boolean>,
+      isIndex: <boolean>,
+      newFrontmatter: <true when origFm had no nav-weight fields>
+    },
+    ...
+  ],
+  sections: [
+    { uid, diskDir, desiredDir, isNew, isDeleted },
+    ...
+  ],
+  convertOps: [...],       // pass-through: convert-folder-to-page, regenerate-index
+  createFolderOps: [...],  // create-folder ops from batchQueue
+  mkdocsYmlOps: [...]      // write-mkdocs-yml ops if yml changed
+}
+```
+
+Key rules:
+- **Moved pages**: `diskPath !== desiredPath` and neither is null
+- **Deleted pages**: `desiredPath` is null
+- **New pages**: `diskPath` is null, `createContent` carries file content (resolved from `batchQueue` create-page ops)
+- **Content splits**: `setContent` carries the full raw content (body + existing frontmatter) for content pages split from indexes
+- **`newFrontmatter`**: computed here from the original snapshot's `_fm` — true when `origFm` has none of the four nav-weight keys (`weight`, `headless`, `retitled`, `empty`)
+- **No rename/move/delete operations**: only the desired end state
+
+### Phase 2: Disk Operation Planning (`_planDiskOperations`)
+
+Takes the desired state and computes the minimum disk operations to achieve it.
+
+**Folder rename detection algorithm:**
+
+1. Group all moved pages (`diskPath != desiredPath`, both non-null) by `sourceDir → destDir`
+2. For each sourceDir, check if it qualifies as a folder rename:
+   - All non-deleted pages from sourceDir go to the SAME destDir
+   - Relative paths within the dir are preserved (`diskPath.slice(srcDir.length) === desiredPath.slice(destDir.length)`)
+   - No pages from sourceDir are staying in sourceDir (unless deleted)
+3. If all conditions met → single `rename-folder` op in Batch 1, all covered pages skipped in Batch 2
+4. Sort folder renames deepest-first so child folders rename before parents
+
+This approach detects folder renames purely from the page-level desired state. The snapshot diff never specifies renames — the planner discovers them.
 
 ### Batch 1: Folder Operations (API calls)
 
-- **Folder renames**: Same `_uid`, different `folderDir`. Deepest children renamed first, parent last. Each rename-folder op carries a `files` array (`[{uid, path}]`) listing all pages under the old folder. The `/rename-folder` API accepts this list and returns `[{uid, new_path}]`, which the client uses to populate `_batchRenamedPaths` explicitly (UID-based tracking instead of prefix guessing).
-- **Folder deletes**: Section `_uid` in original but not in current. Guarded: a folder is only deleted if **none** of its descendant files have UIDs in the current snapshot (i.e., all files are also being deleted, not moved elsewhere).
-- **Folder link rewriting**: After each folder rename, a `rewrite-folder-links` op rewrites all relative links that reference the old folder path.
-
-Executed via `_apiPost('/rename-folder', ...)` and `_apiPost('/delete-folder', ...)`. The API server creates parent directories automatically (`mkdir(parents=True)`), so deep moves like `steps/ → pipeline-steps/reference/` work without prior directory creation.
+- **Folder renames**: Detected by the planner from page moves. Deepest folders renamed first. Executed via `_apiPost('/rename-folder', ...)`. The API server creates parent directories automatically (`mkdir(parents=True)`), so deep moves work without prior directory creation.
+- **Folder deletes**: Sections deleted in the desired state that have no surviving descendant pages. Executed via `_apiPost('/delete-folder', ...)`.
 
 ### Batch 2: File Operations + Content Migration (bulk WebSocket)
 
-**2a. Delete files** — `_uid` in original, not in current → `_wsDeleteFile`
+**2a. mkdocs.yml writes** — if the virtual `mkdocs.yml` differs from the original.
 
-**2b. Move/rename files** — same `_uid`, different `srcPath`. **Skipped** if the file's move is fully explained by a folder rename from Batch 1 (i.e., replacing the old folder prefix with the new one in the original path produces the current path exactly). Files that change their filename or move to a different section than their folder rename target still get individual `rename-page` ops.
+**2b. Delete files** — pages with `isDeleted: true` → `_wsDeleteFile`
 
-**2c. Convert ops + Create new files** — `_uid` in current, not in original → `_wsNewFile` + `_wsSetContents`. Also includes passthrough ops from the batch queue (`regenerate-index`, `consolidate-hidden`, `update-mkdocs-yml`). For new pages, `_computeSavePlan` checks the snapshot's `batchQueue` for a matching `create-page` op by path to get the correct content (e.g., thin index frontmatter).
+**2c. Move/rename files** — pages where `diskPath !== desiredPath`, NOT covered by a folder rename from Batch 1. The `rename-page` executor reads the file, rewrites outbound links, deletes the old file, and creates the new file.
 
-**2d. Content migration** — after structural changes:
-- Set frontmatter for changed weight/title/headless/retitled/empty
-- Dead link warnings for deleted files (targeted, not full scan)
+**Index content splitting** uses the standard op ordering: the content page (which reuses the original index's UID) generates a `rename-page` that moves the file to the content page path. This vacates the index path. Then in batch 2e, a `create-page` fills the vacated index path with thin frontmatter-only content. Finally in batch 2f, `set-frontmatter` with `setContent` writes the body (from the snapshot) with merged nav-weight frontmatter to the content page. The user can freely move the content page anywhere after staging — the standard diff handles it.
+
+**2d. Convert ops** — passthrough ops from the batchQueue (`regenerate-index`, `convert-folder-to-page`). Also includes `create-folder` ops for new sections.
+
+**2e. Create new files** — pages with `isNew: true` and `createContent` → `_wsNewFile` + `_wsSetContents`.
+
+**2f. Content migration** — after structural changes:
+- `set-frontmatter` for pages with changed frontmatter or `setContent`. When `setContent` is present, the executor uses it as the body instead of reading from disk, merging any frontmatter in `setContent` with the nav-weight fields from `_fm`. The `newFrontmatter` flag ensures correct key ordering when nav-weight fields are added for the first time.
+- `rewrite-links` — a single op carrying `renameMap` (aggregated from all renames: folder + individual) and `deletedPaths`.
+
+### Precomputed Renames
+
+`_planDiskOperations` computes a `precomputedRenames` map from folder renames, mapping original page paths to their post-folder-rename paths. This is seeded into `_batchRenamedPaths` at the start of batch execution so that subsequent file-level operations (e.g., `set-frontmatter`) can resolve chained renames via `_resolveChainedRename`.
+
+### Frontmatter Diff Logic
+
+For each page in the desired state that is not deleted, `_planDiskOperations` compares `desiredFm` with `origFm`:
+
+1. Check every key in `desiredFm` — if any value differs from `origFm`, mark as changed
+2. Check every key in `origFm` — if any key is missing from `desiredFm`, mark as changed
+3. If changed (or `setContent` is present), generate a `set-frontmatter` op with both `fm` and `origFm` for key ordering
+
+The `newFrontmatter` flag (computed in Phase 1 from the snapshot's `origFm`) tells the executor to read the actual file's frontmatter keys for ordering instead of relying on the snapshot's `origFm`.
 
 ### Nav Weight Normalization (Snapshot-Driven)
 
-Weight normalization is no longer a separate batch. Instead, normalization is a pure navData mutation performed before snapshotting:
+Weight normalization is not a separate batch. Normalization is a pure navData mutation performed before snapshotting:
 
 - **`_applyNormalizeWeightsToNavData(items)`** — Recursively walks the entire nav tree. For each level, assigns sequential weights (100, 200, 300...) to all children. For sections with non-thin index pages (content index), the index is renamed to a slug-based filename, a new thin `index.md` is created with `_new = true`, and the renamed page gets `_renamed = true` and `_originalPath`. All changes are direct navData mutations.
 
 - **`_applyNormalizeFolderToNavData(sectionItem)`** — Normalizes weights for a single section's direct children only (no recursion). Assigns sequential weights to pages and section index pages.
 
-Both functions skip `_deleted` items. The standard `_computeSavePlan` diff then generates all necessary disk operations (weight frontmatter updates, file renames, file creates) from the snapshot diff.
+Both functions skip `_deleted` items and update `item._fm.weight` alongside `item.weight`. The standard two-phase save process then generates all necessary disk operations from the snapshot diff.
 
 The user triggers normalization through:
 - **"Normalize All"** menu item → calls `_applyNormalizeWeightsToNavData`, adds badge, commits snapshot
@@ -301,6 +464,29 @@ The user triggers normalization through:
 ### After All Batches
 
 Close bulk WebSocket → wait for mkdocs rebuild → reload page.
+
+## Op Dispatch Table
+
+`_dispatchSingleOp(op)` routes each operation to its executor:
+
+| Op Type | Executor | Phase |
+|---------|----------|-------|
+| `wait-for-rebuild` | `_waitForRebuildAndReconnect` | Between batch 1 and 2 |
+| `save-content` | `_executeSaveContentOp` | Before nav ops |
+| `write-mkdocs-yml` | `_wsSetContents` (direct) | Batch 2a |
+| `move-up` / `move-down` | `_executeMoveWeightOp` | Batch 2c |
+| `move-left` / `move-right` / `move-into-section` | `_executeMoveFolderOp` | Batch 2c |
+| `delete-page` | `_executeDeletePageOp` | Batch 2b |
+| `rename-page` | `_executeRenamePageOp` | Batch 2c |
+| `regenerate-index` | `_executeRegenerateIndexOp` | Batch 2d |
+| `create-folder` | `_executeCreateFolderOp` | Batch 2d |
+| `convert-folder-to-page` | `_executeConvertFolderToPageOp` | Batch 2d |
+| `create-page` | `_executeCreatePageOp` | Batch 2e |
+| `rename-folder` | `_executeRenameFolderOp` | Batch 1 |
+| `delete-folder` | `_executeDeleteFolderOp` | Batch 1 |
+| `rewrite-links` | `_executeRewriteLinksOp` | Batch 2f |
+| `set-headless` | `_executeSetHeadlessOp` | Batch 2f |
+| `set-frontmatter` | `_executeSetFrontmatterOp` | Batch 2f |
 
 ## Persistent Changes Pipeline
 
@@ -322,36 +508,56 @@ On page reload, `_resumePipeline()` (called from `enterFocusMode` via `setTimeou
 
 ## Migration
 
-Migration from `mkdocs.yml` nav to `mkdocs-nav-weight` is not a special case. It is a large virtual refactoring of navData that produces one snapshot. Save uses the standard diff infrastructure — `_computeSavePlan` generates folder renames, file moves, creates, and frontmatter updates from the snapshot diff.
+Migration from `mkdocs.yml` nav to `mkdocs-nav-weight` is not a special case. It is a large virtual refactoring of navData that produces one snapshot. Save uses the standard two-phase infrastructure — `_computeSavePlan` produces the desired state, then `_planDiskOperations` detects folder renames and generates the minimum set of disk operations.
 
 ### Flow
 
-1. `_startMigrationFlow()` → reads `mkdocs.yml`, parses nav structure, shows confirmation dialog
-2. `_applyMigrationToNavData(navStructure, allMdSrcPaths)` → mutates `liveWysiwygNavData` to match the target structure
-3. Sets `_navMigrationPending = true`, adds badge
-4. `_commitNavSnapshot()` — one snapshot for the entire migration
+1. `_startMigrationFlow()` → reads `mkdocs.yml`, parses nav structure, computes target tree
+2. `_scanClaimedIndexContent(tree.claimedIndexPaths)` → reads full content of claimed index files not yet scanned, stores as `_indexContent` on navData items
+3. Confirmation dialog shown (all data already in memory)
+4. `_applyMigrationToNavData(navStructure, allMdSrcPaths)` → synchronously mutates `liveWysiwygNavData` to match the target structure; extracts body from `_indexContent` into `setContent` on content page items
+5. Sets `_navMigrationPending = true`, adds badge
+6. `_commitNavSnapshot()` — one snapshot for the entire migration, containing all data needed for the save
 
 The user sees the migrated nav and can undo, redo, or further edit before saving.
 
+**Content pre-scanning.** Two scans populate `_indexContent`: (a) `_preComputationContentScan` runs at page load and scans existing `isIndex` items; (b) `_scanClaimedIndexContent` runs in `_startMigrationFlow` before the dialog and scans claimed index paths from the nav YAML that weren't `isIndex` in the pre-migration navData. Both are async but complete before the migration is staged. By the time the user clicks "Stage Migration", all content is in memory.
+
 ### `_applyMigrationToNavData` Internals
 
-**UID mapping for folder renames.** Builds a directory rename map from `tree.pages`: for each page, `_getDir(oldPath)` and `_getDir(targetPath)` identify the old and new directories. If all pages from one old directory go to one new directory, that's a folder rename (stored in `folderRenameMap`). Old section items are collected by directory (`existingSectionsByDir`). When building a new section for `secDir`, if a matching old directory exists in `folderRenameMap`, the old section's `_uid` is reused and `_new` is not set. This makes `_computeSavePlan` generate `rename-folder` ops instead of delete + individual file moves.
+**UID mapping for sections.** Builds a directory rename map from `tree.pages`: for each page, `_getDir(oldPath)` and `_getDir(targetPath)` identify the old and new directories. If all pages from one old directory go to one new directory, that's tracked in `folderRenameMap`. Old section items are collected by directory (`existingSectionsByDir`). When building a new section for `secDir`, if a matching old directory exists in `folderRenameMap`, the old section's `_uid` is reused and `_new` is not set. This UID preservation is what allows `_planDiskOperations` to later detect the folder rename — it sees pages under the same UID'd section moving from one directory to another and can emit a single `rename-folder` op instead of individual file moves.
 
-**Claimed index handling.** When a section has an existing `index.md` in the nav (a "claimed index"), the content is split: the existing page keeps its UID but gets a new `src_path` (renamed to a slug-based filename), and a new thin `index.md` is created. The thin index goes into `_navBatchQueue` as a `create-page` op with frontmatter content (`title`, `retitled: true`, `empty: true`, `weight`). No `regenerate-index` op is used — the content move is handled by the navData diff (same UID, different `srcPath` → `rename-page`).
+**Split content pages.** For each section that claims an existing `index.md` as a nav entry, `splitContentPages` records the split metadata: `oldPath`, `targetPath`, `title`, `weight`. This data is used by `buildTree` when processing claimed indexes.
 
-**Hidden page marking.** Pages not in the nav structure are appended to the tree with `headless: true`. Their UIDs are preserved from the original navData when available.
+**Index content splitting via `setContent`.** When `buildTree` encounters a claimed index path whose existing item has `_indexContent` (populated by the pre-scans), it creates two items:
 
-**Batch queue passthrough ops.** `update-mkdocs-yml` (to remove the `nav` key) and `consolidate-hidden` (to move headless docs closer to referencing pages) are placed in `_navBatchQueue` for passthrough via `_computeSavePlan`.
+1. **Content page item**: Reuses the original item's `_uid`, gets the new `src_path` (slug-based filename), `_renamed: true`, `_originalPath`, and `setContent` (the body extracted from `_indexContent` with frontmatter stripped). The diff sees "same UID, different path" and generates a `rename-page`. The `set-frontmatter` op carries `setContent` so the executor writes the body with merged nav-weight frontmatter.
+2. **Thin index item**: Gets a new `_uid` and `_new: true`. A `create-page` op is queued in `_navBatchQueue` with the thin index frontmatter-only content.
+
+The content page keeps the original UID so the desired state describes it as a moved page (`diskPath !== desiredPath`). The thin index has a new UID so it appears as a new page with `createContent`. The disk planner orders `rename-page` (batch 2c) before `create-page` (batch 2e), so the index path is vacated first, then the thin index is created there. The `setContent` on the content page's `set-frontmatter` op means the executor writes the body from the snapshot (no disk read needed), merging any existing frontmatter in the body with nav-weight fields. The user can freely move the content page to any location after staging — the standard desired-state diff handles it.
+
+**Hidden page marking.** After `buildTree` completes, a `placedPaths` set is built by walking the new nav tree and collecting all `src_path` and `_originalPath` values. Pages in `allMdSrcPaths` that are not in `placedPaths` are appended to the tree with `headless: true` in their `_fm`. This is more reliable than `tree.inNavPaths` (which only contains old nav paths) because it accounts for newly created items (thin indexes) and renamed items. Their UIDs are preserved from the original navData when available.
+
+**Batch queue passthrough ops.** `update-mkdocs-yml` (to remove the `nav` key) and `consolidate-hidden` (to move headless docs closer to referencing pages) are placed in `_navBatchQueue`. `_computeSavePlan` resolves these into the desired state's `convertOps` and `mkdocsYmlOps`, and `_planDiskOperations` passes them through to the execution plan.
 
 ### Execution Trace (Example)
 
-Given: `steps/` → `pipeline-steps/reference/`, with claimed index `steps/index.md` → content at `pipeline-steps/reference/best-practices.md`
+Given: `steps/` → `pipeline-steps/`, with claimed index `steps/index.md` containing "Best practices" content → content at `pipeline-steps/best-practices.md`, thin index at `pipeline-steps/index.md`
 
-1. **Batch 1**: `rename-folder steps/ → pipeline-steps/reference/` with file UID list. API creates `pipeline-steps/reference/` (parents auto-created), moves folder. Response provides new file paths. Client updates `_batchRenamedPaths`.
-2. **Batch 1**: `rewrite-folder-links` rewrites all references to `steps/` → `pipeline-steps/reference/`.
-3. **Batch 2 - moves**: Most files are skipped (covered by folder rename). `steps/index.md → pipeline-steps/reference/best-practices.md` still gets a `rename-page` (filename changed). Resolves via `_batchRenamedPaths` to read from `pipeline-steps/reference/index.md`.
-4. **Batch 2 - creates**: `create-page pipeline-steps/reference/index.md` with thin index frontmatter.
-5. **Batch 2 - content migration**: `set-frontmatter` on all pages for titles, weights, headless flags.
+**Phase 1 — Desired State** (`_computeSavePlan`):
+- Existing pages under `steps/` appear with `diskPath: 'steps/...'` and `desiredPath: 'pipeline-steps/...'`
+- Content page: `diskPath: 'steps/index.md'`, `desiredPath: 'pipeline-steps/best-practices.md'`, `setContent: <full raw content>`
+- Thin index: `diskPath: null`, `desiredPath: 'pipeline-steps/index.md'`, `createContent: <thin frontmatter>`, `isNew: true`
+
+**Phase 2 — Disk Planning** (`_planDiskOperations`):
+- Detects all pages in `steps/` moving to `pipeline-steps/` with preserved relative paths → emits `rename-folder steps/ → pipeline-steps/`
+- Content page move (`pipeline-steps/index.md` → `pipeline-steps/best-practices.md`) is NOT covered by the folder rename (filename changed) → emits `rename-page`
+
+**Execution:**
+1. **Batch 1**: `rename-folder steps/ → pipeline-steps/`. API moves entire folder. Client seeds `_batchRenamedPaths`.
+2. **Batch 2c - rename**: `rename-page` moves `pipeline-steps/index.md` (resolved from folder rename) → `pipeline-steps/best-practices.md`.
+3. **Batch 2e - creates**: `create-page` writes thin index (frontmatter-only) to `pipeline-steps/index.md` (now vacated by the rename).
+4. **Batch 2f - content migration**: `set-frontmatter` with `setContent` on the content page writes body (from snapshot) + merged nav-weight frontmatter. `set-frontmatter` on all other pages for titles, weights, headless flags. `rewrite-links` for all renames and deletes.
 
 ## Document Content Saving via Batch System
 

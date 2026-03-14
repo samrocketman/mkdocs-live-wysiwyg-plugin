@@ -9056,12 +9056,13 @@
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
       if (item._deleted) continue;
+      var isHiddenPage = item.type === 'page' && (item.headless || item.empty);
       var li = document.createElement('li');
       li.className = 'md-nav__item';
 
       if (item._renamed) li.classList.add('live-wysiwyg-nav-item--renamed');
       if (item._new) li.classList.add('live-wysiwyg-nav-item--new');
-      if (item.headless && item.type === 'page') {
+      if (isHiddenPage) {
         li.classList.add('live-wysiwyg-nav-hidden-page');
         var showHidden = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_show_hidden=(\d)/) || [])[1] === '1';
         var isCurrentPage = item.src_path === _getCurrentSrcPath();
@@ -10747,8 +10748,9 @@
   function _proceedWithNavSave(runDeadLinkScanFolder) {
     var count = 0;
     if (_navSnapshots.length >= 2 && _navSnapshotIndex >= 0) {
-      var plan = _computeSavePlan(_navSnapshots[0], _navSnapshots[_navSnapshotIndex]);
-      count = plan.batch1.length + plan.batch2.length;
+      var desState = _computeSavePlan(_navSnapshots[0], _navSnapshots[_navSnapshotIndex]);
+      var planPreview = _planDiskOperations(desState);
+      count = planPreview.batch1.length + planPreview.batch2.length;
     }
     _showNavDialog(
       'This will modify ' + count + ' document' + (count !== 1 ? 's' : '') + '. Continue?',
@@ -10790,183 +10792,317 @@
   function _computeSavePlan(originalSnap, currentSnap) {
     var origFlat = _flattenNavTree(originalSnap.navData, null, '');
     var currFlat = _flattenNavTree(currentSnap.navData, null, '');
-    var batch1 = [];
-    var batch2DeleteFiles = [];
-    var batch2MoveFiles = [];
-    var batch2CreateFiles = [];
-    var batch2ContentMigration = [];
-
-    // --- Batch 1: Folder renames (deepest first) + folder deletes ---
-    var folderRenames = [];
+    var pages = [];
+    var sections = [];
     var uid;
+
     for (uid in origFlat) {
       if (!origFlat.hasOwnProperty(uid)) continue;
       var origEntry = origFlat[uid];
-      if (!origEntry.folderDir) continue;
-      if (currFlat[uid]) {
-        var currEntry = currFlat[uid];
-        if (currEntry.folderDir && currEntry.folderDir !== origEntry.folderDir) {
-          folderRenames.push({
-            uid: uid,
-            oldFolder: origEntry.folderDir,
-            newFolder: currEntry.folderDir,
-            depth: (currEntry.folderDir.match(/\//g) || []).length
-          });
-        }
-      } else {
-        var folderPrefix = origEntry.folderDir + '/';
-        var hasMovedChildren = false;
-        for (var cuid in origFlat) {
-          if (!origFlat.hasOwnProperty(cuid)) continue;
-          var ce = origFlat[cuid];
-          if (ce.srcPath && !ce.folderDir && ce.srcPath.indexOf(folderPrefix) === 0 && currFlat[cuid]) {
-            hasMovedChildren = true;
-            break;
-          }
-        }
-        if (!hasMovedChildren) {
-          batch1.push({ type: 'delete-folder', folder: origEntry.folderDir });
-        }
-      }
-    }
-    folderRenames.sort(function (a, b) { return b.depth - a.depth; });
-    var precomputedRenames = {};
-    for (var fri = 0; fri < folderRenames.length; fri++) {
-      var frPfx = folderRenames[fri].oldFolder + '/';
-      var frNewPfx = folderRenames[fri].newFolder + '/';
-      for (var fuid in origFlat) {
-        if (!origFlat.hasOwnProperty(fuid)) continue;
-        var fe = origFlat[fuid];
-        if (!fe.srcPath || fe.folderDir) continue;
-        var resolvedPath = precomputedRenames[fe.srcPath] || fe.srcPath;
-        if (resolvedPath.indexOf(frPfx) === 0) {
-          precomputedRenames[fe.srcPath] = frNewPfx + resolvedPath.substring(frPfx.length);
-        }
-      }
-      batch1.push({ type: 'rename-folder', oldFolder: folderRenames[fri].oldFolder, newFolder: folderRenames[fri].newFolder });
-    }
 
-    // --- Batch 2: File operations + content migration ---
-    for (uid in origFlat) {
-      if (!origFlat.hasOwnProperty(uid)) continue;
-      var origE = origFlat[uid];
-      if (!origE.srcPath || origE.folderDir) continue;
+      if (origEntry.folderDir) {
+        if (currFlat[uid]) {
+          sections.push({ uid: uid, diskDir: origEntry.folderDir, desiredDir: currFlat[uid].folderDir || origEntry.folderDir, isNew: false, isDeleted: false });
+        } else {
+          sections.push({ uid: uid, diskDir: origEntry.folderDir, desiredDir: null, isNew: false, isDeleted: true });
+        }
+        continue;
+      }
+
+      if (!origEntry.srcPath) continue;
+
       if (!currFlat[uid]) {
-        batch2DeleteFiles.push({ type: 'delete-page', path: origE.srcPath, item: { src_path: origE.srcPath } });
+        pages.push({
+          uid: uid, diskPath: origEntry.srcPath, desiredPath: null,
+          desiredFm: null, origFm: origEntry.item._fm || {},
+          setContent: null, createContent: null,
+          isNew: false, isDeleted: true,
+          isIndex: origEntry.srcPath.endsWith('index.md'),
+          newFrontmatter: false
+        });
       } else {
         var currE = currFlat[uid];
-        if (currE.srcPath !== origE.srcPath) {
-          var coveredByFolderRename = false;
-          for (var cfi = 0; cfi < folderRenames.length; cfi++) {
-            var cfr = folderRenames[cfi];
-            var cfrPfx = cfr.oldFolder + '/';
-            if (origE.srcPath.indexOf(cfrPfx) === 0) {
-              var cfrExpected = cfr.newFolder + origE.srcPath.substring(cfr.oldFolder.length);
-              if (cfrExpected === currE.srcPath) { coveredByFolderRename = true; break; }
-            }
-          }
-          if (!coveredByFolderRename) {
-            batch2MoveFiles.push({ type: 'rename-page', oldPath: origE.srcPath, newPath: currE.srcPath, item: currE.item, skipDoubleRenderCheck: true });
-          }
-        }
-        var currFm = currE.item._fm || {};
-        var origFm = origE.item._fm || {};
-        var fmChanged = false;
-        for (var fk in currFm) {
-          if (currFm.hasOwnProperty(fk) && currFm[fk] !== origFm[fk]) { fmChanged = true; break; }
-        }
-        if (!fmChanged) {
-          for (var fk2 in origFm) {
-            if (origFm.hasOwnProperty(fk2) && !(fk2 in currFm)) { fmChanged = true; break; }
-          }
-        }
-        if (fmChanged) {
-          batch2ContentMigration.push({
-            type: 'set-frontmatter',
-            src_path: currE.srcPath,
-            fm: currFm,
-            origFm: origFm,
-            isIndex: currE.srcPath.endsWith('index.md')
-          });
-        }
+        var cFm = currE.item._fm || {};
+        var oFm = origEntry.item._fm || {};
+        var isNewFm = oFm.weight === undefined && oFm.headless === undefined &&
+          oFm.retitled === undefined && oFm.empty === undefined;
+        pages.push({
+          uid: uid, diskPath: origEntry.srcPath, desiredPath: currE.srcPath,
+          desiredFm: cFm, origFm: oFm,
+          setContent: typeof currE.item.setContent === 'string' ? currE.item.setContent : null,
+          createContent: null,
+          isNew: false, isDeleted: false,
+          isIndex: currE.srcPath.endsWith('index.md'),
+          newFrontmatter: isNewFm
+        });
       }
     }
+
     for (uid in currFlat) {
       if (!currFlat.hasOwnProperty(uid)) continue;
       if (origFlat[uid]) continue;
       var newE = currFlat[uid];
-      if (!newE.srcPath || newE.folderDir) continue;
-      var createOp = null;
+
+      if (newE.folderDir) {
+        sections.push({ uid: uid, diskDir: null, desiredDir: newE.folderDir, isNew: true, isDeleted: false });
+        continue;
+      }
+      if (!newE.srcPath) continue;
+
+      var createContent = null;
       for (var qi = 0; qi < currentSnap.batchQueue.length; qi++) {
         var qop = currentSnap.batchQueue[qi];
-        if (qop.type === 'create-page' && qop.path === newE.srcPath) { createOp = qop; break; }
-      }
-      if (createOp) {
-        batch2CreateFiles.push({ type: 'create-page', path: createOp.path, content: createOp.content, item: createOp.item });
-      } else if (newE.item && newE.item._new) {
-        batch2CreateFiles.push({ type: 'create-page', path: newE.srcPath, content: '', item: { src_path: newE.srcPath, title: newE.title } });
-      }
-    }
-    for (uid in currFlat) {
-      if (!currFlat.hasOwnProperty(uid)) continue;
-      if (origFlat[uid]) continue;
-      var newSec = currFlat[uid];
-      if (!newSec.folderDir) continue;
-      var createFolderOp = null;
-      for (var cfi = 0; cfi < currentSnap.batchQueue.length; cfi++) {
-        var cfop = currentSnap.batchQueue[cfi];
-        if (cfop.type === 'create-folder' && cfop.syntheticSection && cfop.syntheticSection._uid === uid) {
-          createFolderOp = cfop; break;
+        if (qop.type === 'create-page' && qop.path === newE.srcPath) {
+          createContent = qop.content != null ? qop.content : '';
+          break;
         }
       }
-      if (createFolderOp) {
-        batch2CreateFiles.push({
-          type: 'create-folder',
-          item: createFolderOp.item,
-          folderName: createFolderOp.folderName,
-          folderTitle: createFolderOp.folderTitle,
-          syntheticSection: createFolderOp.syntheticSection
-        });
+      if (createContent === null && newE.item && newE.item._new) {
+        createContent = '';
       }
+
+      pages.push({
+        uid: uid, diskPath: null, desiredPath: newE.srcPath,
+        desiredFm: newE.item._fm || {}, origFm: {},
+        setContent: typeof newE.item.setContent === 'string' ? newE.item.setContent : null,
+        createContent: createContent,
+        isNew: true, isDeleted: false,
+        isIndex: newE.srcPath.endsWith('index.md'),
+        newFrontmatter: false
+      });
     }
 
     var convertOps = [];
     for (var bqi = 0; bqi < currentSnap.batchQueue.length; bqi++) {
       var bqop = currentSnap.batchQueue[bqi];
-      if (bqop.type === 'convert-folder-to-page') convertOps.push(bqop);
-      if (bqop.type === 'regenerate-index') convertOps.push(bqop);
+      if (bqop.type === 'convert-folder-to-page' || bqop.type === 'regenerate-index') {
+        convertOps.push(bqop);
+      }
+    }
+
+    var createFolderOps = [];
+    for (uid in currFlat) {
+      if (!currFlat.hasOwnProperty(uid)) continue;
+      if (origFlat[uid]) continue;
+      var newSec = currFlat[uid];
+      if (!newSec.folderDir) continue;
+      for (var cfi = 0; cfi < currentSnap.batchQueue.length; cfi++) {
+        var cfop = currentSnap.batchQueue[cfi];
+        if (cfop.type === 'create-folder' && cfop.syntheticSection && cfop.syntheticSection._uid === uid) {
+          createFolderOps.push({
+            type: 'create-folder', item: cfop.item,
+            folderName: cfop.folderName, folderTitle: cfop.folderTitle,
+            syntheticSection: cfop.syntheticSection
+          });
+          break;
+        }
+      }
+    }
+
+    var mkdocsYmlOps = [];
+    if (currentSnap.mkdocsYml != null && currentSnap.mkdocsYml !== originalSnap.mkdocsYml) {
+      mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: currentSnap.mkdocsYml });
+      if (currentSnap.originalMkdocsYml != null && typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml) {
+        mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: liveWysiwygOriginalMkdocsYml, content: currentSnap.originalMkdocsYml });
+      }
+    }
+
+    return {
+      pages: pages,
+      sections: sections,
+      convertOps: convertOps,
+      createFolderOps: createFolderOps,
+      mkdocsYmlOps: mkdocsYmlOps
+    };
+  }
+
+  // ======================================================================
+  // NAV MENU - Disk operation planner (converts desired state to ops)
+  // ======================================================================
+
+  function _planDiskOperations(desiredState) {
+    var batch1 = [];
+    var batch2DeleteFiles = [];
+    var batch2MoveFiles = [];
+    var batch2CreateFiles = [];
+    var batch2ContentMigration = [];
+    var i, p;
+
+    // --- Folder rename detection from page moves ---
+    var dirMoves = {};
+    var pagesByDiskDir = {};
+
+    for (i = 0; i < desiredState.pages.length; i++) {
+      p = desiredState.pages[i];
+      if (p.isNew || p.isDeleted || !p.diskPath || !p.desiredPath) continue;
+      var diskDir = _getDir(p.diskPath);
+      if (!pagesByDiskDir[diskDir]) pagesByDiskDir[diskDir] = [];
+      pagesByDiskDir[diskDir].push(p);
+
+      if (p.diskPath !== p.desiredPath) {
+        var destDir = _getDir(p.desiredPath);
+        if (diskDir !== destDir) {
+          if (!dirMoves[diskDir]) dirMoves[diskDir] = {};
+          if (!dirMoves[diskDir][destDir]) dirMoves[diskDir][destDir] = [];
+          dirMoves[diskDir][destDir].push(p);
+        }
+      }
+    }
+
+    var folderRenames = [];
+    var coveredByFolderRename = {};
+
+    for (var srcDir in dirMoves) {
+      if (!dirMoves.hasOwnProperty(srcDir)) continue;
+      var destDirs = Object.keys(dirMoves[srcDir]);
+      if (destDirs.length !== 1) continue;
+
+      var onlyDestDir = destDirs[0];
+      var movedPages = dirMoves[srcDir][onlyDestDir];
+      var allPagesInDir = pagesByDiskDir[srcDir] || [];
+
+      var allAccountedFor = true;
+      for (var ai = 0; ai < allPagesInDir.length; ai++) {
+        var ap = allPagesInDir[ai];
+        if (ap.isDeleted) continue;
+        if (ap.diskPath === ap.desiredPath) { allAccountedFor = false; break; }
+        if (_getDir(ap.desiredPath) !== onlyDestDir) { allAccountedFor = false; break; }
+      }
+      if (!allAccountedFor || movedPages.length === 0) continue;
+
+      var relativePathsMatch = true;
+      for (var ri = 0; ri < movedPages.length; ri++) {
+        var rp = movedPages[ri];
+        if (rp.diskPath.substring(srcDir.length) !== rp.desiredPath.substring(onlyDestDir.length)) {
+          relativePathsMatch = false;
+          break;
+        }
+      }
+      if (!relativePathsMatch) continue;
+
+      folderRenames.push({ oldFolder: srcDir, newFolder: onlyDestDir });
+      for (var ci = 0; ci < movedPages.length; ci++) {
+        coveredByFolderRename[movedPages[ci].uid] = true;
+      }
+    }
+
+    folderRenames.sort(function (a, b) {
+      return (b.newFolder.match(/\//g) || []).length - (a.newFolder.match(/\//g) || []).length;
+    });
+
+    var precomputedRenames = {};
+    for (var fri = 0; fri < folderRenames.length; fri++) {
+      var frPfx = folderRenames[fri].oldFolder + '/';
+      var frNewPfx = folderRenames[fri].newFolder + '/';
+      for (var pi = 0; pi < desiredState.pages.length; pi++) {
+        var fp = desiredState.pages[pi];
+        if (!fp.diskPath || fp.isNew) continue;
+        var resolvedPath = precomputedRenames[fp.diskPath] || fp.diskPath;
+        if (resolvedPath.indexOf(frPfx) === 0) {
+          precomputedRenames[fp.diskPath] = frNewPfx + resolvedPath.substring(frPfx.length);
+        }
+      }
+      batch1.push({ type: 'rename-folder', oldFolder: folderRenames[fri].oldFolder, newFolder: folderRenames[fri].newFolder });
+    }
+
+    // --- Folder deletes ---
+    for (i = 0; i < desiredState.sections.length; i++) {
+      var sec = desiredState.sections[i];
+      if (!sec.isDeleted || !sec.diskDir) continue;
+      var secPrefix = sec.diskDir + '/';
+      var hasMovedChildren = false;
+      for (var mi = 0; mi < desiredState.pages.length; mi++) {
+        var mp = desiredState.pages[mi];
+        if (mp.diskPath && !mp.isNew && mp.diskPath.indexOf(secPrefix) === 0 && !mp.isDeleted) {
+          hasMovedChildren = true;
+          break;
+        }
+      }
+      if (!hasMovedChildren) {
+        batch1.push({ type: 'delete-folder', folder: sec.diskDir });
+      }
+    }
+
+    // --- Batch 2: File operations ---
+    for (i = 0; i < desiredState.pages.length; i++) {
+      p = desiredState.pages[i];
+      if (p.isDeleted && p.diskPath) {
+        batch2DeleteFiles.push({ type: 'delete-page', path: p.diskPath, item: { src_path: p.diskPath } });
+      }
+    }
+
+    for (i = 0; i < desiredState.pages.length; i++) {
+      p = desiredState.pages[i];
+      if (p.isNew || p.isDeleted || !p.diskPath || !p.desiredPath) continue;
+      if (p.diskPath === p.desiredPath) continue;
+      if (coveredByFolderRename[p.uid]) continue;
+      batch2MoveFiles.push({ type: 'rename-page', oldPath: p.diskPath, newPath: p.desiredPath, item: { src_path: p.desiredPath }, skipDoubleRenderCheck: true });
+    }
+
+    var convertOps = desiredState.convertOps || [];
+    var createFolderOps = desiredState.createFolderOps || [];
+
+    for (i = 0; i < desiredState.pages.length; i++) {
+      p = desiredState.pages[i];
+      if (!p.isNew || !p.desiredPath || p.createContent === null) continue;
+      batch2CreateFiles.push({
+        type: 'create-page', path: p.desiredPath, content: p.createContent,
+        item: { src_path: p.desiredPath, title: (p.desiredFm && p.desiredFm.title) || p.desiredPath }
+      });
+    }
+
+    // --- Batch 2: Content migration ---
+    for (i = 0; i < desiredState.pages.length; i++) {
+      p = desiredState.pages[i];
+      if (p.isDeleted || !p.desiredPath) continue;
+
+      var fmChanged = false;
+      var dFm = p.desiredFm || {};
+      var oFm = p.origFm || {};
+      for (var fk in dFm) {
+        if (dFm.hasOwnProperty(fk) && dFm[fk] !== oFm[fk]) { fmChanged = true; break; }
+      }
+      if (!fmChanged) {
+        for (var fk2 in oFm) {
+          if (oFm.hasOwnProperty(fk2) && !(fk2 in dFm)) { fmChanged = true; break; }
+        }
+      }
+      var hasSetContent = p.setContent !== null;
+      if (fmChanged || hasSetContent) {
+        var fmOp = {
+          type: 'set-frontmatter', src_path: p.desiredPath,
+          fm: dFm, origFm: oFm,
+          isIndex: p.isIndex, newFrontmatter: p.newFrontmatter
+        };
+        if (hasSetContent) fmOp.setContent = p.setContent;
+        batch2ContentMigration.push(fmOp);
+      }
     }
 
     var allRenames = {};
     for (var prk in precomputedRenames) {
       if (precomputedRenames.hasOwnProperty(prk)) allRenames[prk] = precomputedRenames[prk];
     }
-    for (uid in origFlat) {
-      if (!origFlat.hasOwnProperty(uid)) continue;
-      var rOrig = origFlat[uid];
-      if (!rOrig.srcPath || rOrig.folderDir) continue;
-      if (currFlat[uid] && currFlat[uid].srcPath !== rOrig.srcPath) {
-        allRenames[rOrig.srcPath] = currFlat[uid].srcPath;
+    for (i = 0; i < desiredState.pages.length; i++) {
+      p = desiredState.pages[i];
+      if (p.diskPath && p.desiredPath && p.diskPath !== p.desiredPath && !p.isNew) {
+        allRenames[p.diskPath] = p.desiredPath;
       }
     }
     var deletedPaths = {};
-    for (uid in origFlat) {
-      if (!origFlat.hasOwnProperty(uid)) continue;
-      var dOrig = origFlat[uid];
-      if (!dOrig.srcPath || dOrig.folderDir) continue;
-      if (!currFlat[uid]) deletedPaths[dOrig.srcPath] = true;
+    for (i = 0; i < desiredState.pages.length; i++) {
+      p = desiredState.pages[i];
+      if (p.isDeleted && p.diskPath) deletedPaths[p.diskPath] = true;
     }
     if (Object.keys(allRenames).length || Object.keys(deletedPaths).length) {
-      batch2ContentMigration.push({
-        type: 'rewrite-links',
-        renameMap: allRenames,
-        deletedPaths: deletedPaths
-      });
+      batch2ContentMigration.push({ type: 'rewrite-links', renameMap: allRenames, deletedPaths: deletedPaths });
     }
+
+    var mkdocsYmlOps = desiredState.mkdocsYmlOps || [];
 
     return {
       batch1: batch1,
-      batch2: [].concat(batch2DeleteFiles, batch2MoveFiles, convertOps, batch2CreateFiles, batch2ContentMigration),
+      batch2: [].concat(mkdocsYmlOps, batch2DeleteFiles, batch2MoveFiles, convertOps, createFolderOps, batch2CreateFiles, batch2ContentMigration),
       precomputedRenames: precomputedRenames
     };
   }
@@ -10985,19 +11121,11 @@
 
     var originalSnap = _navSnapshots[0];
     var activeSnap = _navSnapshots[_navSnapshotIndex];
-    var plan = _computeSavePlan(originalSnap, activeSnap);
+    var desiredState = _computeSavePlan(originalSnap, activeSnap);
+    var plan = _planDiskOperations(desiredState);
 
     console.log('[batch-debug] plan.batch1 (' + plan.batch1.length + '):', plan.batch1.map(function(o) { return o.type + (o.oldFolder ? ' ' + o.oldFolder + '->' + o.newFolder : '') + (o.folder ? ' ' + o.folder : ''); }));
     console.log('[batch-debug] plan.batch2 (' + plan.batch2.length + '):', plan.batch2.map(function(o) { return o.type + ' ' + (o.path || o.src_path || (o.item && o.item.src_path) || o.oldPath || ''); }));
-
-    if (activeSnap.mkdocsYml != null && activeSnap.mkdocsYml !== originalSnap.mkdocsYml) {
-      var writeYmlOps = [];
-      writeYmlOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: activeSnap.mkdocsYml });
-      if (activeSnap.originalMkdocsYml != null && typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml) {
-        writeYmlOps.push({ type: 'write-mkdocs-yml', path: liveWysiwygOriginalMkdocsYml, content: activeSnap.originalMkdocsYml });
-      }
-      plan.batch2 = writeYmlOps.concat(plan.batch2);
-    }
 
     var orderedOps = [];
     if (plan.batch1.length) {
@@ -11198,6 +11326,7 @@
     if (op.type === 'convert-folder-to-page') return _executeConvertFolderToPageOp(op);
     if (op.type === 'delete-page') return _executeDeletePageOp(op);
     if (op.type === 'rename-page') return _executeRenamePageOp(op);
+
     if (op.type === 'rename-folder') return _executeRenameFolderOp(op);
     if (op.type === 'delete-folder') return _executeDeleteFolderOp(op);
     if (op.type === 'rewrite-links') return _executeRewriteLinksOp(op);
@@ -11837,10 +11966,22 @@
     var actualPath = _resolveChainedRename(op.src_path);
     if (_batchDeletedPaths[actualPath]) return Promise.resolve();
     if (op.fm) {
+      if (typeof op.setContent === 'string') {
+        var scParsed = _parseFrontmatter(op.setContent);
+        var scBody = scParsed.hasBlock ? op.setContent.substring(scParsed.bodyStart) : op.setContent;
+        var mergedFm = Object.assign({}, scParsed.hasBlock ? scParsed.fields : {}, op.fm);
+        var effectiveOrig = scParsed.hasBlock ? scParsed.fields : (op.origFm || {});
+        var newFm = _buildFrontmatterFromFm(mergedFm, op.isIndex, effectiveOrig);
+        return _wsSetContents(actualPath, newFm + scBody);
+      }
       return _wsGetContents(actualPath).then(function (content) {
         var parsed = _parseFrontmatter(content);
         var body = parsed.hasBlock ? content.substring(parsed.bodyStart) : content;
-        var newFm = _buildFrontmatterFromFm(op.fm, op.isIndex, op.origFm);
+        var effectiveOrigFm = op.origFm;
+        if (op.newFrontmatter && parsed.hasBlock) {
+          effectiveOrigFm = parsed.fields;
+        }
+        var newFm = _buildFrontmatterFromFm(op.fm, op.isIndex, effectiveOrigFm);
         return _wsSetContents(actualPath, newFm + body);
       });
     }
@@ -11851,6 +11992,7 @@
       return _wsSetContents(actualPath, updated);
     });
   }
+
 
   // ------------------------------------------------------------------
   // Folder rename / delete / link-rewrite batch executors
@@ -13545,6 +13687,31 @@
     }
   }
 
+  function _scanClaimedIndexContent(claimedIndexPaths) {
+    var existingByPath = {};
+    (function collect(items) {
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].src_path) existingByPath[items[i].src_path] = items[i];
+        if (items[i].children) collect(items[i].children);
+      }
+    })(liveWysiwygNavData);
+    var paths = Object.keys(claimedIndexPaths);
+    var promises = [];
+    for (var ci = 0; ci < paths.length; ci++) {
+      var item = existingByPath[paths[ci]];
+      if (item && !item._indexContent) {
+        (function (it) {
+          promises.push(
+            _wsGetContents(it.src_path).then(function (content) {
+              if (content) it._indexContent = content;
+            }).catch(function () {})
+          );
+        })(item);
+      }
+    }
+    return promises.length ? Promise.all(promises) : Promise.resolve();
+  }
+
   function _applyMigrationToNavData(navStructure, allMdSrcPaths, suggestedDefaultWeight) {
     var tree = _migrationComputeTargetTree(navStructure);
     var fmMap = typeof liveWysiwygFrontmatterMap !== 'undefined' ? liveWysiwygFrontmatterMap : {};
@@ -13651,7 +13818,8 @@
                     _fm: splitFmSource,
                     _uid: splitExisting._uid,
                     _renamed: true,
-                    _originalPath: navItem.path
+                    _originalPath: navItem.path,
+                    setContent: splitExisting._indexContent
                   };
                   result.push(splitItem);
                 }
@@ -13673,6 +13841,9 @@
               : (fmMap[navItem.path] ? Object.assign({}, fmMap[navItem.path]) : {});
             pageFmSource.title = pageEntry.title || (existing ? existing.title : '');
             pageFmSource.weight = pageEntry.weight;
+            delete pageFmSource.headless;
+            delete pageFmSource.retitled;
+            delete pageFmSource.empty;
             var pageItem = {
               type: 'page',
               src_path: pageEntry.targetPath,
@@ -13710,6 +13881,7 @@
             indexItem = {
               type: 'page', src_path: indexPath, title: navItem.title,
               isIndex: true, weight: indexWeight,
+              retitled: true, empty: true,
               _fm: thinFm, _new: true, _uid: _generateUid()
             };
             _navBatchQueue.push({
@@ -13720,6 +13892,7 @@
             indexItem = {
               type: 'page', src_path: indexPath, title: navItem.title,
               isIndex: true, weight: indexWeight,
+              retitled: true, empty: true,
               _fm: { title: navItem.title, empty: true, retitled: true, weight: indexWeight },
               _uid: existingIndex._uid
             };
@@ -13734,6 +13907,7 @@
             indexItem = {
               type: 'page', src_path: indexPath, title: navItem.title,
               isIndex: true, weight: indexWeight,
+              retitled: true, empty: true,
               _fm: newIdxFm, _new: true, _uid: _generateUid()
             };
             _navBatchQueue.push({
@@ -13774,11 +13948,21 @@
 
     var newNavData = buildTree(navStructure, '');
 
+    var placedPaths = {};
+    (function collectPlaced(items) {
+      for (var pi = 0; pi < items.length; pi++) {
+        var pItem = items[pi];
+        if (pItem.src_path) placedPaths[pItem.src_path] = true;
+        if (pItem._originalPath) placedPaths[pItem._originalPath] = true;
+        if (pItem.children) collectPlaced(pItem.children);
+      }
+    })(newNavData);
+
     var allPaths = allMdSrcPaths || (typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : []);
     var hiddenItems = [];
     for (var h = 0; h < allPaths.length; h++) {
       var hp = allPaths[h];
-      if (!tree.inNavPaths[hp]) {
+      if (!placedPaths[hp]) {
         var hiddenExisting = existingByPath[hp];
         var hiddenFm = (hiddenExisting && hiddenExisting._fm)
           ? Object.assign({}, hiddenExisting._fm)
@@ -13877,6 +14061,8 @@
       }
 
       var tree = _migrationComputeTargetTree(navStructure);
+      return _scanClaimedIndexContent(tree.claimedIndexPaths).then(function () {
+
       var moveCount = 0;
       for (var m = 0; m < tree.pages.length; m++) {
         if (tree.pages[m].oldPath !== tree.pages[m].targetPath) moveCount++;
@@ -13934,6 +14120,7 @@
         });
         _commitNavSnapshot();
       });
+      }); // _scanClaimedIndexContent.then
     });
   }
 

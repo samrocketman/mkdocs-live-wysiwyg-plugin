@@ -174,13 +174,7 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
                 meta = _parse_frontmatter(text)
                 results[rel] = {
                     "exists": True,
-                    "meta": {
-                        "title": meta.get("title"),
-                        "weight": meta.get("weight"),
-                        "headless": meta.get("headless"),
-                        "retitled": meta.get("retitled"),
-                        "empty": meta.get("empty"),
-                    },
+                    "meta": dict(meta) if meta else {},
                 }
             else:
                 results[rel] = {"exists": False}

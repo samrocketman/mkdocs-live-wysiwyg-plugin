@@ -320,8 +320,6 @@ class LiveWysiwygPlugin(BasePlugin):
                 "installed": _nw_installed,
             }
 
-        self._has_nav_key = config.get("nav") is not None
-
         return nav
 
     def on_page_markdown(
@@ -415,7 +413,6 @@ class LiveWysiwygPlugin(BasePlugin):
             else []
         )
         nw_config = getattr(self, "_nw_config", {"enabled": False})
-        has_nav_key = getattr(self, "_has_nav_key", False)
         all_md_src_paths = getattr(self, "_all_md_src_paths", [])
         link_index = getattr(self, "_link_index", {})
         preamble_parts.append(
@@ -425,13 +422,17 @@ class LiveWysiwygPlugin(BasePlugin):
             f"const liveWysiwygNavWeightConfig = {json.dumps(nw_config)};\n"
         )
         preamble_parts.append(
-            f"const liveWysiwygHasNavKey = {json.dumps(has_nav_key)};\n"
-        )
-        preamble_parts.append(
             f"const liveWysiwygAllMdSrcPaths = {json.dumps(all_md_src_paths)};\n"
         )
         preamble_parts.append(
             f"const liveWysiwygLinkIndex = {json.dumps(link_index)};\n"
+        )
+        fm_map = {}
+        if nav_ref:
+            for p in nav_ref.pages:
+                fm_map[p.file.src_path] = dict(p.meta) if p.meta else {}
+        preamble_parts.append(
+            f"const liveWysiwygFrontmatterMap = {json.dumps(fm_map)};\n"
         )
         preamble_parts.append(
             f"const liveWysiwygOriginalMkdocsYml = {json.dumps(self._original_mkdocs_yml)};\n"

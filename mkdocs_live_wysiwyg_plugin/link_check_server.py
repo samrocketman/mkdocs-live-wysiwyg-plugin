@@ -2,8 +2,8 @@
 
 Runs in a daemon thread alongside the MkDocs dev server.  Exposes
 ``POST /check-links``, ``POST /file-exists``, ``POST /list-items``,
-``POST /rename-folder``, ``POST /delete-folder``,
-and ``GET /link-index``, ``GET /build-epoch`` endpoints.
+``POST /rename-folder``, ``POST /delete-folder``, ``POST /move-file``,
+``POST /delete-file``, and ``GET /link-index``, ``GET /build-epoch`` endpoints.
 """
 
 from __future__ import annotations
@@ -101,6 +101,10 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             return self._handle_rename_folder()
         if self.path == "/delete-folder":
             return self._handle_delete_folder()
+        if self.path == "/move-file":
+            return self._handle_move_file()
+        if self.path == "/delete-file":
+            return self._handle_delete_file()
         self.send_error(404)
 
     def _read_json_body(self) -> dict | None:
@@ -397,6 +401,90 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             except OSError:
                 all_removed = False
         return all_removed
+
+    # ------------------------------------------------------------------
+    # POST /move-file  — move or rename a single non-markdown (binary) file
+    # ------------------------------------------------------------------
+
+    def _handle_move_file(self):
+        body = self._read_json_body()
+        if body is None:
+            return
+
+        old_path = body.get("old_path", "")
+        new_path = body.get("new_path", "")
+        if not old_path or not new_path:
+            self.send_error(400, "old_path and new_path are required")
+            return
+
+        if old_path.endswith(".md"):
+            self.send_error(
+                400, "Markdown files must be moved via the WebSocket API"
+            )
+            return
+
+        docs = Path(self.walk_dir or self.docs_dir).resolve()
+        old_abs = (docs / old_path).resolve()
+        new_abs = (docs / new_path).resolve()
+
+        if not self._is_within_docs(old_abs, docs):
+            self.send_error(403, "old_path escapes docs_dir")
+            return
+        if not self._is_within_docs(new_abs, docs):
+            self.send_error(403, "new_path escapes docs_dir")
+            return
+
+        if not old_abs.is_file():
+            self.send_error(404, "Source file not found")
+            return
+
+        try:
+            new_abs.parent.mkdir(parents=True, exist_ok=True)
+            old_abs.rename(new_abs)
+        except OSError as e:
+            self.send_error(500, f"Move failed: {e}")
+            return
+
+        self._send_json({"ok": True})
+
+    # ------------------------------------------------------------------
+    # POST /delete-file  — delete a single non-markdown (binary) file
+    # ------------------------------------------------------------------
+
+    def _handle_delete_file(self):
+        body = self._read_json_body()
+        if body is None:
+            return
+
+        file_path = body.get("path", "")
+        if not file_path:
+            self.send_error(400, "path is required")
+            return
+
+        if file_path.endswith(".md"):
+            self.send_error(
+                400, "Markdown files must be deleted via the WebSocket API"
+            )
+            return
+
+        docs = Path(self.walk_dir or self.docs_dir).resolve()
+        abs_path = (docs / file_path).resolve()
+
+        if not self._is_within_docs(abs_path, docs):
+            self.send_error(403, "path escapes docs_dir")
+            return
+
+        if not abs_path.is_file():
+            self.send_error(404, "File not found")
+            return
+
+        try:
+            abs_path.unlink()
+        except OSError as e:
+            self.send_error(500, f"Delete failed: {e}")
+            return
+
+        self._send_json({"ok": True})
 
     # ------------------------------------------------------------------
     # Path sandboxing helper

@@ -312,6 +312,50 @@ Both actions create a snapshot, so they can be undone.
 | `_deadLinks` | `_addDeadLinksForPage` | `{internal: [...], external: [...]}` — dead link details |
 | `_deleted` | Delete handlers | Item marked for deletion; excluded from nav render and diff |
 
+## Binary (Asset) File Handling
+
+### Overview
+
+Non-markdown files (images, PDFs, archives, etc.) in the docs directory are tracked as `type: 'asset'` items in navData. They participate in the nav menu, can be renamed, moved, and deleted via the settings gear, and their moves trigger link rewriting in all referencing markdown pages.
+
+### Data Source
+
+`_precomputeAssetFiles` fetches the file list from the API server via `_apiPost('/list-items', { folder: '', all: true })`, which walks `user_docs_dir` and returns all files. Non-`.md` files are integrated into `liveWysiwygNavData` as `type: 'asset'` items. Directories that exist on disk but are not yet represented as sections in navData are created as synthetic sections by `_ensureSectionForDir`.
+
+### Nav Rendering
+
+Asset items render as `<span>` elements (not `<a>` links). Clicking an asset is a no-op — the editor does not attempt to open or edit binary files. Assets are styled with reduced opacity (`0.55`), smaller font, a file icon, and an extension badge. They are treated as hidden files: visible only when the "Show hidden files" checkbox is checked.
+
+### Hidden Section Detection (`_isSectionAllHidden`)
+
+Sections without an index page that contain only hidden content are also hidden. `_isSectionAllHidden(section)` returns `true` when a section:
+
+- Has no index (no `src_path`, no `index_meta`, no child page with `isIndex`)
+- Contains at least one descendant page or asset (not empty)
+- All descendant pages are hidden (`headless` or `empty`)
+
+This covers: asset-only folders, folders containing only headless pages, and parent folders whose only children are hidden subsections. Sections with an index or any visible page are never hidden. Hidden sections still get a settings gear with folder rename and the "Create folder index" button.
+
+### Move Operations
+
+Asset moves are collected as `assetMoves` in the desired state and executed via `_apiPost('/move-file', ...)` through the API server (`link_check_server.py`). Binary files never use the WebSocket for any operation. The API server's `/move-file` endpoint creates parent directories automatically and returns the result.
+
+### Delete Operations
+
+Assets can be deleted from the settings gear via a "Delete File" button. The deletion marks the item as `_deleted = true`, commits a snapshot, and re-renders the nav. The save planner detects deleted assets (present in original snapshot, missing from current) and collects them as `assetDeletes` in the desired state. `_planDiskOperations` converts these to `delete-file` ops in Batch 2b. `_executeDeleteFileOp` calls `_apiPost('/delete-file', { path })` on the API server, which verifies the path is within `docs_dir`, rejects `.md` files, and unlinks the file.
+
+### Link Rewriting
+
+When a binary file moves, all markdown pages that reference it have their links rewritten. Asset moves are included in the `allRenames` map alongside page moves. The `_rewriteAllMovedLinksInPage` function handles all reference patterns: `[text](path)`, `![alt](path)`, `<img src="path">`, and `[ref]: path`. The rewriter is extension-agnostic — any valid filename is handled.
+
+### Folder Rename Integration
+
+Asset moves participate in folder rename detection. When a directory contains both `.md` pages and binary files, and all files move to the same destination with preserved relative paths, the planner emits a single `rename-folder` op instead of individual moves. Assets covered by a folder rename do not generate separate `move-file` ops. Folder deletes include a safety check: before emitting a `delete-folder` op, the planner verifies no asset moves originate from the folder.
+
+### Migration Asset Carry-Over
+
+`_applyMigrationToNavData` replaces `liveWysiwygNavData` with a tree built from the migration's `navStructure`, which only contains pages and sections. Before replacement, all existing asset items are collected from the old navData and re-inserted into the new tree. If an asset's parent directory was renamed during migration (tracked in `folderRenameMap`), the asset's `src_path` is updated and it is marked `_renamed`. Assets are placed into matching sections via `_findSectionChildren`, or into synthetic sections created by `_ensureSectionForDirIn` if no match exists. This prevents binary files from being silently dropped during migration.
+
 ## Nav Edit Modes
 
 Tri-state `_navEditMode`:
@@ -379,6 +423,14 @@ Flattens both snapshots via `_flattenNavTree` (UID-keyed maps), compares them by
     { uid, diskDir, desiredDir, isNew, isDeleted },
     ...
   ],
+  assetMoves: [             // binary file moves from nav edits
+    { oldPath, newPath },
+    ...
+  ],
+  assetDeletes: [           // binary files deleted from nav
+    { path },
+    ...
+  ],
   convertOps: [...],       // pass-through: convert-folder-to-page, regenerate-index
   createFolderOps: [...],  // create-folder ops from batchQueue
   mkdocsYmlOps: [...]      // write-mkdocs-yml ops if yml changed
@@ -399,26 +451,27 @@ Takes the desired state and computes the minimum disk operations to achieve it.
 
 **Folder rename detection algorithm:**
 
-1. Group all moved pages (`diskPath != desiredPath`, both non-null) by `sourceDir → destDir`
+1. Group all moved files — pages AND asset (binary) moves — (`diskPath != desiredPath`, both non-null) by `sourceDir → destDir`
 2. For each sourceDir, check if it qualifies as a folder rename:
-   - All non-deleted pages from sourceDir go to the SAME destDir
+   - All non-deleted files from sourceDir go to the SAME destDir
    - Relative paths within the dir are preserved (`diskPath.slice(srcDir.length) === desiredPath.slice(destDir.length)`)
-   - No pages from sourceDir are staying in sourceDir (unless deleted)
-3. If all conditions met → single `rename-folder` op in Batch 1, all covered pages skipped in Batch 2
+   - No files from sourceDir are staying in sourceDir (unless deleted)
+3. If all conditions met → single `rename-folder` op in Batch 1, all covered files skipped in Batch 2
 4. Sort folder renames deepest-first so child folders rename before parents
 
-This approach detects folder renames purely from the page-level desired state. The snapshot diff never specifies renames — the planner discovers them.
+This approach detects folder renames purely from the file-level desired state (pages + assets). The snapshot diff never specifies renames — the planner discovers them. A directory containing both `.md` pages and binary files will correctly emit a single folder rename when all files move to the same destination.
 
-### Batch 1: Folder Operations (API calls)
+### Batch 1: Folder Operations + Asset Moves (API calls)
 
-- **Folder renames**: Detected by the planner from page moves. Deepest folders renamed first. Executed via `_apiPost('/rename-folder', ...)`. The API server creates parent directories automatically (`mkdir(parents=True)`), so deep moves work without prior directory creation.
-- **Folder deletes**: Sections deleted in the desired state that have no surviving descendant pages. Executed via `_apiPost('/delete-folder', ...)`.
+- **Folder renames**: Detected by the planner from page + asset moves. Deepest folders renamed first. Executed via `_apiPost('/rename-folder', ...)`. The API server creates parent directories automatically (`mkdir(parents=True)`), so deep moves work without prior directory creation.
+- **Folder deletes**: Sections deleted in the desired state that have no surviving descendant pages and no asset moves originating from the folder. Executed via `_apiPost('/delete-folder', ...)`.
+- **Asset (binary) file moves**: Moves not covered by a folder rename. Executed via `_apiPost('/move-file', ...)`. Binary files are always handled by the API server, never the WebSocket. After moving, `_executeMoveFileOp` updates `_batchRenamedPaths` and the link index so chained operations resolve correctly.
 
 ### Batch 2: File Operations + Content Migration (bulk WebSocket)
 
 **2a. mkdocs.yml writes** — if the virtual `mkdocs.yml` differs from the original.
 
-**2b. Delete files** — pages with `isDeleted: true` → `_wsDeleteFile`
+**2b. Delete files** — pages with `isDeleted: true` → `_wsDeleteFile`; assets with `assetDeletes` entries → `_apiPost('/delete-file', ...)`
 
 **2c. Move/rename files** — pages where `diskPath !== desiredPath`, NOT covered by a folder rename from Batch 1. The `rename-page` executor reads the file, rewrites outbound links, deletes the old file, and creates the new file.
 
@@ -430,7 +483,7 @@ This approach detects folder renames purely from the page-level desired state. T
 
 **2f. Content migration** — after structural changes:
 - `set-frontmatter` for pages with changed frontmatter or `setContent`. When `setContent` is present, the executor uses it as the body instead of reading from disk, merging any frontmatter in `setContent` with the nav-weight fields from `_fm`. The `newFrontmatter` flag ensures correct key ordering when nav-weight fields are added for the first time.
-- `rewrite-links` — a single op carrying `renameMap` (aggregated from all renames: folder + individual) and `deletedPaths`.
+- `rewrite-links` — a single op carrying `renameMap` (aggregated from all renames: folder + individual page moves + asset moves) and `deletedPaths`. Asset moves are included so that markdown content referencing binary files (e.g., PDF links, image embeds) is automatically rewritten when the referenced file moves. The rewriter is extension-agnostic.
 
 ### Precomputed Renames
 
@@ -482,6 +535,8 @@ Close bulk WebSocket → wait for mkdocs rebuild → reload page.
 | `create-folder` | `_executeCreateFolderOp` | Batch 2d |
 | `convert-folder-to-page` | `_executeConvertFolderToPageOp` | Batch 2d |
 | `create-page` | `_executeCreatePageOp` | Batch 2e |
+| `move-file` | `_executeMoveFileOp` | Batch 1 |
+| `delete-file` | `_executeDeleteFileOp` | Batch 2b |
 | `rename-folder` | `_executeRenameFolderOp` | Batch 1 |
 | `delete-folder` | `_executeDeleteFolderOp` | Batch 1 |
 | `rewrite-links` | `_executeRewriteLinksOp` | Batch 2f |

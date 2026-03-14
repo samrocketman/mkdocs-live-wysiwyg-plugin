@@ -16,6 +16,7 @@ import threading
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 from pathlib import Path
 
 import yaml
@@ -51,9 +52,15 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
     walk_dir: str = ""
     link_index: dict = {}
     build_epoch: list[int] = [1]
+    _rename_state: dict[tuple[str, str], str] = {}
+    _rename_lock: threading.Lock = threading.Lock()
 
     def log_message(self, format, *args):  # noqa: A002
         pass
+
+    def end_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        super().end_headers()
 
     # ------------------------------------------------------------------
     # GET /link-index
@@ -65,7 +72,6 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(payload)
             return
@@ -74,7 +80,6 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(payload)
@@ -106,12 +111,11 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Invalid JSON")
             return None
 
-    def _send_json(self, obj: object) -> None:
+    def _send_json(self, obj: object, code: int = 200) -> None:
         payload = json.dumps(obj).encode("utf-8")
-        self.send_response(200)
+        self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(payload)
 
@@ -249,20 +253,58 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
         if not self._is_within_docs(new_abs, docs):
             self.send_error(403, "new_path escapes docs_dir")
             return
+
+        rename_key = (old_path, new_path)
+
+        with self._rename_lock:
+            state = self._rename_state.get(rename_key)
+            if state == "in_progress":
+                self._send_json(
+                    {"ok": True, "status": "in_progress"}, code=202,
+                )
+                return
+            if state == "done":
+                del self._rename_state[rename_key]
+                self._send_json({"ok": True}, code=201)
+                return
+            self._rename_state[rename_key] = "in_progress"
+
         if not old_abs.is_dir():
+            with self._rename_lock:
+                if self._rename_state.get(rename_key) == "in_progress":
+                    del self._rename_state[rename_key]
             self.send_error(404, "Source directory not found")
-            return
-        if new_abs.exists():
-            self.send_error(409, "Destination already exists")
             return
 
         try:
             new_abs.parent.mkdir(parents=True, exist_ok=True)
-            old_abs.rename(new_abs)
+            if new_abs.is_dir():
+                for child in old_abs.iterdir():
+                    dest = new_abs / child.name
+                    if dest.exists():
+                        if child.is_dir() and dest.is_dir():
+                            shutil.copytree(child, dest,
+                                            dirs_exist_ok=True)
+                            shutil.rmtree(child)
+                        else:
+                            child.replace(dest)
+                    else:
+                        child.rename(dest)
+                if not any(old_abs.iterdir()):
+                    old_abs.rmdir()
+            else:
+                old_abs.rename(new_abs)
         except OSError as e:
+            with self._rename_lock:
+                if rename_key in self._rename_state:
+                    del self._rename_state[rename_key]
             self.send_error(500, f"Rename failed: {e}")
             return
-        self._send_json({"ok": True})
+
+        with self._rename_lock:
+            self._rename_state[rename_key] = "done"
+
+        self._send_json({"ok": True}, code=201)
 
     # ------------------------------------------------------------------
     # POST /delete-folder  — delete a directory (with optional exclusions)
@@ -377,7 +419,6 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
@@ -487,6 +528,14 @@ def build_link_index(docs_dir: str) -> dict[str, list[dict]]:
 
 
 # ------------------------------------------------------------------
+# Threaded HTTP server (allows 202 polling during in-flight renames)
+# ------------------------------------------------------------------
+
+class _ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+
+# ------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------
 
@@ -524,7 +573,7 @@ def start_link_check_server(
             "build_epoch": build_epoch,
         },
     )
-    server = HTTPServer((host, 0), handler)
+    server = _ThreadedHTTPServer((host, 0), handler)
     port = server.server_address[1]
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()

@@ -282,11 +282,20 @@ class LiveWysiwygPlugin(BasePlugin):
             f.src_path for f in files if f.src_path.endswith(".md")
         ]
 
+        try:
+            from importlib.metadata import distribution
+
+            distribution("mkdocs-nav-weight")
+            _nw_installed = True
+        except Exception:
+            _nw_installed = False
+
         nav_weight_plugin = config["plugins"].get("mkdocs-nav-weight")
         if nav_weight_plugin:
             nw_cfg = nav_weight_plugin.config
             self._nw_config = {
                 "enabled": True,
+                "installed": True,
                 "section_renamed": nw_cfg.get("section_renamed", False),
                 "index_weight": nw_cfg.get("index_weight", -10),
                 "warning": nw_cfg.get("warning", True),
@@ -306,7 +315,10 @@ class LiveWysiwygPlugin(BasePlugin):
                 },
             }
         else:
-            self._nw_config = {"enabled": False}
+            self._nw_config = {
+                "enabled": False,
+                "installed": _nw_installed,
+            }
 
         self._has_nav_key = config.get("nav") is not None
 

@@ -7331,11 +7331,13 @@
   var _navEditMode = false;
   var _navNormalizeAllPending = false;
   var _navNormalizePending = false;
+  var _navMigrationPending = false;
   var _navFocusTarget = null;
   var _navBatchQueue = [];
   var _batchClaimedPaths = (typeof Set !== 'undefined' ? new Set() : null);
   var _navUndoStack = [];
   var _navRedoStack = [];
+  var _navBadges = [];
   var _navKeyboardActiveItem = null;
   var _navFocusedLi = null;
   var _navActiveHoverLi = null;
@@ -7353,6 +7355,10 @@
   var _batchDeletedPaths = {};
   var _batchRenamedPaths = {};
   var _batchLinkIndex = null;
+  var _navDataSnapshot = null;
+  var _allMdSrcPathsSnapshot = null;
+  var _navFrontmatterSnapshot = null;
+  var _NAV_WEIGHT_FM_KEYS = ['title', 'weight', 'headless', 'empty', 'retitled'];
 
   function _resolveChainedRename(path) {
     var cur = path;
@@ -7785,7 +7791,7 @@
               var data = JSON.parse(e.data);
               if (data && data.action === 'redirect' && data.new_url) {
                 _suppressedRedirectUrl = data.new_url;
-                if (_focusModeGuardActive && !_reloadGuardActive && !_userActionInProgress) {
+                if (_focusModeGuardActive && !_reloadGuardActive && !_userActionInProgress && !_isMigrationChainActive()) {
                   _onExternalRebuild();
                 }
                 return;
@@ -7803,9 +7809,13 @@
   // Set suppress flag early if the migration-normalize cookie is present.
   // This runs synchronously before the live-edit plugin creates its WebSocket
   // (which happens on DOMContentLoaded), closing the race window.
+  function _isMigrationChainActive() {
+    return document.cookie.indexOf('live_wysiwyg_migration_normalize=1') !== -1 ||
+      document.cookie.indexOf('live_wysiwyg_migration_adjust_weight=1') !== -1;
+  }
+
   (function _earlyMigrationSuppressCheck() {
-    if (document.cookie.indexOf('live_wysiwyg_migration_normalize=1') !== -1 ||
-        document.cookie.indexOf('live_wysiwyg_migration_adjust_weight=1') !== -1) {
+    if (_isMigrationChainActive()) {
       _wsRedirectSuppressActive = true;
     }
   })();
@@ -8068,7 +8078,7 @@
           return;
         }
         _focusModeBuildEpoch = serverEpoch;
-        if (_userActionInProgress || _reloadGuardActive || _focusModeRebuildPromptOpen) {
+        if (_userActionInProgress || _reloadGuardActive || _focusModeRebuildPromptOpen || _isMigrationChainActive()) {
           _focusModePollerTimer = setTimeout(poll, 2000);
           return;
         }
@@ -8411,21 +8421,17 @@
 
   function _fetchLinkIndex() {
     if (typeof liveWysiwygLinkCheckPort === 'undefined' || !liveWysiwygLinkCheckPort) {
-      console.warn('[fetchLinkIndex] No port configured, using static fallback');
       var fallback = typeof liveWysiwygLinkIndex !== 'undefined' ? liveWysiwygLinkIndex : {};
       return Promise.resolve(fallback);
     }
     var host = window.location.hostname || '127.0.0.1';
     var url = 'http://' + host + ':' + liveWysiwygLinkCheckPort + '/link-index';
-    console.log('[fetchLinkIndex] Fetching from', url);
     return fetch(url).then(function (resp) {
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       return resp.json();
     }).then(function (idx) {
-      console.log('[fetchLinkIndex] SUCCESS — got', Object.keys(idx).length, 'entries from server');
       return idx;
     }).catch(function (err) {
-      console.error('[fetchLinkIndex] FAILED — using static fallback:', err.message || err);
       return typeof liveWysiwygLinkIndex !== 'undefined' ? liveWysiwygLinkIndex : {};
     });
   }
@@ -8935,46 +8941,16 @@
     if (!isIndex &&
         ((_navEditMode || (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)) &&
         !(typeof liveWysiwygHasNavKey !== 'undefined' && liveWysiwygHasNavKey))) {
-      var arrowsDiv = document.createElement('div');
-      arrowsDiv.className = 'live-wysiwyg-nav-weight-controls';
-      var phUp = document.createElement('button');
-      phUp.type = 'button'; phUp.textContent = '\u25B2';
-      phUp.className = 'live-wysiwyg-nav-arrow live-wysiwyg-nav-arrow-up';
-      phUp.style.visibility = 'hidden'; phUp.disabled = true;
-      var phLeft = document.createElement('button');
-      phLeft.type = 'button'; phLeft.textContent = '\u25C0';
-      phLeft.className = 'live-wysiwyg-nav-arrow live-wysiwyg-nav-arrow-left';
-      phLeft.style.visibility = 'hidden'; phLeft.disabled = true;
-      var phTarget = document.createElement('button');
-      phTarget.type = 'button'; phTarget.textContent = '\u25CF';
-      phTarget.className = 'live-wysiwyg-nav-target-dot';
-      phTarget.style.visibility = 'hidden'; phTarget.disabled = true;
-      var phRight = document.createElement('button');
-      phRight.type = 'button'; phRight.textContent = '\u25B6';
-      phRight.className = 'live-wysiwyg-nav-arrow live-wysiwyg-nav-arrow-right';
-      phRight.style.visibility = 'hidden'; phRight.disabled = true;
-      var phDown = document.createElement('button');
-      phDown.type = 'button'; phDown.textContent = '\u25BC';
-      phDown.className = 'live-wysiwyg-nav-arrow live-wysiwyg-nav-arrow-down';
-      phDown.style.visibility = 'hidden'; phDown.disabled = true;
-      arrowsDiv.appendChild(phUp);
-      arrowsDiv.appendChild(phLeft);
-      arrowsDiv.appendChild(phTarget);
-      arrowsDiv.appendChild(phRight);
-      arrowsDiv.appendChild(phDown);
-      var gearBtn = document.createElement('button');
-      gearBtn.type = 'button';
-      gearBtn.textContent = '\u2699';
-      gearBtn.title = 'Settings';
-      gearBtn.className = 'live-wysiwyg-nav-settings-gear';
-      gearBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        _showSettingsGear(syntheticItem, 'page', gearBtn);
+      var hiddenCtrl = _createNavWeightControls(syntheticItem, 'page', 0);
+      hiddenCtrl.arrows.querySelectorAll('.live-wysiwyg-nav-arrow').forEach(function (btn) {
+        btn.style.visibility = 'hidden'; btn.disabled = true;
       });
+      var targetDot = hiddenCtrl.arrows.querySelector('.live-wysiwyg-nav-target-dot');
+      if (targetDot) { targetDot.style.visibility = 'hidden'; targetDot.disabled = true; }
       var gearWrapper = document.createElement('div');
       gearWrapper.className = 'live-wysiwyg-nav-controls-wrapper';
-      gearWrapper.appendChild(arrowsDiv);
-      gearWrapper.appendChild(gearBtn);
+      gearWrapper.appendChild(hiddenCtrl.arrows);
+      gearWrapper.appendChild(hiddenCtrl.gear);
       gearWrapper.addEventListener('mouseenter', function () { _showNavItemControls(this.parentNode); });
       gearWrapper.addEventListener('mouseleave', function () { _scheduleNavItemHide(this.parentNode); });
       li.appendChild(gearWrapper);
@@ -9471,15 +9447,14 @@
       }));
     var isSimpleVertical = (isUp || isDown) && !shiftKey && isCurrentPage;
 
-    if (!isSimpleVertical) {
-      if (!_ensureNavEditReady()) return;
-      if (!_navEditMode) _enterNavEditMode();
-    }
-
+    function _doArrowMove() {
     _navKeyboardActiveItem = item;
 
     var li = _findNavLi(item);
     if (!li) return;
+
+    _navUndoStack.push(_takeNavSnapshot());
+    _navRedoStack = [];
 
     if (isUp) {
       if (isSimpleVertical) {
@@ -9521,6 +9496,18 @@
       _setNavFocus(focusLi || li);
     } else {
       _setNavFocus(li);
+    }
+    _updateUndoRedoBtns();
+    }
+
+    if (isSimpleVertical) {
+      _doArrowMove();
+    } else {
+      _ensureNavEditReady().then(function (ready) {
+        if (!ready) return;
+        if (!_navEditMode) _enterNavEditMode();
+        _doArrowMove();
+      });
     }
   }
 
@@ -10054,19 +10041,93 @@
   // ======================================================================
   function _ensureNavEditReady() {
     var saveBtn = document.querySelector('.live-edit-save-button');
-    if (saveBtn && !saveBtn.classList.contains('live-edit-hidden')) {
-      _showNavDialog('Save or discard your page changes before editing the navigation menu.', [
-        { text: 'OK', value: 'ok' }
-      ]);
-      return false;
+    if (!saveBtn || saveBtn.classList.contains('live-edit-hidden')) {
+      return Promise.resolve(true);
     }
-    return true;
+    return _showNavDialog('You have unsaved page changes. Save or discard before editing navigation.', [
+      { text: 'Cancel', value: 'cancel' },
+      { text: 'Discard and Edit', value: 'discard', className: 'live-wysiwyg-nav-dialog-danger' },
+      { text: 'Save and Edit', value: 'save' }
+    ]).then(function (result) {
+      if (result === 'cancel') return false;
+      if (result === 'save') {
+        return _doFocusSave().then(function () { return true; });
+      }
+      if (result === 'discard') {
+        var srcPath = _getCurrentSrcPath();
+        if (srcPath) {
+          return _wsGetContents(srcPath).then(function (md) {
+            if (wysiwygEditor && wysiwygEditor._loadContent) {
+              wysiwygEditor._loadContent(md);
+            }
+            return true;
+          });
+        }
+        return true;
+      }
+      return false;
+    });
+  }
+
+  function _enterNavEditModeAsync() {
+    if (_navEditMode) return Promise.resolve(true);
+    return _ensureNavEditReady().then(function (ready) {
+      if (!ready) return false;
+      _enterNavEditMode();
+      return true;
+    });
+  }
+
+  function _deepCloneNavData(items) {
+    if (!items) return items;
+    var clone = [];
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var copy = {};
+      for (var k in item) {
+        if (item.hasOwnProperty(k)) {
+          if (k === 'children') {
+            copy.children = _deepCloneNavData(item.children);
+          } else if (k === 'index_meta' && item[k] && typeof item[k] === 'object') {
+            var metaCopy = {};
+            for (var mk in item[k]) {
+              if (item[k].hasOwnProperty(mk)) metaCopy[mk] = item[k][mk];
+            }
+            copy[k] = metaCopy;
+          } else {
+            copy[k] = item[k];
+          }
+        }
+      }
+      clone.push(copy);
+    }
+    return clone;
   }
 
   function _enterNavEditMode() {
     if (_navEditMode) return;
     _navEditMode = true;
     if (_batchClaimedPaths) _batchClaimedPaths.clear();
+
+    if (typeof liveWysiwygNavData !== 'undefined') {
+      _navDataSnapshot = _deepCloneNavData(liveWysiwygNavData);
+    }
+    if (typeof liveWysiwygAllMdSrcPaths !== 'undefined') {
+      _allMdSrcPathsSnapshot = liveWysiwygAllMdSrcPaths.slice();
+    }
+    _navFrontmatterSnapshot = null;
+    if (wysiwygEditor) {
+      var md = wysiwygEditor.getValue ? wysiwygEditor.getValue() : '';
+      if (md) {
+        var fm = _parseFrontmatter(md);
+        var snap = {};
+        for (var ki = 0; ki < _NAV_WEIGHT_FM_KEYS.length; ki++) {
+          var fk = _NAV_WEIGHT_FM_KEYS[ki];
+          if (fm.fields.hasOwnProperty(fk)) snap[fk] = fm.fields[fk];
+        }
+        _navFrontmatterSnapshot = snap;
+      }
+    }
 
     var cursor = _captureEditorSelection();
     if (cursor) {
@@ -10197,14 +10258,65 @@
 
     _navBatchQueue = [];
     if (_batchClaimedPaths) _batchClaimedPaths.clear();
+    _batchRenamedPaths = {};
+    _batchDeletedPaths = {};
     _navUndoStack = [];
     _navRedoStack = [];
+    _navBadges = [];
     _navNormalizeAllPending = false;
     _navNormalizePending = false;
+    _navMigrationPending = false;
     _pendingFolderDelete = null;
     _navPostSaveDeadLinkFolder = null;
     _navFocusTarget = null;
     _clearNavFocus();
+
+    if (restoreCursor && _navDataSnapshot) {
+      liveWysiwygNavData.length = 0;
+      for (var si = 0; si < _navDataSnapshot.length; si++) {
+        liveWysiwygNavData.push(_navDataSnapshot[si]);
+      }
+    }
+    if (restoreCursor && _allMdSrcPathsSnapshot && typeof liveWysiwygAllMdSrcPaths !== 'undefined') {
+      liveWysiwygAllMdSrcPaths.length = 0;
+      for (var pi = 0; pi < _allMdSrcPathsSnapshot.length; pi++) {
+        liveWysiwygAllMdSrcPaths.push(_allMdSrcPathsSnapshot[pi]);
+      }
+    }
+    if (restoreCursor && _navFrontmatterSnapshot && wysiwygEditor) {
+      var curMd = wysiwygEditor.getValue ? wysiwygEditor.getValue() : '';
+      if (curMd) {
+        var curFm = _parseFrontmatter(curMd);
+        var fmUpdates = {};
+        var fmChanged = false;
+        for (var ri = 0; ri < _NAV_WEIGHT_FM_KEYS.length; ri++) {
+          var rk = _NAV_WEIGHT_FM_KEYS[ri];
+          var snappedVal = _navFrontmatterSnapshot.hasOwnProperty(rk) ? _navFrontmatterSnapshot[rk] : undefined;
+          var curVal = curFm.fields.hasOwnProperty(rk) ? curFm.fields[rk] : undefined;
+          if (snappedVal === undefined && curVal !== undefined) {
+            fmUpdates[rk] = null;
+            fmChanged = true;
+          } else if (snappedVal !== undefined && snappedVal !== curVal) {
+            fmUpdates[rk] = snappedVal;
+            fmChanged = true;
+          }
+        }
+        if (fmChanged) {
+          var isIdx = (_getCurrentSrcPath() || '').endsWith('index.md');
+          var restored = _updateFrontmatter(curMd, fmUpdates, isIdx);
+          var parsedFm = parseFrontmatter(restored);
+          wysiwygEditor._liveWysiwygFrontmatter = parsedFm.frontmatter;
+          if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
+            wysiwygEditor.markdownArea.value = restored;
+          }
+          if (wysiwygEditor._finalizeUpdate) wysiwygEditor._finalizeUpdate();
+          if (wysiwygEditor._resetPristineContent) wysiwygEditor._resetPristineContent(restored);
+        }
+      }
+    }
+    _navDataSnapshot = null;
+    _allMdSrcPathsSnapshot = null;
+    _navFrontmatterSnapshot = null;
 
     if (_navSidebarEl) {
       _navSidebarEl.classList.remove('live-wysiwyg-nav-edit-mode');
@@ -10259,14 +10371,36 @@
     _navEditActionsEl.appendChild(undoBtn);
     _navEditActionsEl.appendChild(redoBtn);
 
-    if (_navNormalizeAllPending) {
+    for (var bi = 0; bi < _navBadges.length; bi++) {
+      var bd = _navBadges[bi];
       var badge = document.createElement('span');
-      badge.className = 'live-wysiwyg-nav-normalize-badge';
-      badge.textContent = 'Normalize on save';
+      badge.className = bd.className;
+      badge.textContent = bd.text;
+      if (bd.style) badge.style.cssText = bd.style;
+      if (bd.attrs) {
+        for (var ak in bd.attrs) {
+          if (bd.attrs.hasOwnProperty(ak)) badge.setAttribute(ak, bd.attrs[ak]);
+        }
+      }
       _navEditActionsEl.appendChild(badge);
     }
 
     sidebarEl.appendChild(_navEditActionsEl);
+  }
+
+  function _addNavBadge(descriptor) {
+    _navBadges.push(descriptor);
+    if (!_navEditActionsEl) return;
+    var badge = document.createElement('span');
+    badge.className = descriptor.className;
+    badge.textContent = descriptor.text;
+    if (descriptor.style) badge.style.cssText = descriptor.style;
+    if (descriptor.attrs) {
+      for (var ak in descriptor.attrs) {
+        if (descriptor.attrs.hasOwnProperty(ak)) badge.setAttribute(ak, descriptor.attrs[ak]);
+      }
+    }
+    _navEditActionsEl.appendChild(badge);
   }
 
   // ======================================================================
@@ -10283,229 +10417,69 @@
   }
 
   // ======================================================================
-  function _pushNavOperation(op) {
-    op.inverse = _computeNavOpInverse(op);
-    _navBatchQueue.push(op);
-    _navUndoStack.push(op);
-    _navRedoStack = [];
-    _updateUndoRedoBtns();
+  // NAV MENU - Snapshot-based undo / redo
+  // ======================================================================
+
+  function _takeNavSnapshot() {
+    return {
+      navData: _deepCloneNavData(typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : []),
+      batchQueue: _navBatchQueue.map(function (op) {
+        var copy = {};
+        for (var k in op) { if (op.hasOwnProperty(k)) copy[k] = op[k]; }
+        return copy;
+      }),
+      badges: _navBadges.slice(),
+      normalizeAllPending: _navNormalizeAllPending,
+      normalizePending: _navNormalizePending ? _deepCloneNavData([_navNormalizePending])[0] : false,
+      migrationPending: _navMigrationPending,
+      focusTarget: _navFocusTarget,
+      pendingFolderDelete: _pendingFolderDelete
+    };
   }
 
-  function _computeNavOpInverse(op) {
-    if (op.type === 'move-up') return { type: 'move-down', item: op.item };
-    if (op.type === 'move-down') return { type: 'move-up', item: op.item };
-    if (op.type === 'move-left') {
-      return { type: 'move-right', item: op.item, targetSection: op.fromSection, position: 'index', originalIndex: op.originalIndex };
+  function _restoreNavSnapshot(snapshot) {
+    if (typeof liveWysiwygNavData !== 'undefined') {
+      liveWysiwygNavData.length = 0;
+      for (var i = 0; i < snapshot.navData.length; i++) {
+        liveWysiwygNavData.push(snapshot.navData[i]);
+      }
     }
-    if (op.type === 'move-right') {
-      return { type: 'move-left', item: op.item, fromSection: op.targetSection, originalSection: op.originalSection, originalIndex: op.originalIndex };
+    _navBatchQueue = snapshot.batchQueue.slice();
+    _navBadges = snapshot.badges.slice();
+    _navNormalizeAllPending = snapshot.normalizeAllPending;
+    _navNormalizePending = snapshot.normalizePending;
+    _navMigrationPending = snapshot.migrationPending;
+    _navFocusTarget = snapshot.focusTarget;
+    _pendingFolderDelete = snapshot.pendingFolderDelete;
+
+    _navEditActionsEl = null;
+    if (_navSidebarEl) {
+      _buildNavMenu(_navSidebarEl);
+      if (_navEditMode) _addNavEditActions(_navSidebarEl);
     }
-    if (op.type === 'move-into-section') {
-      return { type: 'move-left', item: op.item, fromSection: op.targetSection, originalSection: op.originalSection, originalIndex: op.originalIndex };
-    }
-    if (op.type === 'rename-page') {
-      return { type: 'rename-page', oldPath: op.newPath, newPath: op.oldPath, newTitle: op.item && op.item.title, item: { src_path: op.newPath, title: op.newTitle } };
-    }
-    if (op.type === 'delete-page') {
-      return { type: 'create-page', item: op.item, path: op.path, content: op.content };
-    }
-    if (op.type === 'create-page') {
-      return { type: 'delete-page', item: op.item, path: op.path };
-    }
-    if (op.type === 'create-folder') {
-      return { type: 'delete-folder', item: op.item, folderSection: op.folderSection, originalParentUl: op.originalParentUl };
-    }
-    if (op.type === 'regenerate-index') return null;
-    if (op.type === 'convert-folder-to-page') return null;
-    return null;
+  }
+
+  function _pushNavOperation(op) {
+    _navUndoStack.push(_takeNavSnapshot());
+    _navRedoStack = [];
+    _navBatchQueue.push(op);
+    _updateUndoRedoBtns();
   }
 
   function _navUndo() {
     if (!_navUndoStack.length) return;
-    var op = _navUndoStack.pop();
-    _navRedoStack.push(op);
-    _applyInverseOp(op);
-    var idx = -1;
-    for (var i = _navBatchQueue.length - 1; i >= 0; i--) {
-      if (_navBatchQueue[i] === op) { idx = i; break; }
-    }
-    if (idx !== -1) _navBatchQueue.splice(idx, 1);
+    _navRedoStack.push(_takeNavSnapshot());
+    var snapshot = _navUndoStack.pop();
+    _restoreNavSnapshot(snapshot);
     _updateUndoRedoBtns();
   }
 
   function _navRedo() {
     if (!_navRedoStack.length) return;
-    var op = _navRedoStack.pop();
-    _navUndoStack.push(op);
-    _applyForwardOp(op);
-    _navBatchQueue.push(op);
+    _navUndoStack.push(_takeNavSnapshot());
+    var snapshot = _navRedoStack.pop();
+    _restoreNavSnapshot(snapshot);
     _updateUndoRedoBtns();
-  }
-
-  function _applyInverseOp(op) {
-    if (!_navSidebarEl) return;
-    var inv = op.inverse;
-    if (!inv) return;
-    if (op.type === 'move-up') {
-      var li = _findNavLi(op.item);
-      if (li && li.nextElementSibling) li.parentNode.insertBefore(li.nextElementSibling, li);
-    } else if (op.type === 'move-down') {
-      var li2 = _findNavLi(op.item);
-      if (li2 && li2.previousElementSibling) li2.parentNode.insertBefore(li2, li2.previousElementSibling);
-    } else if (op.type === 'move-left') {
-      _applyMoveRightVisual(inv);
-    } else if (op.type === 'move-right' || op.type === 'move-into-section') {
-      _applyMoveLeftVisual(inv);
-    } else if (op.type === 'rename-page') {
-      var rli = _findNavLiByPath(op.newPath);
-      if (rli) {
-        rli.classList.remove('live-wysiwyg-nav-item--renamed');
-        rli.setAttribute('data-nav-src-path', op.oldPath);
-        var rlink = rli.querySelector('.md-nav__link');
-        if (rlink) rlink.textContent = (op.item && op.item.title) || op.oldPath.split('/').pop();
-      }
-    } else if (op.type === 'delete-page') {
-      var dli = _findNavLi(op.item);
-      if (dli) {
-        dli.classList.remove('live-wysiwyg-nav-item--deleted');
-        var tooltip = dli.querySelector('.live-wysiwyg-nav-deleted-tooltip');
-        if (tooltip) tooltip.parentNode.removeChild(tooltip);
-      }
-    } else if (op.type === 'create-page') {
-      var cli = _findNavLiByPath(op.path);
-      if (cli && cli.parentNode) cli.parentNode.removeChild(cli);
-    } else if (op.type === 'regenerate-index') {
-    } else if (op.type === 'create-folder') {
-      var fs = op.folderSection;
-      var opu = op.originalParentUl;
-      if (fs && opu) {
-        var fli = fs.querySelector('[data-nav-src-path="' + (op.item && op.item.src_path || '') + '"]');
-        if (fli) {
-          opu.insertBefore(fli, fs);
-          if (fs.parentNode) fs.parentNode.removeChild(fs);
-        }
-      }
-    } else if (op.type === 'delete-folder') {
-      var dfs = inv.folderSection;
-      var dopu = inv.originalParentUl;
-      if (dfs && dopu) {
-        var dfli = dfs.querySelector('[data-nav-src-path="' + (inv.item && inv.item.src_path || '') + '"]');
-        if (dfli) {
-          dopu.insertBefore(dfli, dfs);
-          if (dfs.parentNode) dfs.parentNode.removeChild(dfs);
-        }
-      }
-    }
-  }
-
-  function _applyForwardOp(op) {
-    if (!_navSidebarEl) return;
-    if (op.type === 'move-up') {
-      var li = _findNavLi(op.item);
-      if (li && li.previousElementSibling) li.parentNode.insertBefore(li, li.previousElementSibling);
-    } else if (op.type === 'move-down') {
-      var li2 = _findNavLi(op.item);
-      if (li2 && li2.nextElementSibling) li2.parentNode.insertBefore(li2, li2.nextElementSibling.nextSibling);
-    } else if (op.type === 'move-left') {
-      _applyMoveLeftVisual(op);
-    } else if (op.type === 'move-right' || op.type === 'move-into-section') {
-      _applyMoveRightVisual(op);
-    } else if (op.type === 'rename-page') {
-      var rli = _findNavLiByPath(op.oldPath);
-      if (rli) {
-        rli.classList.add('live-wysiwyg-nav-item--renamed');
-        rli.setAttribute('data-nav-src-path', op.newPath);
-        var rlink = rli.querySelector('.md-nav__link');
-        if (rlink) rlink.textContent = op.newTitle || op.newPath.split('/').pop();
-      }
-    } else if (op.type === 'delete-page') {
-      var dli = _findNavLi(op.item);
-      if (dli) {
-        dli.classList.add('live-wysiwyg-nav-item--deleted');
-        var tooltip = document.createElement('div');
-        tooltip.className = 'live-wysiwyg-nav-deleted-tooltip';
-        tooltip.textContent = 'This page will be deleted when the navigation menu is saved.';
-        dli.style.position = 'relative';
-        dli.appendChild(tooltip);
-      }
-    } else if (op.type === 'create-page') {
-      if (_navSidebarEl && op.path && op.item) {
-        var ul = _navSidebarEl.querySelector('.md-nav__list');
-        if (ul) {
-          var newLi = document.createElement('li');
-          newLi.className = 'md-nav__item live-wysiwyg-nav-item--new';
-          newLi.setAttribute('data-nav-src-path', op.path);
-          var a = document.createElement('a');
-          a.className = 'md-nav__link';
-          a.setAttribute('data-src-path', op.path);
-          var ellipsis = document.createElement('span');
-          ellipsis.className = 'md-ellipsis';
-          ellipsis.textContent = op.item.title || op.path.split('/').pop();
-          a.appendChild(ellipsis);
-          newLi.appendChild(a);
-          ul.appendChild(newLi);
-        }
-      }
-    } else if (op.type === 'create-folder') {
-      _applyCreateFolderVisual(op);
-    } else if (op.type === 'regenerate-index') {
-    }
-  }
-
-  function _applyMoveLeftVisual(op) {
-    var li = _findNavLi(op.item);
-    if (!li || !op.fromSection) return;
-    var targetUl = op.fromSection.querySelector('.md-nav__list');
-    if (!targetUl) return;
-    var grandparent = op.fromSection.parentNode;
-    if (!grandparent) return;
-    grandparent.insertBefore(li, op.fromSection.nextSibling);
-  }
-
-  function _applyMoveRightVisual(op) {
-    var li = _findNavLi(op.item);
-    if (!li || !op.targetSection) return;
-    var targetUl = op.targetSection.querySelector('.md-nav__list');
-    if (!targetUl) return;
-    if (op.position === 'index' && op.originalIndex !== undefined && op.originalIndex >= 0) {
-      var children = targetUl.children;
-      var ref = children[op.originalIndex] || null;
-      if (ref) targetUl.insertBefore(li, ref);
-      else targetUl.appendChild(li);
-    } else if (op.position === 'start') {
-      var first = targetUl.firstElementChild;
-      if (first) targetUl.insertBefore(li, first);
-      else targetUl.appendChild(li);
-    } else {
-      targetUl.appendChild(li);
-    }
-  }
-
-  function _applyCreateFolderVisual(op) {
-    var parentUl = op.originalParentUl;
-    var li = _findNavLi(op.item);
-    if (!li || !parentUl || !op.folderName || !op.folderTitle) return;
-    var nextRef = li.nextSibling;
-    parentUl.removeChild(li);
-    var sectionLi = document.createElement('li');
-    sectionLi.className = 'md-nav__item md-nav__item--nested md-nav__item--active live-wysiwyg-nav-item--new';
-    var sectionLabel = document.createElement('label');
-    sectionLabel.className = 'md-nav__link';
-    sectionLabel.tabIndex = 0;
-    var sectionEllipsis = document.createElement('span');
-    sectionEllipsis.className = 'md-ellipsis';
-    sectionEllipsis.textContent = op.folderTitle;
-    sectionLabel.appendChild(sectionEllipsis);
-    sectionLi.appendChild(sectionLabel);
-    var childNav = document.createElement('nav');
-    childNav.className = 'md-nav';
-    childNav.setAttribute('aria-expanded', 'true');
-    var childUl = document.createElement('ul');
-    childUl.className = 'md-nav__list';
-    childUl.appendChild(li);
-    childNav.appendChild(childUl);
-    sectionLi.appendChild(childNav);
-    parentUl.insertBefore(sectionLi, nextRef);
   }
 
   function _findNavLi(item) {
@@ -10762,6 +10736,10 @@
       ? (_resolveNavPathThroughQueue(_navFocusTarget) || _navFocusTarget)
       : _getCurrentSrcPath() || null;
 
+    if (_navMigrationPending) {
+      _setCookie('live_wysiwyg_migration_result', 'success', 300);
+      _setCookie('live_wysiwyg_migration_normalize', '1', 120);
+    }
     _exitNavEditMode(false);
     _runBatchOps(contentEl, orderedOps, focusTarget);
   }
@@ -10815,12 +10793,9 @@
     _showNavStatus(statusContainer, 'Saving nav changes...', { showProgress: true, percent: 0 });
 
     _getOrCreateBulkWs().then(function () {
-      console.log('[batch-save] WS connected. Link check port:', typeof liveWysiwygLinkCheckPort !== 'undefined' ? liveWysiwygLinkCheckPort : 'UNDEFINED');
       return _fetchLinkIndex();
     }).then(function (freshIndex) {
       _batchLinkIndex = freshIndex;
-      var indexKeys = freshIndex && typeof freshIndex === 'object' ? Object.keys(freshIndex).length : 0;
-      console.log('[batch-save] Link index loaded:', indexKeys, 'entries. Ops:', orderedOps.length, orderedOps.map(function (o) { return o.type; }));
       var chain = Promise.resolve();
       for (var i = 0; i < orderedOps.length; i++) {
         (function (op, idx) {
@@ -10846,21 +10821,14 @@
       _closeBulkWs();
       return _waitForRebuild();
     }).then(function () {
-      _setCookie('live_wysiwyg_focus_nav', '1', 60);
-      _removeReloadGuard();
       _finishBatchSave(statusContainer, failures, focusTarget);
     }).catch(function (err) {
-      _setCookie('live_wysiwyg_focus_nav', '1', 60);
-      _removeReloadGuard();
       _finishBatchSave(statusContainer, failures, focusTarget);
     });
   }
 
   function _finishBatchSave(container, failures, focusTarget) {
-    _userActionInProgress = false;
-    _syncBuildEpoch();
     _setCookie('live_wysiwyg_focus_nav', '1', 60);
-    _removeReloadGuard();
     _batchDeletedPaths = {};
     _batchRenamedPaths = {};
     _batchLinkIndex = null;
@@ -10868,6 +10836,9 @@
     _navPostSaveDeadLinkFolder = null;
 
     if (failures && failures.length) {
+      if (_getCookie('live_wysiwyg_migration_result')) {
+        _setCookie('live_wysiwyg_migration_result', 'warnings', 300);
+      }
       failures.forEach(function (f) {
         if (f.path !== '_normalize_all' && f.path && typeof f.path === 'string' && f.path.endsWith('.md')) {
           _addCautionPage(f.path, 'Batch save failed: ' + (f.msg || 'unknown error'));
@@ -11241,7 +11212,8 @@
         updated = _updateFrontmatter(content, { title: op.newTitle }, actualOldPath.endsWith('index.md'));
       }
       var rewritten = _rewriteLinksInContent(updated, actualOldPath, op.newPath);
-      if (!op.skipDoubleRenderCheck && !_doubleRenderCheck(rewritten, actualOldPath)) {
+      var linksChanged = rewritten !== updated;
+      if (!op.skipDoubleRenderCheck && linksChanged && !_doubleRenderCheck(rewritten, actualOldPath)) {
         _addCautionPage(op.oldPath, 'Rename skipped because content could not safely round-trip through the editor');
         return Promise.reject(new Error('Double render check failed for ' + actualOldPath));
       }
@@ -11397,33 +11369,36 @@
       return Promise.reject(new Error('Link check server not available'));
     }
     var host = window.location.hostname || '127.0.0.1';
-    var maxRetries = 5;
-    var retryDelay = 3000;
+    var maxRetries = 10;
+    var retryDelay = 2000;
     var jsonBody = JSON.stringify(body);
 
     function attempt(retriesLeft) {
-      var currentPort = liveWysiwygLinkCheckPort;
-      var url = 'http://' + host + ':' + currentPort + endpoint;
-      console.log('[apiPost] ' + endpoint + ' → port ' + currentPort + ' (retries left: ' + retriesLeft + ')');
+      var url = 'http://' + host + ':' + liveWysiwygLinkCheckPort + endpoint;
       return fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: jsonBody
       }).then(function (resp) {
-        console.log('[apiPost] ' + endpoint + ' responded: ' + resp.status);
-        if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
-        return resp.json();
+        if (resp.status === 202) {
+          if (retriesLeft > 0) {
+            return new Promise(function (resolve) { setTimeout(resolve, retryDelay); })
+              .then(function () { return attempt(retriesLeft - 1); });
+          }
+          return resp.json();
+        }
+        if (resp.status === 201 || resp.status === 200) {
+          return resp.json();
+        }
+        return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
       }).catch(function (err) {
         var msg = err && err.message ? err.message : String(err);
         var isHttpError = msg.indexOf('HTTP ') === 0;
-        console.error('[apiPost] ' + endpoint + ' error (isHttp=' + isHttpError + ', retries=' + retriesLeft + '):', msg);
         if (retriesLeft > 0 && !isHttpError) {
+          console.warn('[apiPost] ' + endpoint + ' network error, retrying (' + retriesLeft + ' left):', msg);
           return new Promise(function (resolve) { setTimeout(resolve, retryDelay); })
             .then(function () { return _refreshLinkCheckPort(); })
-            .then(function () {
-              console.log('[apiPost] port after refresh: ' + liveWysiwygLinkCheckPort);
-              return attempt(retriesLeft - 1);
-            });
+            .then(function () { return attempt(retriesLeft - 1); });
         }
         throw err;
       });
@@ -12118,10 +12093,10 @@
   // ------------------------------------------------------------------
 
   function _initiateFolderRename(item, oldFolder, newFolder) {
-    if (!_navEditMode) {
-      if (!_ensureNavEditReady()) return;
-      _enterNavEditMode();
-    }
+    var proceed = _navEditMode ? Promise.resolve(true) : _ensureNavEditReady();
+    proceed.then(function (ready) {
+    if (!ready) return;
+    if (!_navEditMode) _enterNavEditMode();
 
     _fetchLinkIndex().then(function (linkIndex) {
       var folderPrefix = oldFolder + '/';
@@ -12155,8 +12130,11 @@
         { text: 'Rename', value: 'rename', className: 'live-wysiwyg-nav-dialog-primary' }
       ]).then(function (result) {
         if (result !== 'rename') return;
-        _pushNavOperation({ type: 'rename-folder', oldFolder: oldFolder, newFolder: newFolder });
-        _pushNavOperation({ type: 'rewrite-folder-links', oldFolder: oldFolder, newFolder: newFolder });
+        _navUndoStack.push(_takeNavSnapshot());
+        _navRedoStack = [];
+
+        _navBatchQueue.push({ type: 'rename-folder', oldFolder: oldFolder, newFolder: newFolder });
+        _navBatchQueue.push({ type: 'rewrite-folder-links', oldFolder: oldFolder, newFolder: newFolder });
 
         var oldPrefix = oldFolder + '/';
         var newPrefix = newFolder + '/';
@@ -12182,13 +12160,13 @@
           if (_navEditMode) _addNavEditActions(_navSidebarEl);
         }
 
-        if (_navEditActionsEl && !_navEditActionsEl.querySelector('.live-wysiwyg-nav-rename-badge')) {
-          var badge = document.createElement('span');
-          badge.className = 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-rename-badge';
-          badge.textContent = 'Rename "' + oldFolder.split('/').pop() + '" \u2192 "' + newFolder.split('/').pop() + '" + normalize';
-          _navEditActionsEl.appendChild(badge);
-        }
+        _addNavBadge({
+          className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-rename-badge',
+          text: 'Rename "' + oldFolder.split('/').pop() + '" \u2192 "' + newFolder.split('/').pop() + '" + normalize'
+        });
+        _updateUndoRedoBtns();
       });
+    });
     });
   }
 
@@ -12221,13 +12199,13 @@
       if (child.type === 'page') {
         if (_isRootIndex(child)) continue;
         if (child.src_path && child.weight != null) {
-          _navBatchQueue.push({ type: 'set-weight', src_path: child.src_path, weight: child.weight, inverse: null });
+          _navBatchQueue.push({ type: 'set-weight', src_path: child.src_path, weight: child.weight });
         }
       } else if (child.type === 'section') {
         var indexSp = child.src_path || (child.index_meta && child.index_meta.src_path) || '';
         var indexW = child.index_meta ? child.index_meta.weight : undefined;
         if (indexSp && indexW != null) {
-          _navBatchQueue.push({ type: 'set-weight', src_path: indexSp, weight: indexW, inverse: null });
+          _navBatchQueue.push({ type: 'set-weight', src_path: indexSp, weight: indexW });
         }
         _collectRecursiveNormalizeOpsForSection(child);
       }
@@ -12268,15 +12246,15 @@
       ]
     ).then(function (result) {
       if (result !== 'delete') return;
-      if (!_navEditMode) {
-        if (!_ensureNavEditReady()) return;
-        _enterNavEditMode();
-      }
+      _enterNavEditModeAsync().then(function (ready) {
+      if (!ready) return;
 
       _fetchLinkIndex().then(function (freshIndex) {
         var brokenLinks = _scanFolderForDeadLinksWithIndex(folderDir, freshIndex);
 
         if (brokenLinks.length) {
+          _navUndoStack.push(_takeNavSnapshot());
+          _navRedoStack = [];
           _pendingFolderDelete = { item: item, folderDir: folderDir, brokenLinks: brokenLinks };
         } else {
           _pushNavOperation({ type: 'delete-folder', folder: folderDir });
@@ -12289,18 +12267,16 @@
           if (_navEditMode) _addNavEditActions(_navSidebarEl);
         }
 
-        if (_navEditActionsEl) {
-          var badgeText = brokenLinks.length
-            ? 'Delete "' + folderDir.split('/').pop() + '" (has ' + brokenLinks.length + ' broken link' + (brokenLinks.length !== 1 ? 's' : '') + ')'
-            : 'Delete "' + folderDir.split('/').pop() + '"';
-          if (!_navEditActionsEl.querySelector('.live-wysiwyg-nav-delete-badge')) {
-            var badge = document.createElement('span');
-            badge.className = 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-delete-badge';
-            badge.style.background = '#d9534f';
-            badge.textContent = badgeText;
-            _navEditActionsEl.appendChild(badge);
-          }
-        }
+        var badgeText = brokenLinks.length
+          ? 'Delete "' + folderDir.split('/').pop() + '" (has ' + brokenLinks.length + ' broken link' + (brokenLinks.length !== 1 ? 's' : '') + ')'
+          : 'Delete "' + folderDir.split('/').pop() + '"';
+        _addNavBadge({
+          className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-delete-badge',
+          text: badgeText,
+          style: 'background:#d9534f'
+        });
+        _updateUndoRedoBtns();
+      });
       });
     });
   }
@@ -12316,6 +12292,194 @@
       }
       return false;
     })(navItems);
+  }
+
+  function _buildSettingsContent(dropdown, item, itemType, nwConfig) {
+    function addField(label, type, key, val) {
+      var row = document.createElement('div');
+      row.className = 'live-wysiwyg-nav-settings-row';
+      var span = document.createElement('span');
+      span.textContent = label;
+      row.appendChild(span);
+      if (type === 'text' || type === 'number') {
+        var input = document.createElement('input');
+        input.type = type;
+        input.value = val !== null && val !== undefined ? val : '';
+        input.setAttribute('data-fm-key', key);
+        row.appendChild(input);
+      } else if (type === 'checkbox') {
+        var lbl = document.createElement('label');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!val;
+        cb.setAttribute('data-fm-key', key);
+        lbl.appendChild(cb);
+        lbl.appendChild(document.createTextNode(' Enabled'));
+        row.appendChild(lbl);
+      }
+      dropdown.appendChild(row);
+    }
+
+    function addDivider() {
+      var hr = document.createElement('hr');
+      hr.className = 'live-wysiwyg-nav-settings-divider';
+      dropdown.appendChild(hr);
+    }
+
+    var effectiveMeta = (itemType === 'section' && item.index_meta) ? item.index_meta : item;
+    var effectiveIsIndex = itemType === 'section' || (item.isIndex === true);
+    var defaultWeight = effectiveIsIndex
+      ? (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined
+        ? nwConfig.frontmatter_defaults.index_weight : -10)
+      : (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.weight !== undefined
+        ? nwConfig.frontmatter_defaults.weight : 0);
+    addField('Title', 'text', 'title', item.title || '');
+    addField('Weight', 'number', 'weight', effectiveMeta.weight !== undefined && effectiveMeta.weight !== null ? effectiveMeta.weight : defaultWeight);
+    if (_isRootIndex(item)) {
+      var weightInput = dropdown.querySelector('[data-fm-key="weight"]');
+      if (weightInput) {
+        weightInput.disabled = true;
+        weightInput.title = 'Root index page does not use a weight';
+      }
+    }
+    if (nwConfig.enabled) {
+      addField('Headless', 'checkbox', 'headless', effectiveMeta.headless || false);
+      if (effectiveIsIndex) {
+        addField('Retitled', 'checkbox', 'retitled', effectiveMeta.retitled || false);
+        addField('Empty', 'checkbox', 'empty', effectiveMeta.empty || false);
+      }
+    }
+
+    addDivider();
+
+    if (nwConfig.enabled && itemType === 'section') {
+      var folderDir = _getSectionFolderDir(item);
+      if (folderDir) {
+        var renameRow = document.createElement('div');
+        renameRow.className = 'live-wysiwyg-nav-settings-row';
+        var renameLabel = document.createElement('span');
+        renameLabel.textContent = 'Folder name';
+        renameRow.appendChild(renameLabel);
+        var renameFolderInput = document.createElement('input');
+        renameFolderInput.type = 'text';
+        var folderBaseName = folderDir.indexOf('/') >= 0 ? folderDir.substring(folderDir.lastIndexOf('/') + 1) : folderDir;
+        renameFolderInput.value = folderBaseName;
+        renameFolderInput.setAttribute('data-folder-rename', 'true');
+        renameRow.appendChild(renameFolderInput);
+        dropdown.appendChild(renameRow);
+
+        var renameFolderBtn = document.createElement('button');
+        renameFolderBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
+        renameFolderBtn.textContent = 'Rename Folder';
+        renameFolderBtn.addEventListener('click', function () {
+          var newName = renameFolderInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+          if (!newName || newName === folderBaseName) return;
+          var parentDir = folderDir.indexOf('/') >= 0 ? folderDir.substring(0, folderDir.lastIndexOf('/')) : '';
+          var newFolder = parentDir ? parentDir + '/' + newName : newName;
+          dropdown.parentNode.removeChild(dropdown);
+          _initiateFolderRename(item, folderDir, newFolder);
+        });
+        dropdown.appendChild(renameFolderBtn);
+
+        addDivider();
+
+        var deleteFolderBtn = document.createElement('button');
+        deleteFolderBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
+        deleteFolderBtn.style.background = '#d9534f';
+        deleteFolderBtn.textContent = 'Delete Folder';
+        deleteFolderBtn.addEventListener('click', function () {
+          dropdown.parentNode.removeChild(dropdown);
+          _initiateFolderDelete(item, folderDir);
+        });
+        dropdown.appendChild(deleteFolderBtn);
+      }
+    } else if (nwConfig.enabled && itemType === 'page' && !_isRootIndex(item)) {
+      var srcPath = _getItemSrcPath(item) || '';
+      if (srcPath) {
+        var fileName = srcPath.indexOf('/') >= 0 ? srcPath.substring(srcPath.lastIndexOf('/') + 1) : srcPath;
+        var fileBaseName = fileName.replace(/\.md$/, '');
+        var fileRenameRow = document.createElement('div');
+        fileRenameRow.className = 'live-wysiwyg-nav-settings-row';
+        var fileRenameLabel = document.createElement('span');
+        fileRenameLabel.textContent = 'File name';
+        fileRenameRow.appendChild(fileRenameLabel);
+        var fileRenameInput = document.createElement('input');
+        fileRenameInput.type = 'text';
+        fileRenameInput.value = fileBaseName;
+        fileRenameRow.appendChild(fileRenameInput);
+        dropdown.appendChild(fileRenameRow);
+
+        var fileRenameBtn = document.createElement('button');
+        fileRenameBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
+        fileRenameBtn.textContent = 'Rename File';
+        fileRenameBtn.addEventListener('click', function () {
+          var newBase = fileRenameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+          if (!newBase || newBase === fileBaseName) return;
+          var dir = srcPath.indexOf('/') >= 0 ? srcPath.substring(0, srcPath.lastIndexOf('/')) : '';
+          var newPath = dir ? dir + '/' + newBase + '.md' : newBase + '.md';
+          dropdown.parentNode.removeChild(dropdown);
+          _enterNavEditModeAsync().then(function (ready) {
+            if (!ready) return;
+            _pushNavOperation({ type: 'rename-page', oldPath: srcPath, newPath: newPath, item: item });
+            item.src_path = newPath;
+            item._renamed = true;
+            _navEditActionsEl = null;
+            if (_navSidebarEl) {
+              _buildNavMenu(_navSidebarEl);
+              _addNavEditActions(_navSidebarEl);
+            }
+            _addNavBadge({
+              className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-rename-badge',
+              text: 'Rename "' + fileBaseName + '" \u2192 "' + newBase + '"',
+              attrs: { 'data-rename-page': '1' }
+            });
+            _updateUndoRedoBtns();
+          });
+        });
+        dropdown.appendChild(fileRenameBtn);
+      }
+    }
+
+    addDivider();
+
+    if (nwConfig.enabled) {
+      var normalizeTarget = itemType === 'section' ? item : null;
+      if (!normalizeTarget && itemType === 'page') {
+        normalizeTarget = _findParentSectionItem(item);
+        if (!normalizeTarget && typeof liveWysiwygNavData !== 'undefined') {
+          normalizeTarget = { type: 'section', children: liveWysiwygNavData };
+        }
+      }
+      var normalizeBtn = document.createElement('button');
+      normalizeBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
+      normalizeBtn.textContent = 'Normalize Nav Weights';
+      normalizeBtn.addEventListener('click', function () {
+        dropdown.parentNode.removeChild(dropdown);
+        if (_isNormalizeLocked()) return;
+        _enterNavEditModeAsync().then(function (ready) {
+          if (!ready) return;
+          _navUndoStack.push(_takeNavSnapshot());
+          _navRedoStack = [];
+          _navNormalizePending = normalizeTarget;
+          _addNavBadge({
+            className: 'live-wysiwyg-nav-normalize-badge',
+            text: 'Normalize folder on save'
+          });
+          _updateUndoRedoBtns();
+        });
+      });
+      dropdown.appendChild(normalizeBtn);
+    }
+
+    var applyBtn = document.createElement('button');
+    applyBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
+    applyBtn.textContent = 'Apply Changes';
+    applyBtn.style.background = 'var(--md-primary-fg-color,#4051b5)';
+    applyBtn.addEventListener('click', function () {
+      _applySettingsGearChanges(dropdown, item, itemType);
+      dropdown.parentNode.removeChild(dropdown);
+    });
+    dropdown.appendChild(applyBtn);
   }
 
   function _showSettingsGear(item, itemType, gearBtn) {
@@ -12350,176 +12514,18 @@
         var indexContent = '---\ntitle: ' + _fmSerialize(item.title || 'Untitled') +
           '\nretitled: true\nempty: true\nweight: ' + indexWeight + '\n---\nThis section covers information about ' +
           (item.title || 'Untitled') + ' and its contents.\n';
-        if (!_navEditMode) {
-          if (!_ensureNavEditReady()) return;
-          _enterNavEditMode();
-        }
-        _navBatchQueue.push({ type: 'create-page', path: indexPath, content: indexContent });
+        _enterNavEditModeAsync().then(function (ready) {
+          if (!ready) return;
+          _navBatchQueue.push({ type: 'create-page', path: indexPath, content: indexContent });
+        });
       });
       dropdown.appendChild(createIndexBtn);
       var createHr = document.createElement('hr');
       createHr.className = 'live-wysiwyg-nav-settings-divider';
       dropdown.appendChild(createHr);
-    } else {
-
-    function addField(label, type, key, val) {
-      var row = document.createElement('div');
-      row.className = 'live-wysiwyg-nav-settings-row';
-      var span = document.createElement('span');
-      span.textContent = label;
-      row.appendChild(span);
-      if (type === 'text' || type === 'number') {
-        var input = document.createElement('input');
-        input.type = type;
-        input.value = val !== null && val !== undefined ? val : '';
-        input.setAttribute('data-fm-key', key);
-        row.appendChild(input);
-      } else if (type === 'checkbox') {
-        var lbl = document.createElement('label');
-        var cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = !!val;
-        cb.setAttribute('data-fm-key', key);
-        lbl.appendChild(cb);
-        lbl.appendChild(document.createTextNode(' Enabled'));
-        row.appendChild(lbl);
-      }
-      dropdown.appendChild(row);
     }
 
-    var effectiveMeta = (itemType === 'section' && item.index_meta) ? item.index_meta : item;
-    var effectiveIsIndex = itemType === 'section' || (item.isIndex === true);
-    var defaultWeight = effectiveIsIndex
-      ? (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined
-        ? nwConfig.frontmatter_defaults.index_weight : -10)
-      : (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.weight !== undefined
-        ? nwConfig.frontmatter_defaults.weight : 0);
-    addField('Title', 'text', 'title', item.title || '');
-    addField('Weight', 'number', 'weight', effectiveMeta.weight !== undefined && effectiveMeta.weight !== null ? effectiveMeta.weight : defaultWeight);
-    if (_isRootIndex(item)) {
-      var weightInput = dropdown.querySelector('[data-fm-key="weight"]');
-      if (weightInput) {
-        weightInput.disabled = true;
-        weightInput.title = 'Root index page does not use a weight';
-      }
-    }
-    if (nwConfig.enabled) {
-      addField('Headless', 'checkbox', 'headless', effectiveMeta.headless || false);
-      if (effectiveIsIndex) {
-        addField('Retitled', 'checkbox', 'retitled', effectiveMeta.retitled || false);
-        addField('Empty', 'checkbox', 'empty', effectiveMeta.empty || false);
-      }
-    }
-
-    var hr = document.createElement('hr');
-    hr.className = 'live-wysiwyg-nav-settings-divider';
-    dropdown.appendChild(hr);
-
-    if (nwConfig.enabled && itemType === 'section') {
-      var folderDir = _getSectionFolderDir(item);
-
-      if (folderDir) {
-        var renameRow = document.createElement('div');
-        renameRow.className = 'live-wysiwyg-nav-settings-row';
-        var renameLabel = document.createElement('span');
-        renameLabel.textContent = 'Folder name';
-        renameRow.appendChild(renameLabel);
-        var renameFolderInput = document.createElement('input');
-        renameFolderInput.type = 'text';
-        var folderBaseName = folderDir.indexOf('/') >= 0 ? folderDir.substring(folderDir.lastIndexOf('/') + 1) : folderDir;
-        renameFolderInput.value = folderBaseName;
-        renameFolderInput.setAttribute('data-folder-rename', 'true');
-        renameRow.appendChild(renameFolderInput);
-        dropdown.appendChild(renameRow);
-
-        var renameFolderBtn = document.createElement('button');
-        renameFolderBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-        renameFolderBtn.textContent = 'Rename Folder';
-        renameFolderBtn.addEventListener('click', function () {
-          var newName = renameFolderInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-          if (!newName || newName === folderBaseName) return;
-          var parentDir = folderDir.indexOf('/') >= 0 ? folderDir.substring(0, folderDir.lastIndexOf('/')) : '';
-          var newFolder = parentDir ? parentDir + '/' + newName : newName;
-          dropdown.parentNode.removeChild(dropdown);
-          _initiateFolderRename(item, folderDir, newFolder);
-        });
-        dropdown.appendChild(renameFolderBtn);
-
-        var deleteFolderHr = document.createElement('hr');
-        deleteFolderHr.className = 'live-wysiwyg-nav-settings-divider';
-        dropdown.appendChild(deleteFolderHr);
-
-        var deleteFolderBtn = document.createElement('button');
-        deleteFolderBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-        deleteFolderBtn.style.background = '#d9534f';
-        deleteFolderBtn.textContent = 'Delete Folder';
-        deleteFolderBtn.addEventListener('click', function () {
-          dropdown.parentNode.removeChild(dropdown);
-          _initiateFolderDelete(item, folderDir);
-        });
-        dropdown.appendChild(deleteFolderBtn);
-      }
-
-      var normalizeHr2 = document.createElement('hr');
-      normalizeHr2.className = 'live-wysiwyg-nav-settings-divider';
-      dropdown.appendChild(normalizeHr2);
-
-      var normalizeBtn = document.createElement('button');
-      normalizeBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-      normalizeBtn.textContent = 'Normalize Nav Weights';
-      normalizeBtn.addEventListener('click', function () {
-        dropdown.parentNode.removeChild(dropdown);
-        if (_isNormalizeLocked()) return;
-        if (!_navEditMode) {
-          if (!_ensureNavEditReady()) return;
-          _enterNavEditMode();
-        }
-        _navNormalizePending = item;
-        if (_navEditActionsEl && !_navEditActionsEl.querySelector('.live-wysiwyg-nav-normalize-badge')) {
-          var badge = document.createElement('span');
-          badge.className = 'live-wysiwyg-nav-normalize-badge';
-          badge.textContent = 'Normalize folder on save';
-          _navEditActionsEl.appendChild(badge);
-        }
-      });
-      dropdown.appendChild(normalizeBtn);
-    } else if (nwConfig.enabled && itemType === 'page') {
-      var normalizeBtn = document.createElement('button');
-      normalizeBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-      normalizeBtn.textContent = 'Normalize Nav Weights';
-      normalizeBtn.addEventListener('click', function () {
-        dropdown.parentNode.removeChild(dropdown);
-        if (_isNormalizeLocked()) return;
-        if (!_navEditMode) {
-          if (!_ensureNavEditReady()) return;
-          _enterNavEditMode();
-        }
-        var parentSection = _findParentSectionItem(item);
-        if (!parentSection && typeof liveWysiwygNavData !== 'undefined') {
-          parentSection = { type: 'section', children: liveWysiwygNavData };
-        }
-        _navNormalizePending = parentSection;
-        if (_navEditActionsEl && !_navEditActionsEl.querySelector('.live-wysiwyg-nav-normalize-badge')) {
-          var badge = document.createElement('span');
-          badge.className = 'live-wysiwyg-nav-normalize-badge';
-          badge.textContent = 'Normalize folder on save';
-          _navEditActionsEl.appendChild(badge);
-        }
-      });
-      dropdown.appendChild(normalizeBtn);
-    }
-
-    var applyBtn = document.createElement('button');
-    applyBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-    applyBtn.textContent = 'Apply Changes';
-    applyBtn.style.background = 'var(--md-primary-fg-color,#4051b5)';
-    applyBtn.addEventListener('click', function () {
-      _applySettingsGearChanges(dropdown, item, itemType);
-      dropdown.parentNode.removeChild(dropdown);
-    });
-    dropdown.appendChild(applyBtn);
-
-    }
+    _buildSettingsContent(dropdown, item, itemType, nwConfig);
 
     var rect = gearBtn.getBoundingClientRect();
     dropdown.style.position = 'fixed';
@@ -12616,17 +12622,21 @@
         item.weight = updates.weight;
       }
     } else {
-      if (!_navEditMode) {
-        if (!_ensureNavEditReady()) return;
-        _enterNavEditMode();
-      }
-      _pushNavOperation({ type: 'set-frontmatter', src_path: effectivePath, updates: updates, isIndex: effectiveIsIndex });
-      if (updates.title) _updateNavItemTitle(effectivePath, updates.title);
-      if (updates.weight != null && itemType === 'section' && item.index_meta) {
-        item.index_meta.weight = updates.weight;
-      } else if (updates.weight != null && item.type === 'page') {
-        item.weight = updates.weight;
-      }
+      _enterNavEditModeAsync().then(function (ready) {
+        if (!ready) return;
+        _pushNavOperation({ type: 'set-frontmatter', src_path: effectivePath, updates: updates, isIndex: effectiveIsIndex });
+        if (updates.title) _updateNavItemTitle(effectivePath, updates.title);
+        if (updates.weight != null && itemType === 'section' && item.index_meta) {
+          item.index_meta.weight = updates.weight;
+        } else if (updates.weight != null && item.type === 'page') {
+          item.weight = updates.weight;
+        }
+
+        if (isBeingUnhidden && effectivePath) {
+          _promoteHiddenToNav(item, updates);
+        }
+      });
+      return;
     }
 
     if (isBeingUnhidden && effectivePath) {
@@ -12674,6 +12684,7 @@
       _buildNavMenu(_navSidebarEl);
       if (wasInEditMode) {
         _addNavEditActions(_navSidebarEl);
+        _updateUndoRedoBtns();
       }
     }
   }
@@ -12704,22 +12715,23 @@
         {
           text: 'Delete Folder',
           action: function () {
-            if (!_ensureNavEditReady()) return;
-            if (!_navEditMode) _enterNavEditMode();
-            var allPaths = typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [];
-            var prefix = folderDir + '/';
-            var toDelete = allPaths.filter(function (p) { return p === folderDir + '/index.md' || p.indexOf(prefix) === 0; });
-            toDelete.forEach(function (p) {
-              _pushNavOperation({ type: 'delete-page', item: { src_path: p }, path: p });
-              var li = _navSidebarEl && _navSidebarEl.querySelector('[data-nav-src-path="' + p + '"]');
-              if (li) {
-                li.classList.add('live-wysiwyg-nav-item--deleted');
-                var tooltip = document.createElement('div');
-                tooltip.className = 'live-wysiwyg-nav-deleted-tooltip';
-                tooltip.textContent = 'Will be deleted on save';
-                li.style.position = 'relative';
-                li.appendChild(tooltip);
-              }
+            _enterNavEditModeAsync().then(function (ready) {
+              if (!ready) return;
+              var allPaths = typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [];
+              var prefix = folderDir + '/';
+              var toDelete = allPaths.filter(function (p) { return p === folderDir + '/index.md' || p.indexOf(prefix) === 0; });
+              toDelete.forEach(function (p) {
+                _pushNavOperation({ type: 'delete-page', item: { src_path: p }, path: p });
+                var li = _navSidebarEl && _navSidebarEl.querySelector('[data-nav-src-path="' + p + '"]');
+                if (li) {
+                  li.classList.add('live-wysiwyg-nav-item--deleted');
+                  var tooltip = document.createElement('div');
+                  tooltip.className = 'live-wysiwyg-nav-deleted-tooltip';
+                  tooltip.textContent = 'Will be deleted on save';
+                  li.style.position = 'relative';
+                  li.appendChild(tooltip);
+                }
+              });
             });
           }
         },
@@ -12746,8 +12758,8 @@
     var folderName = folderDir.split('/').pop() || folderDir;
     var newPath = _getDir(folderDir) ? _getDir(folderDir) + '/' + folderName + '.md' : folderName + '.md';
 
-    if (!_ensureNavEditReady()) return;
-    if (!_navEditMode) _enterNavEditMode();
+    _enterNavEditModeAsync().then(function (ready) {
+    if (!ready) return;
 
     _wsGetContents(indexPath).then(function (content) {
       var fm = _parseFrontmatter(content);
@@ -12793,20 +12805,29 @@
       });
       _navFocusTarget = newPath;
     });
+    });
   }
 
   // ======================================================================
   // NAV MENU - Warning / tip popups
   // ======================================================================
   function _showNavWeightTip(anchorEl) {
-    _showNavPopup(anchorEl,
-      'The mkdocs-nav-weight plugin is not configured. Add it to your mkdocs.yml to enable nav weight management.',
-      [{
-        text: 'Add to mkdocs.yml', primary: true, action: function () {
-          _applyNavWeightPlugin();
-        }
-      }]
-    );
+    var cfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
+    if (!cfg.installed) {
+      _showNavPopup(anchorEl,
+        'pip install mkdocs-nav-weight; managing the nav requires this plugin.',
+        []
+      );
+    } else {
+      _showNavPopup(anchorEl,
+        'The mkdocs-nav-weight plugin is not configured. Add it to your mkdocs.yml to enable nav weight management.',
+        [{
+          text: 'Add to mkdocs.yml', primary: true, action: function () {
+            _applyNavWeightPlugin();
+          }
+        }]
+      );
+    }
   }
 
   function _showUnweightedPopup(anchorEl) {
@@ -13159,7 +13180,8 @@
   }
 
   function _startMigrationFlow() {
-    if (!_ensureNavEditReady()) return;
+    _ensureNavEditReady().then(function (ready) {
+    if (!ready) return;
     var mkdocsPath = '../mkdocs.yml';
     _wsGetContents(mkdocsPath).then(function (yml) {
       var navStructure = _parseYamlNavKey(yml);
@@ -13208,29 +13230,38 @@
       summaryHtml += '<li>Remove <code>nav</code> key from mkdocs.yml</li>';
       if (hiddenCount) summaryHtml += '<li>Consolidate hidden docs into referencing directories where possible</li>';
       summaryHtml += '</ul>';
-      if (moveCount || hiddenCount) {
-        summaryHtml += '<p style="margin:0 0 12px;font-size:.83rem">Relative links will be updated automatically when documents are moved.</p>';
-      }
+      summaryHtml += '<p style="margin:0 0 12px;font-size:.83rem">Relative links will be updated automatically when documents are moved.</p>';
+      summaryHtml += '<p style="margin:0 0 12px;font-size:.83rem">Would you like to stage a migration of your nav data?</p>';
 
       return _showNavDialogHtml(summaryHtml, [
         { text: 'Cancel', value: 'cancel' },
-        { text: 'Start Migration', value: 'start', className: 'live-wysiwyg-nav-dialog-primary' }
+        { text: 'Stage Migration', value: 'start', className: 'live-wysiwyg-nav-dialog-primary' }
       ]).then(function (result) {
         if (result !== 'start') return;
         var ops = _buildMigrationOps(navStructure, allPaths);
         if (!_navEditMode) _enterNavEditMode();
+        _navUndoStack.push(_takeNavSnapshot());
+        _navRedoStack = [];
         _navNormalizeAllPending = false;
         for (var i = 0; i < ops.length; i++) {
           _navBatchQueue.push(ops[i]);
         }
-        if (_navEditActionsEl && _navEditActionsEl.querySelector('.live-wysiwyg-nav-normalize-badge')) {
-          var badge = _navEditActionsEl.querySelector('.live-wysiwyg-nav-normalize-badge');
-          if (badge.parentNode) badge.parentNode.removeChild(badge);
+        _navMigrationPending = true;
+        _navBadges = [];
+        if (_navEditActionsEl) {
+          var oldBadges = _navEditActionsEl.querySelectorAll('.live-wysiwyg-nav-normalize-badge');
+          for (var obi = 0; obi < oldBadges.length; obi++) {
+            if (oldBadges[obi].parentNode) oldBadges[obi].parentNode.removeChild(oldBadges[obi]);
+          }
         }
-        _setCookie('live_wysiwyg_migration_normalize', '1', 120);
+        _addNavBadge({
+          className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-migration-badge',
+          text: 'Pending mkdocs.yml nav migration'
+        });
       });
     }).catch(function (err) {
       _showNavDialog('Failed to read mkdocs.yml: ' + (err && err.message ? err.message : String(err)), [{ text: 'OK', value: 'ok' }]);
+    });
     });
   }
 
@@ -13245,33 +13276,35 @@
   }
 
   function _applyNavWeightPlugin() {
+    _userActionInProgress = true;
     _installReloadGuard();
     _updateMkdocsYml(_insertNavWeightEntry).then(function () {
       var applyOv = _showFullScreenTransition('Applying changes...');
       _setCookie('live_wysiwyg_focus_nav', '1', 60);
-      _removeReloadGuard();
       setTimeout(function () {
         _fadeOverlayToOpaque(applyOv, function () { location.reload(); });
       }, 1500);
     }).catch(function () {
       _removeReloadGuard();
+      _userActionInProgress = false;
     });
   }
 
   function _applyDefaultPageWeight(newWeight) {
     _stripWeightCautionReasons();
+    _userActionInProgress = true;
     _installReloadGuard();
     _updateMkdocsYml(function (yml) {
       return _replaceDefaultPageWeight(yml, newWeight);
     }).then(function () {
       var applyOv = _showFullScreenTransition('Applying changes...');
       _setCookie('live_wysiwyg_focus_nav', '1', 60);
-      _removeReloadGuard();
       setTimeout(function () {
         _fadeOverlayToOpaque(applyOv, function () { location.reload(); });
       }, 1500);
     }).catch(function () {
       _removeReloadGuard();
+      _userActionInProgress = false;
     });
   }
 
@@ -14467,24 +14500,24 @@
       if (!newFilename) { filenameInput.focus(); return; }
       dialogOverlay.parentNode.removeChild(dialogOverlay);
 
-      if (!_ensureNavEditReady()) return;
-      if (!_navEditMode) _enterNavEditMode();
-
-      var dir = _getDir(currentSrcPath);
-      var existingPaths = (typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [])
-        .filter(function (p) { return _getDir(p) === dir && p !== currentSrcPath; });
-      var baseName = newFilename + '.md';
-      var resolvedName = _resolveFilenameConflict(baseName, existingPaths, _batchClaimedPaths);
-      var newPath = (dir ? dir + '/' : '') + resolvedName;
-      if (_batchClaimedPaths) _batchClaimedPaths.add(newPath);
-      _pushNavOperation({
-        type: 'rename-page',
-        item: { src_path: currentSrcPath, title: currentTitle },
-        oldPath: currentSrcPath,
-        newPath: newPath,
-        newTitle: newTitle
+      _enterNavEditModeAsync().then(function (ready) {
+        if (!ready) return;
+        var dir = _getDir(currentSrcPath);
+        var existingPaths = (typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [])
+          .filter(function (p) { return _getDir(p) === dir && p !== currentSrcPath; });
+        var baseName = newFilename + '.md';
+        var resolvedName = _resolveFilenameConflict(baseName, existingPaths, _batchClaimedPaths);
+        var newPath = (dir ? dir + '/' : '') + resolvedName;
+        if (_batchClaimedPaths) _batchClaimedPaths.add(newPath);
+        _pushNavOperation({
+          type: 'rename-page',
+          item: { src_path: currentSrcPath, title: currentTitle },
+          oldPath: currentSrcPath,
+          newPath: newPath,
+          newTitle: newTitle
+        });
+        _navFocusTarget = newPath;
       });
-      _navFocusTarget = newPath;
 
       var li = _navSidebarEl && _navSidebarEl.querySelector('[data-nav-src-path="' + currentSrcPath + '"]');
       if (li) {
@@ -14542,8 +14575,8 @@
       if (!title) title = filename;
       dialogOverlay.parentNode.removeChild(dialogOverlay);
 
-      if (!_ensureNavEditReady()) return;
-      if (!_navEditMode) _enterNavEditMode();
+      _enterNavEditModeAsync().then(function (ready) {
+      if (!ready) return;
 
       var existingPaths = (typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [])
         .filter(function (p) { return _getDir(p) === currentDir; });
@@ -14587,15 +14620,15 @@
           ul.appendChild(newLi);
         }
       }
+      });
     });
   }
 
   function _deleteCurrentDocument() {
     var currentSrcPath = _getCurrentSrcPath();
     if (!currentSrcPath) return;
-
-    if (!_ensureNavEditReady()) return;
-    if (!_navEditMode) _enterNavEditMode();
+    _enterNavEditModeAsync().then(function (ready) {
+    if (!ready) return;
 
     _pushNavOperation({
       type: 'delete-page',
@@ -14623,19 +14656,22 @@
         if (nextPath) _setNavFocusTarget(nextPath);
       }
     }
+    });
   }
 
   function _normalizeAllNavWeights() {
     if (_isNormalizeLocked()) return;
-    if (!_ensureNavEditReady()) return;
-    if (!_navEditMode) _enterNavEditMode();
-    _navNormalizeAllPending = true;
-    if (_navEditActionsEl && !_navEditActionsEl.querySelector('.live-wysiwyg-nav-normalize-badge')) {
-      var badge = document.createElement('span');
-      badge.className = 'live-wysiwyg-nav-normalize-badge';
-      badge.textContent = 'Normalize all on save';
-      _navEditActionsEl.appendChild(badge);
-    }
+    _enterNavEditModeAsync().then(function (ready) {
+      if (!ready) return;
+      _navUndoStack.push(_takeNavSnapshot());
+      _navRedoStack = [];
+      _navNormalizeAllPending = true;
+      _addNavBadge({
+        className: 'live-wysiwyg-nav-normalize-badge',
+        text: 'Normalize all on save'
+      });
+      _updateUndoRedoBtns();
+    });
   }
 
   var _themeColorsDetected = false;
@@ -16245,8 +16281,25 @@
       setTimeout(function () { _autoNormalizeAfterMigration(); }, 600);
     } else if (_getCookie('live_wysiwyg_migration_adjust_weight')) {
       _deleteCookie('live_wysiwyg_migration_adjust_weight');
-      setTimeout(function () { _autoAdjustDefaultPageWeight(); }, 600);
+      setTimeout(function () {
+        var adjusted = _autoAdjustDefaultPageWeight();
+        if (!adjusted) _showMigrationResultIfPending();
+      }, 600);
+    } else {
+      _showMigrationResultIfPending();
     }
+  }
+
+  function _showMigrationResultIfPending() {
+    var result = _getCookie('live_wysiwyg_migration_result');
+    if (!result) return;
+    _deleteCookie('live_wysiwyg_migration_result');
+    setTimeout(function () {
+      var msg = result === 'warnings'
+        ? 'Migration completed with warnings.'
+        : 'Migration completed successfully.';
+      _showNavDialog(msg, [{ text: 'OK', value: 'ok', className: 'live-wysiwyg-nav-dialog-primary' }]);
+    }, 800);
   }
 
   function _autoNormalizeAfterMigration() {
@@ -16255,23 +16308,19 @@
       return;
     }
     _installReloadGuard();
-    // reload guard now owns redirect suppression; clear the early flag
     _wsRedirectSuppressActive = false;
-    if (!_ensureNavEditReady()) {
-      _removeReloadGuard(); return;
-    }
-    if (!_navEditMode) {
-      _enterNavEditMode();
-    }
-    _navNormalizeAllPending = true;
-    _executeNavBatchSave();
+    _enterNavEditModeAsync().then(function (ready) {
+      if (!ready) { _removeReloadGuard(); return; }
+      _navNormalizeAllPending = true;
+      _executeNavBatchSave();
+    });
   }
 
   function _autoAdjustDefaultPageWeight() {
     _wsRedirectSuppressActive = false;
-    if (typeof liveWysiwygNavData === 'undefined' || !liveWysiwygNavData.length) return;
+    if (typeof liveWysiwygNavData === 'undefined' || !liveWysiwygNavData.length) return false;
     var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
-    if (!nwCfg.enabled) return;
+    if (!nwCfg.enabled) return false;
     var defWeight = nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 1000;
     var maxW = 0;
     (function walk(items) {
@@ -16282,9 +16331,10 @@
         if (it.index_meta && it.index_meta.weight != null && it.index_meta.weight > maxW) maxW = it.index_meta.weight;
       }
     })(liveWysiwygNavData);
-    if (maxW <= defWeight) return;
+    if (maxW <= defWeight) return false;
     var suggested = Math.ceil((maxW + 500) / 1000) * 1000;
     _applyDefaultPageWeight(suggested);
+    return true;
   }
 
   function exitFocusMode() {

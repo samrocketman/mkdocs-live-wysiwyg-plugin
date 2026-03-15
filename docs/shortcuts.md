@@ -35,8 +35,9 @@ Typing markdown syntax in the WYSIWYG editor automatically converts it to the co
 | `---`, `***`, or `___` | Horizontal rule (always inserts `---`) |
 | `!!! ` or `!!! type ` | Admonition (note or specified type) |
 | `??? ` or `??? type ` | Collapsible admonition (note or specified type) |
+| `!!! details ` | HTML details tag (collapsible, collapsed, serializes as `<details>`) |
 
-Block-level conversions trigger when you type the pattern at the start of an empty paragraph. For headings and lists, any remaining text after the prefix is preserved. Admonition types include: note, danger, warning, tip, hint, important, caution, error, attention, abstract, info, success, question, failure, bug, example, quote. Type `!!! ` then backspace to revert to the literal, then type a type name and space (e.g. `!!! danger `) to create that admonition type.
+Block-level conversions trigger when you type the pattern at the start of an empty paragraph. For headings and lists, any remaining text after the prefix is preserved. Admonition types include: note, danger, warning, tip, hint, important, caution, error, attention, abstract, info, success, question, failure, bug, example, quote. Type `!!! ` then backspace to revert to the literal, then type a type name and space (e.g. `!!! danger `) to create that admonition type. `!!! details` creates a collapsible note admonition that serializes as a raw HTML `<details>` tag in markdown instead of `???` admonition syntax.
 
 - **Backspace** on an empty converted element (heading, blockquote, admonition, list item, or the paragraph after a horizontal rule) reverts it to the original literal characters, including the trailing space where you typed one (e.g. `## ` restores `## `, not `##`). The cursor is placed at the end of the restored text.
 
@@ -71,7 +72,8 @@ Inline conversions trigger when you type the closing delimiter. The wrapped text
 
 ## Admonitions
 
-- The **gear button** on an admonition opens settings: change **Type** (note, danger, warning, etc.), placement (standalone/inline), collapsible, collapsed, and hide title. Switching type preserves all content, title, and other settings.
+- The **gear button** on an admonition opens settings: change **Type** (note, danger, warning, etc.), placement (standalone/inline), collapsible, collapsed, hide title, and details tag. Switching type preserves all content, title, and other settings.
+- The **Details tag** toggle (visible when collapsible is ON) switches the admonition to serialize as a raw HTML `<details><summary>...</summary>...</details>` block in markdown instead of `???` admonition syntax. Enabling details tag auto-enables collapsed. Disabling collapsed auto-disables details tag. Enabling on a non-"note" type shows a warning that the type will be lost (reset to "note"). Loading a markdown document containing a `<details>` tag automatically creates a collapsible admonition with details tag enabled.
 - **Enter** (3×) at the end of admonition body content exits onto a new paragraph. Trailing empty paragraphs are cleaned up.
 - **Backspace** on an admonition with an empty body deletes the entire admonition.
 - Exiting a list inside an admonition requires only a single enter press to exit the admonition if the list is at the end.

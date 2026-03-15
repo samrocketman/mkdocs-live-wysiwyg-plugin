@@ -1373,6 +1373,37 @@
     }
   }
 
+  function _showAdmonitionDetailsConfirm(typeName, onProceed, onCancel) {
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.35);z-index:999999;display:flex;align-items:center;justify-content:center;';
+    var dialog = document.createElement('div');
+    dialog.style.cssText = 'background:var(--md-default-bg-color,#fff);color:var(--md-default-fg-color,#333);border:1px solid var(--md-default-fg-color--lighter,#ccc);border-radius:8px;padding:20px 24px;max-width:380px;box-shadow:0 4px 16px rgba(0,0,0,0.2);font-family:inherit;';
+    var msg = document.createElement('p');
+    msg.style.cssText = 'margin:0 0 16px;font-size:14px;line-height:1.5;';
+    msg.textContent = 'The \u201c' + typeName.charAt(0).toUpperCase() + typeName.slice(1) + '\u201d admonition type will be lost when converting to a details tag. Proceed?';
+    var btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'padding:6px 16px;border:1px solid var(--md-default-fg-color--lighter,#ccc);border-radius:4px;background:transparent;color:inherit;cursor:pointer;font-size:13px;';
+    var proceedBtn = document.createElement('button');
+    proceedBtn.type = 'button';
+    proceedBtn.textContent = 'Proceed';
+    proceedBtn.style.cssText = 'padding:6px 16px;border:none;border-radius:4px;background:var(--md-primary-fg-color,#4051b5);color:var(--md-primary-bg-color,#fff);cursor:pointer;font-size:13px;';
+    function dismiss() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+    cancelBtn.addEventListener('click', function () { dismiss(); if (onCancel) onCancel(); });
+    proceedBtn.addEventListener('click', function () { dismiss(); if (onProceed) onProceed(); });
+    overlay.addEventListener('mousedown', function (ev) { if (ev.target === overlay) { dismiss(); if (onCancel) onCancel(); } });
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(proceedBtn);
+    dialog.appendChild(msg);
+    dialog.appendChild(btnRow);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    proceedBtn.focus();
+  }
+
   function createAdmonitionSettingsDropdown(anchorBtn, adEl, ea) {
     dismissAdmonitionSettingsDropdown();
     dismissActiveSettingsDropdown();
@@ -1392,12 +1423,13 @@
     function readState() {
       var isCollapsible = (adEl.nodeName === 'DETAILS');
       var isCollapsed = isCollapsible && adEl.hasAttribute('data-default-collapsed');
+      var isDetailsTag = isCollapsible && adEl.hasAttribute('data-details-tag');
       var hasInline = adEl.classList.contains('inline');
       var hasEnd = adEl.classList.contains('end');
       var hideTitle = adEl.hasAttribute('data-hide-title');
       var placement = hasInline ? (hasEnd ? 'inline-end' : 'inline') : 'standalone';
       var type = getAdmonitionType(adEl) || 'note';
-      return { isCollapsible: isCollapsible, isCollapsed: isCollapsed, placement: placement, hideTitle: hideTitle, type: type };
+      return { isCollapsible: isCollapsible, isCollapsed: isCollapsed, isDetailsTag: isDetailsTag, placement: placement, hideTitle: hideTitle, type: type };
     }
 
     function getDefaultTitleForType(type) {
@@ -1538,6 +1570,9 @@
           ev.preventDefault(); ev.stopPropagation();
           if (adEl.hasAttribute('data-default-collapsed')) {
             adEl.removeAttribute('data-default-collapsed');
+            if (adEl.hasAttribute('data-details-tag')) {
+              adEl.removeAttribute('data-details-tag');
+            }
           } else {
             adEl.setAttribute('data-default-collapsed', '1');
           }
@@ -1546,6 +1581,43 @@
         collapsedRow.appendChild(collapsedLabel);
         collapsedRow.appendChild(collapsedToggle);
         dropdown.appendChild(collapsedRow);
+
+        var detailsTagRow = document.createElement('div');
+        detailsTagRow.className = 'md-admonition-settings-row';
+        var detailsTagLabel = document.createElement('span');
+        detailsTagLabel.className = 'md-admonition-settings-label';
+        detailsTagLabel.textContent = 'Details tag';
+        var detailsTagToggle = document.createElement('button');
+        detailsTagToggle.type = 'button';
+        detailsTagToggle.className = 'md-admonition-settings-toggle' + (state.isDetailsTag ? ' active' : '');
+        detailsTagToggle.textContent = state.isDetailsTag ? 'ON' : 'OFF';
+        detailsTagToggle.addEventListener('mousedown', function (ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          if (adEl.hasAttribute('data-details-tag')) {
+            adEl.removeAttribute('data-details-tag');
+            syncAndRebuild();
+          } else {
+            var currentType = getAdmonitionType(adEl) || 'note';
+            function applyDetailsTag() {
+              if (currentType !== 'note') {
+                setAdmonitionType(adEl, 'note');
+              }
+              adEl.setAttribute('data-details-tag', '1');
+              if (!adEl.hasAttribute('data-default-collapsed')) {
+                adEl.setAttribute('data-default-collapsed', '1');
+              }
+              syncAndRebuild();
+            }
+            if (currentType !== 'note') {
+              _showAdmonitionDetailsConfirm(currentType, applyDetailsTag, function () {});
+            } else {
+              applyDetailsTag();
+            }
+          }
+        });
+        detailsTagRow.appendChild(detailsTagLabel);
+        detailsTagRow.appendChild(detailsTagToggle);
+        dropdown.appendChild(detailsTagRow);
       }
 
       if (!state.isCollapsible) {
@@ -1767,6 +1839,19 @@
     }
   }
 
+  function _dedentLines(text) {
+    if (!text) return text;
+    var lines = text.split('\n');
+    var minIndent = Infinity;
+    for (var i = 0; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      var m = lines[i].match(/^(\s*)/);
+      if (m && m[1].length < minIndent) minIndent = m[1].length;
+    }
+    if (minIndent <= 0 || minIndent === Infinity) return text;
+    return lines.map(function (l) { return l.substring(Math.min(minIndent, l.length)); }).join('\n');
+  }
+
   function populateRawHtmlBlocks(editableArea) {
     if (!editableArea) return;
     var blocks = editableArea.querySelectorAll('[' + RAW_HTML_BLOCK_ATTR + ']');
@@ -1776,6 +1861,41 @@
       var b64 = block.getAttribute(RAW_HTML_BLOCK_ATTR);
       if (!b64) continue;
       var decoded = _b64Decode(b64);
+      if (/^\s*<details\b/i.test(decoded)) {
+        var summaryMatch = decoded.match(/<summary\b[^>]*>([\s\S]*?)<\/summary>/i);
+        var summaryText = summaryMatch ? summaryMatch[1].replace(/<[^>]+>/g, '').trim() : 'Details';
+        var bodyMd = decoded;
+        bodyMd = bodyMd.replace(/^\s*<details\b[^>]*>\s*/i, '');
+        bodyMd = bodyMd.replace(/\s*<\/details>\s*$/i, '');
+        if (summaryMatch) bodyMd = bodyMd.replace(summaryMatch[0], '');
+        bodyMd = bodyMd.replace(/^\n+/, '').replace(/\n+$/, '');
+        bodyMd = _dedentLines(bodyMd);
+
+        var newDetails = document.createElement('details');
+        newDetails.className = 'note';
+        newDetails.setAttribute('data-details-tag', '1');
+        newDetails.setAttribute('data-default-collapsed', '1');
+        newDetails.setAttribute('contenteditable', 'true');
+        var newSummary = document.createElement('summary');
+        newSummary.textContent = summaryText;
+        newDetails.appendChild(newSummary);
+        var bodyHtml = '<p><br></p>';
+        if (bodyMd && typeof marked !== 'undefined') {
+          var rawResult = preprocessRawHtml(bodyMd);
+          bodyHtml = marked.parse(rawResult.markdown) || bodyHtml;
+        }
+        var bodyContainer = document.createElement('div');
+        bodyContainer.innerHTML = bodyHtml;
+        while (bodyContainer.firstChild) newDetails.appendChild(bodyContainer.firstChild);
+        block.parentNode.replaceChild(newDetails, block);
+        populateRawHtmlBlocks(newDetails);
+        enhanceCodeBlocks(newDetails);
+        enhanceChecklists(newDetails);
+        enhanceAdmonitions(newDetails);
+        enhanceImages(newDetails);
+        addSettingsButtonToAdmonition(newDetails);
+        continue;
+      }
       if (typeof marked !== 'undefined') {
         block.innerHTML = _renderMarkdownInRawHtml(decoded);
         _enhanceRawHtmlBlock(block);
@@ -1802,12 +1922,98 @@
     return false;
   }
 
+  function _upgradeBarDetailsElement(det) {
+    if (_isInsideRawHtmlBlock(det)) return;
+    if (det.querySelector(':scope > .md-admonition-settings-btn')) return;
+    var hasTypeClass = false;
+    for (var t = 0; t < ADMONITION_TYPE_IDS.length; t++) {
+      if (det.classList.contains(ADMONITION_TYPE_IDS[t])) { hasTypeClass = true; break; }
+    }
+    if (hasTypeClass) return;
+    det.classList.add('note');
+    det.setAttribute('data-details-tag', '1');
+    det.setAttribute('data-default-collapsed', '1');
+    det.setAttribute('contenteditable', 'true');
+    if (!det.querySelector(':scope > summary')) {
+      var sum = document.createElement('summary');
+      sum.textContent = 'Details';
+      det.insertBefore(sum, det.firstChild);
+    }
+    if (typeof marked !== 'undefined') {
+      _parseDetailsTextNodeRuns(det);
+    }
+    var hasBody = false;
+    for (var bi = 0; bi < det.childNodes.length; bi++) {
+      if (det.childNodes[bi].nodeName !== 'SUMMARY') { hasBody = true; break; }
+    }
+    if (!hasBody) {
+      var emptyP = document.createElement('p');
+      emptyP.innerHTML = '<br>';
+      det.appendChild(emptyP);
+    }
+    populateRawHtmlBlocks(det);
+    enhanceCodeBlocks(det);
+    enhanceChecklists(det);
+    enhanceAdmonitions(det);
+    enhanceImages(det);
+  }
+
+  function _parseDetailsTextNodeRuns(container) {
+    var runs = [];
+    var currentRun = [];
+    for (var i = 0; i < container.childNodes.length; i++) {
+      var ch = container.childNodes[i];
+      if (ch.nodeName === 'SUMMARY') continue;
+      if (ch.nodeType === 3) {
+        currentRun.push(ch);
+      } else {
+        if (currentRun.length > 0) {
+          runs.push({ nodes: currentRun.slice(), insertBefore: ch });
+          currentRun = [];
+        }
+      }
+    }
+    if (currentRun.length > 0) {
+      runs.push({ nodes: currentRun.slice(), insertBefore: null });
+    }
+    for (var r = 0; r < runs.length; r++) {
+      var run = runs[r];
+      var md = '';
+      for (var n = 0; n < run.nodes.length; n++) {
+        md += run.nodes[n].textContent;
+      }
+      md = md.replace(/^\n+/, '').replace(/\n+$/, '');
+      if (!md || !/\S/.test(md)) {
+        for (var rn = 0; rn < run.nodes.length; rn++) {
+          if (run.nodes[rn].parentNode === container) container.removeChild(run.nodes[rn]);
+        }
+        continue;
+      }
+      var rawResult = preprocessRawHtml(md);
+      var html = marked.parse(rawResult.markdown) || '';
+      if (!html) continue;
+      var tempDiv = document.createElement('div');
+      tempDiv.innerHTML = html;
+      var insertPoint = run.insertBefore;
+      while (tempDiv.firstChild) {
+        container.insertBefore(tempDiv.firstChild, insertPoint);
+      }
+      for (var rn2 = 0; rn2 < run.nodes.length; rn2++) {
+        if (run.nodes[rn2].parentNode === container) container.removeChild(run.nodes[rn2]);
+      }
+    }
+  }
+
   function enhanceAdmonitions(editableArea) {
     if (!editableArea) return;
     var admonitions = editableArea.querySelectorAll('.admonition');
     for (var i = 0; i < admonitions.length; i++) {
       if (_isInsideRawHtmlBlock(admonitions[i])) continue;
       addSettingsButtonToAdmonition(admonitions[i]);
+    }
+    var allDetails = editableArea.querySelectorAll('details');
+    for (var di = 0; di < allDetails.length; di++) {
+      _upgradeBarDetailsElement(allDetails[di]);
     }
     for (var j = 0; j < ADMONITION_TYPE_IDS.length; j++) {
       var detailsEls = editableArea.querySelectorAll('details.' + ADMONITION_TYPE_IDS[j]);
@@ -3527,6 +3733,25 @@
 
           var titleEl = isCollapsible ? node.querySelector(':scope > summary') : node.querySelector(':scope > .admonition-title');
           var title = titleEl ? titleEl.textContent.replace(/\u00a0/g, ' ').trim() : '';
+
+          if (isCollapsible && node.hasAttribute('data-details-tag')) {
+            var detailsSummary = title || 'Details';
+            var detailsBodyParts = [];
+            for (var dj = 0; dj < node.childNodes.length; dj++) {
+              var dc = node.childNodes[dj];
+              if (dc === titleEl) continue;
+              if (dc.nodeType === 1 && dc.classList && dc.classList.contains('md-admonition-settings-btn')) continue;
+              if (dc.nodeType === 3) {
+                var dtxt = dc.textContent;
+                if (dtxt && !/^[\s\u200B\u200C\u200D\uFEFF]*$/.test(dtxt)) detailsBodyParts.push(dtxt);
+                continue;
+              }
+              if (dc.nodeType !== 1) continue;
+              detailsBodyParts.push(this._nodeToMarkdownRecursive(dc, options || {}));
+            }
+            var detailsBody = detailsBodyParts.join('\n').trim();
+            return '<details>\n<summary>' + detailsSummary + '</summary>\n\n' + detailsBody + '\n\n</details>\n\n';
+          }
 
           var contentParts = [];
           for (var j = 0; j < node.childNodes.length; j++) {
@@ -19936,6 +20161,9 @@
           hm = beforeCursor.match(/^(#{1,6}) $/);
           if (hm) return doHeading(anchorNode, block, hm[1].length, countPrefixLen(raw, hm[0].length), sel, hm[0]);
           if (beforeCursor === '> ') return doBlockquote(anchorNode, block, countPrefixLen(raw, 2), sel, '> ');
+          if (/^!!!\s+details\s$/i.test(beforeCursor)) {
+            return doAdmonition(anchorNode, block, countPrefixLen(raw, beforeCursor.length), sel, true, beforeCursor, 'note', true);
+          }
           adMatch = beforeCursor.match(/^(!!!|\?\?\?\+?)\s+(\w+)\s$/);
           if (adMatch && ADMONITION_TYPE_IDS.indexOf(adMatch[2].toLowerCase()) >= 0) {
             return doAdmonition(anchorNode, block, countPrefixLen(raw, adMatch[0].length), sel, adMatch[1].indexOf('?') >= 0, beforeCursor, adMatch[2].toLowerCase());
@@ -19951,6 +20179,9 @@
           hm = beforeCursor.match(/^(#{1,6})$/);
           if (hm) return doHeading(anchorNode, block, hm[1].length, countPrefixLen(raw, hm[0].length), sel, hm[0] + ' ');
           if (beforeCursor === '>') return doBlockquote(anchorNode, block, countPrefixLen(raw, 1), sel, '> ');
+          if (/^!!!\s+details$/i.test(beforeCursor)) {
+            return doAdmonition(anchorNode, block, countPrefixLen(raw, beforeCursor.length), sel, true, beforeCursor + ' ', 'note', true);
+          }
           adMatch = beforeCursor.match(/^(!!!|\?\?\?\+?)\s+(\w+)$/);
           if (adMatch && ADMONITION_TYPE_IDS.indexOf(adMatch[2].toLowerCase()) >= 0) {
             return doAdmonition(anchorNode, block, countPrefixLen(raw, adMatch[0].length), sel, adMatch[1].indexOf('?') >= 0, beforeCursor + ' ', adMatch[2].toLowerCase());
@@ -20004,9 +20235,10 @@
         return true;
       }
 
-      function doAdmonition(textNode, block, prefixLen, sel, collapsible, literal, type) {
+      function doAdmonition(textNode, block, prefixLen, sel, collapsible, literal, type, detailsTag) {
         stripPrefix(textNode, prefixLen);
         type = type || 'note';
+        if (detailsTag) { collapsible = true; type = 'note'; }
         var title = type.charAt(0).toUpperCase() + type.slice(1);
         var bodyP = document.createElement('p');
         bodyP.textContent = '\u200B';
@@ -20014,11 +20246,15 @@
         var el;
         if (collapsible) {
           el = document.createElement('details');
-          el.setAttribute('open', '');
+          if (!detailsTag) el.setAttribute('open', '');
           el.className = type;
           el.setAttribute('contenteditable', 'true');
+          if (detailsTag) {
+            el.setAttribute('data-details-tag', '1');
+            el.setAttribute('data-default-collapsed', '1');
+          }
           var summary = document.createElement('summary');
-          summary.textContent = title;
+          summary.textContent = detailsTag ? 'Details' : title;
           el.appendChild(summary);
           el.appendChild(bodyP);
         } else {

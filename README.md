@@ -1,32 +1,41 @@
 # mkdocs-live-wysiwyg-plugin
 
-A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin](https://github.com/eddyluten/mkdocs-live-edit-plugin), based on [@celsowm/markdown-wysiwyg](https://www.npmjs.com/package/@celsowm/markdown-wysiwyg).
+## Try it out
+
+There's a shell script which makes editing techdocs in this repository really
+quick.  Run techdocs-preview.sh.
+
+## Features
+
+A WYSIWYG (What-You-See-Is-What-You-Get) editor for [mkdocs-live-edit-plugin][1], based on [@celsowm/markdown-wysiwyg][2].
 
 See [shortcuts and behaviors document](docs/shortcuts.md) for how to edit documents.
 
-
-- :rainbow::sparkles: Author quality of life features
-  - :white_check_mark: Non-destructive WYSIWYG editing is a top priority.  `git diff` will show changes the author intended.  No extra mess typically associated with WYSIWYG editors.
-  - :white_check_mark: Selected text to edit is the fastest flow.  A small context menu pops up around selected text which enables the author to fix the issue right away.
-  - :white_check_mark: Editor preferences remembered across pages.  If the editor is disabled, then it will still be disabled when editing another document.  WYGSIWYG or Markdown mode is also remembered when the Editor is enabled.
-  - :white_check_mark: A URL pasted onto selected text creates a markdown link.
-- :muscle: Mkdocs rendering features
-  - :white_check_mark: Markdown checklists (task lists): `- [ ]` and `- [x]` render as clickable checkboxes in WYSIWYG. Toggle by clicking; new list items in a checklist create `- [ ]` automatically.
-  - :white_check_mark: Dual-mode editing (WYSIWYG and Markdown) with toolbar formatting.  The editor can also be disabled.
-  - :white_check_mark: YAML frontmatter preserved when editing and switching modes.
-  - :white_check_mark: MkDocs admonitions (`!!! note`, `!!! warning`, etc.).  A UI button for inserting new admonitions.
-  - :white_check_mark: Markdown link styles preserved (inline, reference, shortcut)
-  - :white_check_mark: Code blocks with WYSIWYG editable titles.
-  - :white_check_mark: Checklists with WYSIWYG editable state.  A UI button for toggling an unordered list and checklist.
-- :information_source: Other noteworthy features
-  - :white_check_mark: Cursor location memory: when switching between WYSIWYG or Markdown modes the cursor location and scroll area is preserved to reduce editing strain on the author.
-  - :white_check_mark: Selected text is preserved when the author switches modes (to/from wysiwyg or markdown).
-  - :white_check_mark: Typing in with backticks inline will automatically convert text to inline code blocks.
-  - :white_check_mark: No external JavaScript; all assets are bundled locally within the mkdocs plugin.
+- 🌈✨ Author quality of life features
+  - 👁-👁 Focus mode.
+  - ✅ Non-destructive WYSIWYG editing is a top priority.  Minimal  `git diff` .
+  - ✅ Content refactoring with automated content migration.
+  - ✅ Selected text to edit is the fastest flow.
+  - ✅ Editing preferences remembered across pages.
+  - ✅ A URL pasted onto selected text creates a markdown link.
+  - ✅ Automated content migration to mkdocs-nav-weight.
+- 💪 Mkdocs/backstage rendering features
+  - ✅ Toggle-able checklists (task lists): `- [ ]` and `- [x]` .
+  - ✅ YAML frontmatter preserved when editing and switching modes.
+  - ✅ MkDocs admonitions (`!!! note`, `!!! warning`, etc.).  A UI button for inserting new admonitions.
+  - ✅ Markdown link styles preserved (inline, reference, shortcut)
+  - ✅ Code blocks with WYSIWYG editable titles.
+- ℹ️ Other noteworthy features
+  - ✅ Cursor location memory: when switching between WYSIWYG or Markdown modes the cursor location and scroll area is preserved to reduce editing strain on the author.
+  - ✅ Selected text is preserved when the author switches modes (to/from wysiwyg or markdown).
+  - ✅ Typing in with backticks inline will automatically convert text to inline code blocks.
+  - ✅ No external JavaScript; all assets are bundled locally within the mkdocs plugin.
 
 When you click "Edit" in the live-edit plugin, this plugin replaces the plain textarea with a rich WYSIWYG editor.
 
-<img width="769" height="696" alt="image" src="https://github.com/user-attachments/assets/87655fb2-e04a-4db4-85e3-62ff1fe37fe9" />
+![focus-content](docs/images/focus-content.png)
+
+![focus-busy](docs/images/focus-busy.png)
 
 ## Requirements
 
@@ -46,7 +55,7 @@ Or with [uv](https://docs.astral.sh/uv/):
 uv pip install mkdocs-live-wysiwyg-plugin
 ```
 
-This will install `mkdocs-live-edit-plugin` as a dependency. For development setup, see [CONTRIBUTING.md](CONTRIBUTING.md).
+This will install `mkdocs-live-edit-plugin` as a dependency. For development setup, see CONTRIBUTING.md.
 
 ## Configuration
 
@@ -62,7 +71,7 @@ plugins:
 ### Options
 
 | Option | Type | Default | Description |
-|-------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `autoload_wysiwyg` | boolean | `true` | Default behavior when no user preference cookie exists. If `true`, the WYSIWYG editor loads automatically when entering edit mode. If `false`, the plain textarea is shown initially with an "Enable Editor" button. Once the user explicitly enables or disables the editor, their preference is stored in a cookie and takes priority over this setting. |
 
 ## Attributions
@@ -70,10 +79,10 @@ plugins:
 This plugin incorporates or depends on the following works:
 
 | Component | Author | License | Link |
-|-----------|--------|---------|------|
-| **@celsowm/markdown-wysiwyg** (WYSIWYG editor) | Celso Fontes | MIT | [GitHub](https://github.com/celsowm/markdown-wysiwyg) · [npm](https://www.npmjs.com/package/@celsowm/markdown-wysiwyg) |
+| --- | --- | --- | --- |
+| **@celsowm/markdown-wysiwyg** (WYSIWYG editor) | Celso Fontes | MIT | [GitHub](https://github.com/celsowm/markdown-wysiwyg) · [npm][2] |
 | **marked** (Markdown parser) | Christopher Jeffrey, MarkedJS | MIT | [GitHub](https://github.com/markedjs/marked) · [marked.js.org](https://marked.js.org) |
-| **mkdocs-live-edit-plugin** (required dependency) | Eddy Luten | MIT | [GitHub](https://github.com/eddyluten/mkdocs-live-edit-plugin) |
+| **mkdocs-live-edit-plugin** (required dependency) | Eddy Luten | MIT | [GitHub][1] |
 
 All listed components are distributed under the MIT License. See each project's repository for full license text.
 
@@ -83,7 +92,7 @@ The WYSIWYG editor and its dependencies (marked, editor.css, editor.js) are bund
 
 Only the [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) theme is officially supported. Admonition styling and icons rely on Material theme CSS. Other themes may work but have not been tested.
 
-Contributions to add support for other themes are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Material theme support is a requirement.
+Contributions to add support for other themes are welcome; see CONTRIBUTING.md. Material theme support is a requirement.
 
 **No breaking changes** to Material theme compatibility are allowed.
 
@@ -96,3 +105,5 @@ The WYSIWYG editor supports MkDocs admonition syntax (`!!! note`, `!!! warning`,
 
 Supported types: `note`, `warning`, `danger`, `tip`, `hint`, `important`, `caution`, `error`, `attention`.
 
+[1]: https://github.com/eddyluten/mkdocs-live-edit-plugin
+[2]: https://www.npmjs.com/package/@celsowm/markdown-wysiwyg

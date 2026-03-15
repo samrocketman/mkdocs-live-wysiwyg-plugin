@@ -4,6 +4,7 @@
 
 - Pressing period (`.`) in read mode (before opening the editor) opens the editor, similar to GitHub's keyboard shortcut.
 - **Ctrl+S** (Windows/Linux) / **Cmd+S** (Mac) saves the document.
+- **Ctrl+.** (Windows/Linux) / **Cmd+.** (Mac) toggles between WYSIWYG and Markdown modes.
 
 ## Progressive Select All (Ctrl+A / Cmd+A)
 
@@ -61,7 +62,7 @@ Inline conversions trigger when you type the closing delimiter. The wrapped text
 - **Backspace** on a completely empty code block deletes it.
 - **Tab** inserts the configured indent (spaces or tab character) at the cursor.
 - **Lang button** (upper-right) sets the code language. Custom languages are supported—type any name and press Enter.
-- **Gear button** (next to lang) configures auto-indent: toggle on/off, choose spaces or tabs, and set indent size (2, 4, or 8). Settings persist across pages via cookie.
+- **Gear button** (next to lang) configures auto-indent: toggle on/off, choose spaces or tabs, and set indent size (2, 4, or 8). Settings persist across pages via localStorage.
 
 ### Advanced Code Blocks (with title)
 

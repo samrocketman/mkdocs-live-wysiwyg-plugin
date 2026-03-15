@@ -7,6 +7,7 @@ All keyboard shortcuts available in the WYSIWYG editor, organized by mode.
 | Shortcut | Action | Notes |
 |----------|--------|-------|
 | Cmd+S / Ctrl+S | Save page | Triggers upstream save |
+| Cmd+. / Ctrl+. | Toggle WYSIWYG / Markdown mode | Works in both modes |
 | Cmd+Z / Ctrl+Z | Undo | Editor undo stack |
 | Cmd+Y / Ctrl+Y | Redo | Also Cmd+Shift+Z / Ctrl+Shift+Z |
 | Cmd+B / Ctrl+B | Bold | Toggle bold on selection |
@@ -22,6 +23,7 @@ All keyboard shortcuts available in the WYSIWYG editor, organized by mode.
 | Shortcut | Action | Notes |
 |----------|--------|-------|
 | Cmd+S / Ctrl+S | Save page | Triggers upstream save |
+| Cmd+. / Ctrl+. | Toggle WYSIWYG / Markdown mode | Works in both modes |
 | Cmd+Z / Ctrl+Z | Undo | Standard textarea undo |
 | Cmd+Y / Ctrl+Y | Redo | Also Cmd+Shift+Z / Ctrl+Shift+Z |
 | Standard text shortcuts | Cut, Copy, Paste, Select All | Browser defaults |
@@ -34,6 +36,7 @@ All Normal WYSIWYG shortcuts apply, plus:
 |----------|--------|-------|
 | ESC | Exit focus mode | Returns to normal edit view |
 | Cmd+S / Ctrl+S | Save page | With "Remain in Focus Mode" enabled, triggers seamless reload |
+| Cmd+. / Ctrl+. | Toggle WYSIWYG / Markdown mode | Clicks the inactive mode toggle button |
 
 ## Focus Mode (Markdown)
 
@@ -43,6 +46,7 @@ All Normal Markdown shortcuts apply, plus:
 |----------|--------|-------|
 | ESC | Exit focus mode | Returns to normal edit view |
 | Cmd+S / Ctrl+S | Save page | With "Remain in Focus Mode" enabled, triggers seamless reload |
+| Cmd+. / Ctrl+. | Toggle WYSIWYG / Markdown mode | Clicks the inactive mode toggle button |
 
 ## Focus Mode — Nav Edit Mode
 

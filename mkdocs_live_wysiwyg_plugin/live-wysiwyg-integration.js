@@ -243,9 +243,9 @@
     if (_indentSettingsCache) return _indentSettingsCache;
     var defaults = { enabled: true, type: 'space', size: 4 };
     try {
-      var match = document.cookie.match(/(?:^|;\s*)liveWysiwygIndent=([^;]*)/);
-      if (match) {
-        var parsed = JSON.parse(decodeURIComponent(match[1]));
+      var raw = _getSetting('liveWysiwygIndent');
+      if (raw) {
+        var parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
         defaults.enabled = typeof parsed.enabled === 'boolean' ? parsed.enabled : true;
         defaults.type = parsed.type === 'tab' ? 'tab' : 'space';
         defaults.size = [2, 4, 8].indexOf(parsed.size) !== -1 ? parsed.size : 4;
@@ -256,8 +256,7 @@
   }
   function setIndentSettings(settings) {
     _indentSettingsCache = settings;
-    var val = encodeURIComponent(JSON.stringify(settings));
-    document.cookie = 'liveWysiwygIndent=' + val + ';path=/;max-age=31536000;SameSite=Lax';
+    _setSetting('liveWysiwygIndent', settings);
   }
 
   var _activeSettingsDropdown = null;
@@ -2570,38 +2569,77 @@
       return null;
     }
 
-    function createLinkDropdown(anchorBtn, editor) {
+    function _linkDdExpand(input, dropdown) {
+      if (!dropdown._baseWidth) dropdown._baseWidth = dropdown.offsetWidth;
+      var inputs = dropdown.querySelectorAll('.md-link-settings-input');
+      var maxOverflow = 0;
+      for (var i = 0; i < inputs.length; i++) {
+        var ov = inputs[i].scrollWidth - inputs[i].clientWidth;
+        if (ov > maxOverflow) maxOverflow = ov;
+      }
+      if (maxOverflow <= 0) return;
+      var needed = dropdown._baseWidth + maxOverflow + 4;
+      var curMin = parseFloat(dropdown.style.minWidth) || 0;
+      if (needed > curMin) {
+        dropdown.style.minWidth = needed + 'px';
+        _repositionLinkDropdown(dropdown);
+      }
+    }
+
+    function _repositionLinkDropdown(dropdown) {
+      if (!dropdown._posRef || !dropdown.parentNode) return;
+      var rect = dropdown._posRef.getBoundingClientRect();
+      var ddRect = dropdown.getBoundingClientRect();
+      var left = rect.left;
+      if (left + ddRect.width > window.innerWidth - 8) {
+        left = Math.max(4, window.innerWidth - ddRect.width - 8);
+      }
+      var top = rect.bottom + 4;
+      if (top + ddRect.height > window.innerHeight - 8) {
+        top = Math.max(4, rect.top - ddRect.height - 4);
+      }
+      dropdown.style.top = top + 'px';
+      dropdown.style.left = left + 'px';
+    }
+
+    function createLinkDropdown(anchorBtn, editor, targetAnchorEl) {
       dismissLinkDropdown();
       dismissAdmonitionSettingsDropdown();
       dismissActiveSettingsDropdown();
       dismissActiveLangDropdown();
       dismissImageInsertDropdown();
       dismissImageGearDropdown();
+      _hideLinkChain();
 
       var ea = editor.editableArea;
       var ma = editor.markdownArea;
       var isWysiwyg = editor.currentMode === 'wysiwyg';
 
-      var savedRange = editor.savedRangeInfo;
-      if (isWysiwyg && savedRange instanceof Range && ea.contains(savedRange.commonAncestorContainer)) {
-        var sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedRange);
-      } else if (!isWysiwyg && ma && savedRange && typeof savedRange.start === 'number') {
-        ma.setSelectionRange(savedRange.start, savedRange.end);
+      var existingAnchor = targetAnchorEl || null;
+      if (!existingAnchor) {
+        var savedRange = editor.savedRangeInfo;
+        if (isWysiwyg && savedRange instanceof Range && ea.contains(savedRange.commonAncestorContainer)) {
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(savedRange);
+        } else if (!isWysiwyg && ma && savedRange && typeof savedRange.start === 'number') {
+          ma.setSelectionRange(savedRange.start, savedRange.end);
+        }
+        existingAnchor = isWysiwyg ? findAnchorInSelection(ea) : null;
       }
-      var existingAnchor = isWysiwyg ? findAnchorInSelection(ea) : null;
       var initialUrl = existingAnchor ? (existingAnchor.getAttribute('href') || '') : 'https://';
       var initialText = '';
       if (existingAnchor) {
         initialText = (existingAnchor.textContent || '').trim();
       } else if (isWysiwyg) {
+        var savedRange = editor.savedRangeInfo;
         var sel = window.getSelection();
         if (sel && sel.rangeCount > 0) initialText = sel.toString().trim();
         if (!initialText && savedRange instanceof Range && ea.contains(savedRange.commonAncestorContainer)) {
           initialText = savedRange.toString().trim();
         }
       } else if (ma) {
+        var savedRange = editor.savedRangeInfo;
         var start = savedRange && typeof savedRange.start === 'number' ? savedRange.start : ma.selectionStart;
         var end = savedRange && typeof savedRange.end === 'number' ? savedRange.end : ma.selectionEnd;
         if (start !== end) initialText = ma.value.substring(start, end).trim();
@@ -2610,6 +2648,9 @@
       var dropdown = document.createElement('div');
       dropdown.className = 'md-link-settings-dropdown';
       dropdown.setAttribute('contenteditable', 'false');
+
+      var posRef = targetAnchorEl || anchorBtn;
+      dropdown._posRef = posRef;
 
       var urlRow = document.createElement('div');
       urlRow.className = 'md-link-settings-row';
@@ -2639,22 +2680,38 @@
       textRow.appendChild(textInput);
       dropdown.appendChild(textRow);
 
+      var removeRow = null;
+      if (existingAnchor) {
+        removeRow = document.createElement('div');
+        removeRow.className = 'md-link-settings-row md-link-settings-apply-row';
+        var removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'md-link-settings-remove';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('mousedown', function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          if (existingAnchor && existingAnchor.parentNode) {
+            var parent = existingAnchor.parentNode;
+            while (existingAnchor.firstChild) parent.insertBefore(existingAnchor.firstChild, existingAnchor);
+            parent.removeChild(existingAnchor);
+            if (editor._finalizeUpdate) editor._finalizeUpdate(ea.innerHTML);
+          }
+          dismissLinkDropdown();
+        });
+        removeRow.appendChild(removeBtn);
+      }
+
       var applyRow = document.createElement('div');
       applyRow.className = 'md-link-settings-row md-link-settings-apply-row';
+      if (removeRow) applyRow.style.paddingTop = '0';
       var applyBtn = document.createElement('button');
       applyBtn.type = 'button';
       applyBtn.className = 'md-link-settings-apply';
       applyBtn.textContent = existingAnchor ? 'Update' : 'Insert';
       applyRow.appendChild(applyBtn);
+      if (removeRow) { dropdown.appendChild(removeRow); }
       dropdown.appendChild(applyRow);
-
-      function positionDropdown() {
-        var rect = anchorBtn.getBoundingClientRect();
-        var left = rect.right - 220;
-        if (left < 0) left = rect.left;
-        dropdown.style.top = (rect.bottom + 2) + 'px';
-        dropdown.style.left = left + 'px';
-      }
 
       function doApply() {
         var url = (urlInput.value || '').trim();
@@ -2671,6 +2728,7 @@
               existingAnchor.textContent = text;
             }
           } else {
+            var savedRange = editor.savedRangeInfo;
             var rangeToUse = null;
             if (savedRange instanceof Range && ea.contains(savedRange.commonAncestorContainer)) {
               sel.removeAllRanges();
@@ -2692,6 +2750,7 @@
           if (editor._finalizeUpdate) editor._finalizeUpdate(ea.innerHTML);
         } else {
           ma.focus();
+          var savedRange = editor.savedRangeInfo;
           var start = savedRange && typeof savedRange.start === 'number' ? savedRange.start : ma.selectionStart;
           var end = savedRange && typeof savedRange.end === 'number' ? savedRange.end : ma.selectionEnd;
           var prefix = '[';
@@ -2717,24 +2776,169 @@
         if (ev.key === 'Enter') { ev.preventDefault(); doApply(); }
       });
 
-      document.body.appendChild(dropdown);
-      positionDropdown();
+      [urlInput, textInput].forEach(function (inp) {
+        inp.addEventListener('focus', function () { _linkDdExpand(inp, dropdown); });
+        inp.addEventListener('input', function () { _linkDdExpand(inp, dropdown); });
+      });
+
+      var ddHost = _focusOverlay || document.body;
+      ddHost.appendChild(dropdown);
+      _repositionLinkDropdown(dropdown);
       requestAnimationFrame(function () { urlInput.focus(); urlInput.select(); });
 
+      var chainIcon = (_focusOverlay || document).querySelector('.md-link-chain-indicator');
       var closeHandler = function (ev) {
         if (dropdown.contains(ev.target) || ev.target === anchorBtn) return;
+        if (chainIcon && chainIcon.contains(ev.target)) return;
         dismissLinkDropdown();
       };
-      var scrollHandler = function () { positionDropdown(); };
+      var scrollHandler = function () { _repositionLinkDropdown(dropdown); };
       document.addEventListener('mousedown', closeHandler, true);
       window.addEventListener('scroll', scrollHandler, true);
 
       _activeLinkDropdown = { el: dropdown, closeHandler: closeHandler, scrollHandler: scrollHandler };
     }
 
+    // --- Link chain indicator (cursor + delayed hover) ---
+    var _linkChainEl = null;
+    var _linkChainTarget = null;
+    var _linkChainHideTimer = null;
+    var _linkChainShowTimer = null;
+    var _linkChainHoverAnchor = null;
+
+    function _hideLinkChain() {
+      clearTimeout(_linkChainHideTimer);
+      clearTimeout(_linkChainShowTimer);
+      _linkChainHoverAnchor = null;
+      if (_linkChainEl && _linkChainEl.parentNode) _linkChainEl.parentNode.removeChild(_linkChainEl);
+      _linkChainEl = null;
+      _linkChainTarget = null;
+    }
+
+    function _positionLinkChain(icon, anchorEl) {
+      var rect = anchorEl.getBoundingClientRect();
+      var top = rect.top - 30;
+      if (top < 4) top = rect.bottom + 4;
+      icon.style.top = top + 'px';
+      icon.style.left = rect.left + 'px';
+    }
+
+    function _showLinkChain(anchorEl) {
+      if (_activeLinkDropdown) return;
+      var ea = wysiwygEditor && wysiwygEditor.editableArea;
+      if (!ea || !ea.contains(anchorEl)) return;
+      if (_linkChainTarget === anchorEl && _linkChainEl && _linkChainEl.parentNode) {
+        clearTimeout(_linkChainHideTimer);
+        _positionLinkChain(_linkChainEl, anchorEl);
+        return;
+      }
+      if (_linkChainEl && _linkChainEl.parentNode) _linkChainEl.parentNode.removeChild(_linkChainEl);
+      _linkChainTarget = anchorEl;
+
+      var icon = document.createElement('button');
+      icon.type = 'button';
+      icon.className = 'md-toolbar-button md-link-chain-indicator';
+      icon.setAttribute('contenteditable', 'false');
+      icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+      icon.title = 'Edit link';
+
+      icon.style.position = 'fixed';
+      icon.style.zIndex = '99998';
+      _positionLinkChain(icon, anchorEl);
+
+      icon.addEventListener('mousedown', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var editor = wysiwygEditor;
+        if (!editor || editor.currentMode !== 'wysiwyg') return;
+        var sel = window.getSelection();
+        var range = document.createRange();
+        range.selectNodeContents(anchorEl);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        createLinkDropdown(icon, editor, anchorEl);
+      });
+
+      icon.addEventListener('mouseenter', function () {
+        clearTimeout(_linkChainHideTimer);
+      });
+      icon.addEventListener('mouseleave', function () {
+        _linkChainHideTimer = setTimeout(_hideLinkChain, 200);
+      });
+
+      var host = _focusOverlay || document.body;
+      host.appendChild(icon);
+      _linkChainEl = icon;
+    }
+
+    function _findAnchorAtCursor(editableArea) {
+      var sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return null;
+      var node = sel.getRangeAt(0).startContainer;
+      if (node.nodeType === 3) node = node.parentNode;
+      while (node && node !== editableArea) {
+        if (node.nodeName === 'A' && node.getAttribute('href')) return node;
+        node = node.parentNode;
+      }
+      return null;
+    }
+
+    function _attachLinkChainHandler(editableArea) {
+      if (!editableArea || editableArea._linkChainAttached) return;
+      editableArea._linkChainAttached = true;
+
+      editableArea.addEventListener('mouseover', function (e) {
+        if (_navEditMode) return;
+        if (_activeLinkDropdown) return;
+        var node = e.target;
+        while (node && node !== editableArea) {
+          if (node.nodeName === 'A' && node.getAttribute('href')) {
+            _linkChainHoverAnchor = node;
+            clearTimeout(_linkChainShowTimer);
+            clearTimeout(_linkChainHideTimer);
+            _linkChainShowTimer = setTimeout(function () {
+              if (_linkChainHoverAnchor === node) _showLinkChain(node);
+            }, 400);
+            return;
+          }
+          node = node.parentNode;
+        }
+        _linkChainHoverAnchor = null;
+        clearTimeout(_linkChainShowTimer);
+        if (_linkChainEl && !_activeLinkDropdown) {
+          _linkChainHideTimer = setTimeout(_hideLinkChain, 200);
+        }
+      });
+
+      editableArea.addEventListener('mouseleave', function () {
+        _linkChainHoverAnchor = null;
+        clearTimeout(_linkChainShowTimer);
+        if (_linkChainEl && !_activeLinkDropdown) {
+          _linkChainHideTimer = setTimeout(_hideLinkChain, 200);
+        }
+      });
+
+      document.addEventListener('selectionchange', function () {
+        if (_navEditMode) return;
+        if (!wysiwygEditor || wysiwygEditor.currentMode !== 'wysiwyg') return;
+        if (_activeLinkDropdown) return;
+        var anchor = _findAnchorAtCursor(editableArea);
+        if (anchor) {
+          clearTimeout(_linkChainHideTimer);
+          _showLinkChain(anchor);
+        } else if (_linkChainEl) {
+          _hideLinkChain();
+        }
+      });
+    }
+
     proto._insertLink = function (buttonElement) {
       if (!buttonElement) buttonElement = this.toolbar && this.toolbar.querySelector('.md-toolbar-button-link');
       createLinkDropdown(buttonElement || document.body, this);
+    };
+
+    proto._attachLinkChainHandler = function () {
+      _attachLinkChainHandler(this.editableArea);
     };
   })();
 
@@ -3022,8 +3226,7 @@
         img.alt = alt;
         if (origSrc) img.setAttribute('data-orig-src', origSrc);
 
-        var attrCookieVal = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_image_attr_syntax=(\d)/) || [])[1];
-        img.setAttribute('data-size-syntax', attrCookieVal === '0' ? 'html' : 'attr');
+        img.setAttribute('data-size-syntax', _getSetting('live_wysiwyg_image_attr_syntax') === '0' ? 'html' : 'attr');
 
         if (scale < 100) {
           var probe = new Image();
@@ -3300,7 +3503,7 @@
     var cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.className = 'md-image-gear-cb';
-    var cookieAttr = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_image_attr_syntax=(\d)/) || [])[1];
+    var cookieAttr = _getSetting('live_wysiwyg_image_attr_syntax');
     var imgSyntax = img.getAttribute('data-size-syntax');
     cb.checked = imgSyntax ? imgSyntax === 'attr' : cookieAttr !== '0';
     if (!imgSyntax) {
@@ -3308,7 +3511,7 @@
     }
     cb.addEventListener('change', function () {
       img.setAttribute('data-size-syntax', cb.checked ? 'attr' : 'html');
-      document.cookie = 'live_wysiwyg_image_attr_syntax=' + (cb.checked ? '1' : '0') + ';path=/;max-age=31536000;SameSite=Lax';
+      _setSetting('live_wysiwyg_image_attr_syntax', cb.checked ? '1' : '0');
     });
     cbLabel.appendChild(cb);
     cbLabel.appendChild(document.createTextNode('Markdown attr syntax'));
@@ -3419,8 +3622,7 @@
       if (img.closest && img.closest('[data-live-wysiwyg-raw-html-block]')) continue;
 
       if (!img.hasAttribute('data-size-syntax')) {
-        var cookieSyntax = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_image_attr_syntax=(\d)/) || [])[1];
-        img.setAttribute('data-size-syntax', cookieSyntax === '0' ? 'html' : 'attr');
+        img.setAttribute('data-size-syntax', _getSetting('live_wysiwyg_image_attr_syntax') === '0' ? 'html' : 'attr');
       }
 
       if (!img.hasAttribute('data-inline') && img.style && /vertical-align\s*:\s*middle/i.test(img.style.cssText || '')) {
@@ -7477,25 +7679,21 @@
     };
   })();
 
-  const COOKIE_NAME = 'liveWysiwygEditorEnabled';
+  var _LS_EDITOR_KEY = 'liveWysiwygEditorEnabled';
 
   function getEditorStateFromCookie() {
-    if (typeof document === 'undefined' || !document.cookie) return null;
-    var match = document.cookie.match(new RegExp('(?:^|;\\s*)' + COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
-    if (!match) return null;
-    var val = match[1];
-    var parts = val.split(':');
+    var val = _getSetting(_LS_EDITOR_KEY);
+    if (val == null) return null;
+    if (typeof val === 'object') return val;
+    var parts = String(val).split(':');
     var enabled = parts[0] === '1' || parts[0] === 'true';
     var mode = (parts[1] === 'wysiwyg' || parts[1] === 'markdown') ? parts[1] : 'wysiwyg';
     return { enabled: enabled, mode: mode };
   }
 
   function setEditorStateCookie(enabled, mode) {
-    if (typeof document === 'undefined') return;
     var modeVal = (mode === 'markdown' || mode === 'wysiwyg') ? mode : 'wysiwyg';
-    var value = (enabled ? '1' : '0') + ':' + modeVal;
-    var maxAge = 365 * 24 * 60 * 60;
-    document.cookie = COOKIE_NAME + '=' + value + '; path=/; max-age=' + maxAge + '; SameSite=Lax';
+    _setSetting(_LS_EDITOR_KEY, { enabled: !!enabled, mode: modeVal });
   }
 
   function isEditorEnabledByCookie() {
@@ -7602,8 +7800,7 @@
   var _navContentEditingGuard = null;
   var _navSidebarEl = null;
   var _navScrollWrap = null;
-  var _navReadonlyOverlay = null;
-  var _navTocOverlay = null;
+  
   var _navEditActionsEl = null;
   var _navMaxWeight = 0;
   var _bulkWs = null;
@@ -7626,20 +7823,97 @@
   var _isMaterialTheme = false;
 
   // ======================================================================
-  // NAV MENU - Cookie helpers
+  // Persistent settings — single localStorage JSON object
   // ======================================================================
-  function _getCookie(name) {
-    var m = document.cookie.match(new RegExp('(?:^|;\\s*)' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
-    return m ? decodeURIComponent(m[1]) : null;
+  var _LS_KEY = 'liveWysiwygSettings';
+  var _settingsCache = null;
+
+  function _getSettings() {
+    if (_settingsCache) return _settingsCache;
+    try { _settingsCache = JSON.parse(localStorage.getItem(_LS_KEY)) || {}; }
+    catch (e) { _settingsCache = {}; }
+    return _settingsCache;
   }
 
-  function _setCookie(name, value, maxAge) {
-    if (maxAge === undefined) maxAge = 31536000;
-    document.cookie = name + '=' + encodeURIComponent(value) + ';path=/;max-age=' + maxAge + ';SameSite=Lax';
+  function _getSetting(key) {
+    return _getSettings()[key];
   }
 
-  function _deleteCookie(name) {
-    document.cookie = name + '=;path=/;max-age=0;SameSite=Lax';
+  function _setSetting(key, value) {
+    var s = _getSettings();
+    s[key] = value;
+    _settingsCache = s;
+    try { localStorage.setItem(_LS_KEY, JSON.stringify(s)); } catch (e) {}
+  }
+
+  function _deleteSetting(key) {
+    var s = _getSettings();
+    delete s[key];
+    _settingsCache = s;
+    try { localStorage.setItem(_LS_KEY, JSON.stringify(s)); } catch (e) {}
+  }
+
+  (function _migrateFromCookies() {
+    if (_getSetting('_migrated')) return;
+    var cookies = {};
+    try {
+      document.cookie.split(';').forEach(function (c) {
+        var parts = c.trim().split('=');
+        if (parts.length >= 2) cookies[parts[0]] = decodeURIComponent(parts.slice(1).join('='));
+      });
+    } catch (e) { return; }
+    var keys = [
+      'liveWysiwygEditorEnabled', 'liveWysiwygIndent',
+      'live_wysiwyg_autofocus', 'live_wysiwyg_focus_remain',
+      'live_wysiwyg_focus_toolbar', 'live_wysiwyg_focus_nav',
+      'live_wysiwyg_show_hidden', 'live_wysiwyg_image_attr_syntax',
+      'live_wysiwyg_nav_edit_cursor', 'live_wysiwyg_focus_nav_retry',
+      'live_wysiwyg_migration_result', 'live_wysiwyg_migration_normalize',
+      'live_wysiwyg_migration_adjust_weight'
+    ];
+    var s = _getSettings();
+    for (var i = 0; i < keys.length; i++) {
+      if (cookies[keys[i]] !== undefined && s[keys[i]] === undefined) {
+        s[keys[i]] = cookies[keys[i]];
+      }
+    }
+    s._migrated = true;
+    _settingsCache = s;
+    try { localStorage.setItem(_LS_KEY, JSON.stringify(s)); } catch (e) {}
+    for (var j = 0; j < keys.length; j++) {
+      if (cookies[keys[j]] !== undefined) {
+        document.cookie = keys[j] + '=;path=/;max-age=0;SameSite=Lax';
+      }
+    }
+  })();
+
+  // ======================================================================
+  // Nav storage schema versioning
+  // ======================================================================
+  // Bump this integer whenever the nav-related localStorage data format
+  // changes (e.g. new item types in navData, pipeline op structure changes,
+  // caution/dead-link format changes). On mismatch, all nav-operational
+  // localStorage is cleared to prevent stale data from corrupting state.
+  // User preferences (liveWysiwygSettings) are never cleared.
+  var _NAV_STORAGE_SCHEMA = 2;
+  var _NAV_SCHEMA_KEY = 'live_wysiwyg_nav_schema';
+
+  function _validateNavStorageSchema() {
+    var stored;
+    try { stored = parseInt(localStorage.getItem(_NAV_SCHEMA_KEY), 10); }
+    catch (e) { stored = NaN; }
+    if (stored === _NAV_STORAGE_SCHEMA) return;
+    console.log('[storage] Nav schema mismatch (stored=' + stored + ' expected=' + _NAV_STORAGE_SCHEMA + '), clearing stale nav data');
+    var keysToRemove = [
+      'live_wysiwyg_caution_pages',
+      'live_wysiwyg_dead_links',
+      'live_wysiwyg_changes_pipeline',
+      'live_wysiwyg_post_save_messages'
+    ];
+    for (var i = 0; i < keysToRemove.length; i++) {
+      try { localStorage.removeItem(keysToRemove[i]); } catch (e) {}
+    }
+    try { localStorage.setItem(_NAV_SCHEMA_KEY, String(_NAV_STORAGE_SCHEMA)); } catch (e) {}
   }
 
   // ======================================================================
@@ -8137,8 +8411,8 @@
   // This runs synchronously before the live-edit plugin creates its WebSocket
   // (which happens on DOMContentLoaded), closing the race window.
   function _isMigrationChainActive() {
-    return document.cookie.indexOf('live_wysiwyg_migration_normalize=1') !== -1 ||
-      document.cookie.indexOf('live_wysiwyg_migration_adjust_weight=1') !== -1;
+    return _getSetting('live_wysiwyg_migration_normalize') === '1' ||
+      _getSetting('live_wysiwyg_migration_adjust_weight') === '1';
   }
 
   (function _earlyMigrationSuppressCheck() {
@@ -8954,6 +9228,8 @@
   // ======================================================================
   function _showNavDialog(message, buttons) {
     return new Promise(function (resolve) {
+      var resolved = false;
+      function finish(val) { if (resolved) return; resolved = true; overlay.parentNode.removeChild(overlay); resolve(val); }
       var overlay = document.createElement('div');
       overlay.className = 'live-wysiwyg-nav-dialog';
       var content = document.createElement('div');
@@ -8963,24 +9239,30 @@
       content.appendChild(p);
       var actions = document.createElement('div');
       actions.className = 'live-wysiwyg-nav-dialog-actions';
+      var primaryValue = null;
       buttons.forEach(function (btn) {
         var b = document.createElement('button');
         b.textContent = btn.text;
         if (btn.className) b.className += ' ' + btn.className;
-        b.addEventListener('click', function () {
-          overlay.parentNode.removeChild(overlay);
-          resolve(btn.value);
-        });
+        if (btn.className && btn.className.indexOf('live-wysiwyg-nav-dialog-primary') >= 0) primaryValue = btn.value;
+        b.addEventListener('click', function () { finish(btn.value); });
         actions.appendChild(b);
       });
       content.appendChild(actions);
       overlay.appendChild(content);
+      overlay.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && primaryValue != null) { e.preventDefault(); finish(primaryValue); }
+      });
       document.body.appendChild(overlay);
+      var primaryBtn = actions.querySelector('.live-wysiwyg-nav-dialog-primary');
+      if (primaryBtn) primaryBtn.focus();
     });
   }
 
   function _showNavDialogHtml(htmlContent, buttons) {
     return new Promise(function (resolve) {
+      var resolved = false;
+      function finish(val) { if (resolved) return; resolved = true; overlay.parentNode.removeChild(overlay); resolve(val); }
       var overlay = document.createElement('div');
       overlay.className = 'live-wysiwyg-nav-dialog';
       var content = document.createElement('div');
@@ -8996,19 +9278,23 @@
       content.appendChild(body);
       var actions = document.createElement('div');
       actions.className = 'live-wysiwyg-nav-dialog-actions';
+      var primaryValue = null;
       buttons.forEach(function (btn) {
         var b = document.createElement('button');
         b.textContent = btn.text;
         if (btn.className) b.className += ' ' + btn.className;
-        b.addEventListener('click', function () {
-          overlay.parentNode.removeChild(overlay);
-          resolve(btn.value);
-        });
+        if (btn.className && btn.className.indexOf('live-wysiwyg-nav-dialog-primary') >= 0) primaryValue = btn.value;
+        b.addEventListener('click', function () { finish(btn.value); });
         actions.appendChild(b);
       });
       content.appendChild(actions);
       overlay.appendChild(content);
+      overlay.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && primaryValue != null) { e.preventDefault(); finish(primaryValue); }
+      });
       document.body.appendChild(overlay);
+      var primaryBtn = actions.querySelector('.live-wysiwyg-nav-dialog-primary');
+      if (primaryBtn) primaryBtn.focus();
     });
   }
 
@@ -9067,10 +9353,9 @@
     hiddenCb.type = 'checkbox';
     hiddenCb.className = 'live-wysiwyg-nav-hidden-cb';
     hiddenCb.title = 'Show hidden files';
-    var hiddenCookie = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_show_hidden=(\d)/) || [])[1];
-    hiddenCb.checked = hiddenCookie === '1';
+    hiddenCb.checked = _getSetting('live_wysiwyg_show_hidden') === '1';
     hiddenCb.addEventListener('change', function () {
-      document.cookie = 'live_wysiwyg_show_hidden=' + (this.checked ? '1' : '0') + ';path=/;max-age=31536000;SameSite=Lax';
+      _setSetting('live_wysiwyg_show_hidden', this.checked ? '1' : '0');
       _renderNavFromSnapshot();
     });
     navTitle.appendChild(hiddenCb);
@@ -9502,7 +9787,7 @@
       if (item._new) li.classList.add('live-wysiwyg-nav-item--new');
       if (isHiddenPage) {
         li.classList.add('live-wysiwyg-nav-hidden-page');
-        var showHidden = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_show_hidden=(\d)/) || [])[1] === '1';
+        var showHidden = _getSetting('live_wysiwyg_show_hidden') === '1';
         var isCurrentPage = item.src_path === _getCurrentSrcPath();
         if (isCurrentPage) {
           li.classList.add('live-wysiwyg-nav-hidden-page--current');
@@ -9512,7 +9797,7 @@
       }
       if (isHiddenSection) {
         li.classList.add('live-wysiwyg-nav-hidden-page');
-        var showHiddenForSection = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_show_hidden=(\d)/) || [])[1] === '1';
+        var showHiddenForSection = _getSetting('live_wysiwyg_show_hidden') === '1';
         if (!showHiddenForSection) {
           li.style.display = 'none';
         }
@@ -9773,7 +10058,7 @@
         });
       } else if (item.type === 'asset') {
         li.classList.add('live-wysiwyg-nav-asset-item');
-        var showHiddenForAsset = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_show_hidden=(\d)/) || [])[1] === '1';
+        var showHiddenForAsset = _getSetting('live_wysiwyg_show_hidden') === '1';
         if (!showHiddenForAsset) {
           li.style.display = 'none';
         }
@@ -10254,22 +10539,6 @@
     return sectionLi && sectionLi.classList && sectionLi.classList.contains('md-nav__item--nested') ? sectionLi : null;
   }
 
-  function _findNavItemByPath(items, path) {
-    if (!items || !path) return null;
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i];
-      if (it.type === 'page' && it.src_path === path) return it;
-      if (it.type === 'section' && it.children) {
-        var found = _findNavItemByPath(it.children, path);
-        if (found) return found;
-      }
-    }
-    for (var j = 0; j < items.length; j++) {
-      if (items[j].type === 'section' && items[j].src_path === path) return items[j];
-    }
-    return null;
-  }
-
   function _moveNavItemDown(li, item, shiftKey) {
     if (!item || !item._uid) return;
     var loc = _findNavItemInTree(item._uid);
@@ -10544,7 +10813,7 @@
 
     var cursor = _captureEditorSelection();
     if (cursor) {
-      try { _setCookie('live_wysiwyg_nav_edit_cursor', JSON.stringify(cursor)); }
+      try { _setSetting('live_wysiwyg_nav_edit_cursor', JSON.stringify(cursor)); }
       catch (e) { /* serialization failure */ }
     }
 
@@ -10603,53 +10872,11 @@
     _rebuildNavMenuForEditMode();
   }
 
-  function _applyHeavyModeOverlays() {
-    if (wysiwygEditor && wysiwygEditor.editableArea) {
-      wysiwygEditor.editableArea.contentEditable = 'false';
-    }
-    if (wysiwygEditor && wysiwygEditor.markdownArea) {
-      wysiwygEditor.markdownArea.setAttribute('readonly', 'readonly');
-    }
-
-    var contentEl = document.querySelector('.live-wysiwyg-focus-content');
-    if (contentEl && !contentEl.querySelector('.live-wysiwyg-nav-readonly-overlay')) {
-      _navReadonlyOverlay = document.createElement('div');
-      _navReadonlyOverlay.className = 'live-wysiwyg-nav-readonly-overlay';
-      _navReadonlyOverlay.textContent = 'Content is read-only while editing navigation';
-      contentEl.style.position = 'relative';
-      contentEl.appendChild(_navReadonlyOverlay);
-    }
-
-    var tocEl = document.querySelector('.live-wysiwyg-focus-toc');
-    if (tocEl && !tocEl.querySelector('.live-wysiwyg-nav-toc-readonly-overlay')) {
-      _navTocOverlay = document.createElement('div');
-      _navTocOverlay.className = 'live-wysiwyg-nav-toc-readonly-overlay';
-      tocEl.style.position = 'relative';
-      tocEl.appendChild(_navTocOverlay);
-    }
-  }
-
-  function _removeHeavyModeOverlays() {
-    if (wysiwygEditor && wysiwygEditor.editableArea) {
-      wysiwygEditor.editableArea.contentEditable = 'true';
-    }
-    if (wysiwygEditor && wysiwygEditor.markdownArea) {
-      wysiwygEditor.markdownArea.removeAttribute('readonly');
-    }
-    if (_navReadonlyOverlay && _navReadonlyOverlay.parentNode) {
-      _navReadonlyOverlay.parentNode.removeChild(_navReadonlyOverlay);
-    }
-    _navReadonlyOverlay = null;
-    if (_navTocOverlay && _navTocOverlay.parentNode) {
-      _navTocOverlay.parentNode.removeChild(_navTocOverlay);
-    }
-    _navTocOverlay = null;
-  }
+  
 
   function _exitNavEditMode(restoreCursor) {
     if (!_navEditMode) return;
     _navEditMode = false;
-    _removeHeavyModeOverlays();
 
     if (_navArrowKeyHandler) { document.removeEventListener('keydown', _navArrowKeyHandler, true); _navArrowKeyHandler = null; }
     if (_navCmdSHandler) { document.removeEventListener('keydown', _navCmdSHandler, true); _navCmdSHandler = null; }
@@ -10693,13 +10920,13 @@
     }
 
     if (restoreCursor) {
-      var raw = _getCookie('live_wysiwyg_nav_edit_cursor');
+      var raw = _getSetting('live_wysiwyg_nav_edit_cursor');
       if (raw) {
         try {
           var saved = JSON.parse(raw);
           _restoreEditorSelection(saved, document.querySelector('.live-wysiwyg-focus-main'));
         } catch (e) { /* parse error */ }
-        _deleteCookie('live_wysiwyg_nav_edit_cursor');
+        _deleteSetting('live_wysiwyg_nav_edit_cursor');
       }
     }
   }
@@ -11047,15 +11274,6 @@
       if (_navSnapshots.length >= 2) {
         _addNavEditActions(_navSidebarEl);
         _updateUndoRedoBtns();
-      }
-    }
-    if (_navEditMode) {
-      var curPath = _getCurrentSrcPath();
-      var curPageInNav = curPath ? _findNavItemByPath(curPath) : null;
-      if (curPageInNav) {
-        _removeHeavyModeOverlays();
-      } else if (!_navReadonlyOverlay) {
-        _applyHeavyModeOverlays();
       }
     }
   }
@@ -11887,8 +12105,8 @@
     var focusTarget = activeSnap.focusTarget || _getCurrentSrcPath() || null;
 
     if (activeSnap.migrationPending) {
-      _setCookie('live_wysiwyg_migration_result', 'success', 300);
-      _setCookie('live_wysiwyg_migration_normalize', '1', 120);
+      _setSetting('live_wysiwyg_migration_result', 'success');
+      _setSetting('live_wysiwyg_migration_normalize', '1');
     }
     _persistWarningsFromSnapshot();
     _exitNavEditMode(false);
@@ -11904,8 +12122,31 @@
   function _loadPipeline() {
     try {
       var raw = localStorage.getItem(_PIPELINE_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch (e) { return []; }
+      if (!raw) return [];
+      var parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) { _clearPipeline(); return []; }
+      for (var i = 0; i < parsed.length; i++) {
+        var stage = parsed[i];
+        if (!stage || typeof stage.title !== 'string' || !Array.isArray(stage.batches)) {
+          console.warn('[storage] Invalid pipeline stage at index ' + i + ', clearing pipeline');
+          _clearPipeline();
+          return [];
+        }
+        for (var j = 0; j < stage.batches.length; j++) {
+          var batch = stage.batches[j];
+          if (!batch || !Array.isArray(batch.ops)) {
+            console.warn('[storage] Invalid pipeline batch at stage ' + i + ' batch ' + j + ', clearing pipeline');
+            _clearPipeline();
+            return [];
+          }
+        }
+      }
+      return parsed;
+    } catch (e) {
+      console.warn('[storage] Failed to parse pipeline, clearing:', e);
+      _clearPipeline();
+      return [];
+    }
   }
 
   function _savePipeline(pipeline) {
@@ -11957,14 +12198,20 @@
   }
 
   function _resumePipeline() {
-    var pipeline = _loadPipeline();
-    if (!pipeline.length) return;
-    var stageIdx = -1;
-    for (var i = 0; i < pipeline.length; i++) {
-      if (!pipeline[i].completed) { stageIdx = i; break; }
+    try {
+      var pipeline = _loadPipeline();
+      if (!pipeline.length) return;
+      var stageIdx = -1;
+      for (var i = 0; i < pipeline.length; i++) {
+        if (!pipeline[i].completed) { stageIdx = i; break; }
+      }
+      if (stageIdx === -1) { _clearPipeline(); return; }
+      _executePipelineStage(pipeline, stageIdx);
+    } catch (e) {
+      console.error('[storage] Pipeline resume failed, clearing pipeline:', e);
+      _clearPipeline();
+      _hidePipelineProgress();
     }
-    if (stageIdx === -1) { _clearPipeline(); return; }
-    _executePipelineStage(pipeline, stageIdx);
   }
 
   function _executePipelineStage(pipeline, stageIdx) {
@@ -12173,13 +12420,13 @@
     }
 
     _warningDirectMode = false;
-    _setCookie('live_wysiwyg_focus_nav', '1', 60);
+    _setSetting('live_wysiwyg_focus_nav', '1');
     var shouldRunDeadLinkScan = !!_navPostSaveDeadLinkFolder;
     _navPostSaveDeadLinkFolder = null;
 
     if (failures && failures.length) {
-      if (_getCookie('live_wysiwyg_migration_result')) {
-        _setCookie('live_wysiwyg_migration_result', 'warnings', 300);
+      if (_getSetting('live_wysiwyg_migration_result')) {
+        _setSetting('live_wysiwyg_migration_result', 'warnings');
       }
       failures.forEach(function (f) {
         if (f.path !== '_normalize_all' && f.path && typeof f.path === 'string' && f.path.endsWith('.md')) {
@@ -12221,8 +12468,9 @@
   function _queuePostSaveMessage(type, text) {
     var messages = [];
     try { messages = JSON.parse(localStorage.getItem(_POST_SAVE_MSG_KEY)) || []; } catch (e) {}
+    if (!Array.isArray(messages)) messages = [];
     messages.push({ type: type, text: text });
-    localStorage.setItem(_POST_SAVE_MSG_KEY, JSON.stringify(messages));
+    try { localStorage.setItem(_POST_SAVE_MSG_KEY, JSON.stringify(messages)); } catch (e) {}
   }
 
   function _showPostSaveMessages() {
@@ -12345,7 +12593,7 @@
 
   function _navigateAfterBatchComplete(focusTarget) {
     var ov = document.querySelector('.live-wysiwyg-nav-transition-overlay') || _showFullScreenTransition(focusTarget ? 'Navigating...' : 'Reloading...');
-    _setCookie('live_wysiwyg_focus_nav', '1', 60);
+    _setSetting('live_wysiwyg_focus_nav', '1');
     _fadeOverlayToOpaque(ov, function () {
       if (focusTarget) {
         var targetUrl = _srcPathToUrl(focusTarget);
@@ -12362,7 +12610,7 @@
 
   function _navigateAfterSave(focusTarget) {
     var ov = _showFullScreenTransition('Navigating...');
-    _setCookie('live_wysiwyg_focus_nav', '1', 60);
+    _setSetting('live_wysiwyg_focus_nav', '1');
     _fadeOverlayToOpaque(ov, function () {
       var targetUrl = focusTarget ? _srcPathToUrl(focusTarget) : location.href;
       window.location.href = targetUrl;
@@ -13262,8 +13510,8 @@
       return;
     }
     var navOv = _showFullScreenTransition('Navigating to ' + (title || 'page') + '...');
-    _setCookie('live_wysiwyg_focus_nav', '1', 60);
-    if (title) _setCookie('live_wysiwyg_focus_nav_target', title, 60);
+    _setSetting('live_wysiwyg_focus_nav', '1');
+    if (title) _setSetting('live_wysiwyg_focus_nav_target', title);
     _fadeOverlayToOpaque(navOv, function () {
       window.location.href = url;
     });
@@ -13294,8 +13542,8 @@
       _fadeOutOverlay(transitionOverlay);
     }).catch(function (err) {
       console.error('live-wysiwyg: AJAX navigate failed', err);
-      _setCookie('live_wysiwyg_focus_nav', '1', 60);
-      if (title) _setCookie('live_wysiwyg_focus_nav_target', title, 60);
+      _setSetting('live_wysiwyg_focus_nav', '1');
+      if (title) _setSetting('live_wysiwyg_focus_nav_target', title);
       _fadeOverlayToOpaque(transitionOverlay, function () {
         window.location.href = url;
       });
@@ -13454,7 +13702,7 @@
   function _doFocusModeSave() {
     if (_navEditMode) { _confirmNavSave(); return; }
     _doFocusSave().then(function () {
-      if (_getCookie('live_wysiwyg_focus_remain') === '1') {
+      if (_getSetting('live_wysiwyg_focus_remain') === '1') {
         var currentSrc = _getCurrentSrcPath();
         if (currentSrc) {
           var transitionOv = _showFullScreenTransition('Reloading...');
@@ -13464,6 +13712,7 @@
             }
             _refreshFocusToc();
             _fadeOutOverlay(transitionOv);
+            if (_focusOverlay && _focusOverlay._updateSaveDiscard) _focusOverlay._updateSaveDiscard();
           }).catch(function () {
             _fadeOutOverlay(transitionOv);
           });
@@ -13722,26 +13971,55 @@
   }
 
   function _buildSettingsContent(dropdown, item, itemType, nwConfig) {
-    function addField(label, type, key, val) {
+    var _expandableInputs = [];
+    var _renameRef = {};
+    var _normalizeRef = {};
+
+    function _measureAndExpand(input) {
+      var overflow = input.scrollWidth - input.clientWidth;
+      if (overflow <= 0) return;
+      var curMin = parseFloat(dropdown.style.minWidth) || 0;
+      var newMin = dropdown.offsetWidth + overflow + 4;
+      if (newMin > curMin) {
+        dropdown.style.minWidth = newMin + 'px';
+        requestAnimationFrame(function () { _repositionDropdown(dropdown); });
+      }
+    }
+
+    function _attachExpandBehavior(input) {
+      _expandableInputs.push(input);
+      input.addEventListener('focus', function () { _measureAndExpand(input); });
+      input.addEventListener('input', function () { _measureAndExpand(input); });
+    }
+
+    function addTextRow(label, key, val) {
       var row = document.createElement('div');
-      row.className = 'live-wysiwyg-nav-settings-row';
+      row.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
       var span = document.createElement('span');
       span.textContent = label;
+      span.style.flexShrink = '0';
       row.appendChild(span);
-      if (type === 'text' || type === 'number') {
-        var input = document.createElement('input');
-        input.type = type;
-        input.value = val !== null && val !== undefined ? val : '';
-        input.setAttribute('data-fm-key', key);
-        row.appendChild(input);
-      } else if (type === 'checkbox') {
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.value = val !== null && val !== undefined ? val : '';
+      input.setAttribute('data-fm-key', key);
+      row.appendChild(input);
+      dropdown.appendChild(row);
+      _attachExpandBehavior(input);
+      return input;
+    }
+
+    function addCheckboxGroup(items) {
+      var row = document.createElement('div');
+      row.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-checkbox-group';
+      for (var i = 0; i < items.length; i++) {
         var lbl = document.createElement('label');
         var cb = document.createElement('input');
         cb.type = 'checkbox';
-        cb.checked = !!val;
-        cb.setAttribute('data-fm-key', key);
+        cb.checked = !!items[i].val;
+        cb.setAttribute('data-fm-key', items[i].key);
         lbl.appendChild(cb);
-        lbl.appendChild(document.createTextNode(' Enabled'));
+        lbl.appendChild(document.createTextNode(' ' + items[i].label));
         row.appendChild(lbl);
       }
       dropdown.appendChild(row);
@@ -13753,140 +14031,49 @@
       dropdown.appendChild(hr);
     }
 
-    if (itemType !== 'asset') {
-      var effectiveMeta = (itemType === 'section' && item.index_meta) ? item.index_meta : item;
-      var effectiveIsIndex = itemType === 'section' || (item.isIndex === true);
-      var defaultWeight = effectiveIsIndex
-        ? (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined
-          ? nwConfig.frontmatter_defaults.index_weight : -10)
-        : (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.weight !== undefined
-          ? nwConfig.frontmatter_defaults.weight : 0);
-      addField('Title', 'text', 'title', item.title || '');
-      addField('Weight', 'number', 'weight', effectiveMeta.weight !== undefined && effectiveMeta.weight !== null ? effectiveMeta.weight : defaultWeight);
-      if (_isRootIndex(item)) {
-        var weightInput = dropdown.querySelector('[data-fm-key="weight"]');
-        if (weightInput) {
-          weightInput.disabled = true;
-          weightInput.title = 'Root index page does not use a weight';
+    function addButtonRow(buttons) {
+      var row = document.createElement('div');
+      row.className = 'live-wysiwyg-nav-settings-btn-row';
+      for (var i = 0; i < buttons.length; i++) {
+        var btn = document.createElement('button');
+        btn.className = 'live-wysiwyg-nav-settings-normalize-btn';
+        btn.textContent = buttons[i].text;
+        if (buttons[i].style) btn.style.cssText += buttons[i].style;
+        if (buttons[i].shrink) {
+          btn.style.setProperty('flex', '0 0 auto', 'important');
+          btn.style.setProperty('width', 'auto', 'important');
+          btn.style.setProperty('padding-left', '18px');
+          btn.style.setProperty('padding-right', '18px');
         }
+        if (buttons[i].disabled) btn.disabled = true;
+        if (buttons[i].ref) buttons[i].ref.btn = btn;
+        if (buttons[i].syncRef) buttons[i].syncRef.btn = btn;
+        btn.addEventListener('click', buttons[i].onClick);
+        row.appendChild(btn);
       }
-      if (nwConfig.enabled) {
-        addField('Headless', 'checkbox', 'headless', effectiveMeta.headless || false);
-        if (effectiveIsIndex) {
-          addField('Retitled', 'checkbox', 'retitled', effectiveMeta.retitled || false);
-          addField('Empty', 'checkbox', 'empty', effectiveMeta.empty || false);
-        }
-      }
-      addDivider();
+      dropdown.appendChild(row);
     }
 
-    var sectionHasIndex = itemType === 'section' && (
-      (item.src_path != null && item.src_path !== '') ||
-      (item.index_meta != null) ||
-      (item.children && item.children.some(function (c) { return c.type === 'page' && c.isIndex; }))
-    );
-    if (itemType === 'section' && (nwConfig.enabled || !sectionHasIndex)) {
-      var folderDir = _getSectionFolderDir(item);
-      if (folderDir) {
-        var renameRow = document.createElement('div');
-        renameRow.className = 'live-wysiwyg-nav-settings-row';
-        var renameLabel = document.createElement('span');
-        renameLabel.textContent = 'Folder name';
-        renameRow.appendChild(renameLabel);
-        var renameFolderInput = document.createElement('input');
-        renameFolderInput.type = 'text';
-        var folderBaseName = folderDir.indexOf('/') >= 0 ? folderDir.substring(folderDir.lastIndexOf('/') + 1) : folderDir;
-        renameFolderInput.value = folderBaseName;
-        renameFolderInput.setAttribute('data-folder-rename', 'true');
-        renameRow.appendChild(renameFolderInput);
-        dropdown.appendChild(renameRow);
-
-        var renameFolderBtn = document.createElement('button');
-        renameFolderBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-        renameFolderBtn.textContent = 'Rename Folder';
-        renameFolderBtn.addEventListener('click', function () {
-          var newName = renameFolderInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-          if (!newName || newName === folderBaseName) return;
-          var parentDir = folderDir.indexOf('/') >= 0 ? folderDir.substring(0, folderDir.lastIndexOf('/')) : '';
-          var newFolder = parentDir ? parentDir + '/' + newName : newName;
-          dropdown.parentNode.removeChild(dropdown);
-          _initiateFolderRename(item, folderDir, newFolder);
-        });
-        dropdown.appendChild(renameFolderBtn);
-
-        addDivider();
-
-        var deleteFolderBtn = document.createElement('button');
-        deleteFolderBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-        deleteFolderBtn.style.background = '#d9534f';
-        deleteFolderBtn.textContent = 'Delete Folder';
-        deleteFolderBtn.addEventListener('click', function () {
-          dropdown.parentNode.removeChild(dropdown);
-          _initiateFolderDelete(item, folderDir);
-        });
-        dropdown.appendChild(deleteFolderBtn);
-      }
-    } else if (nwConfig.enabled && itemType === 'page' && !_isRootIndex(item)) {
-      var srcPath = _getItemSrcPath(item) || '';
-      if (srcPath) {
-        var fileName = srcPath.indexOf('/') >= 0 ? srcPath.substring(srcPath.lastIndexOf('/') + 1) : srcPath;
-        var fileBaseName = fileName.replace(/\.md$/, '');
-        var fileRenameRow = document.createElement('div');
-        fileRenameRow.className = 'live-wysiwyg-nav-settings-row';
-        var fileRenameLabel = document.createElement('span');
-        fileRenameLabel.textContent = 'File name';
-        fileRenameRow.appendChild(fileRenameLabel);
-        var fileRenameInput = document.createElement('input');
-        fileRenameInput.type = 'text';
-        fileRenameInput.value = fileBaseName;
-        fileRenameRow.appendChild(fileRenameInput);
-        dropdown.appendChild(fileRenameRow);
-
-        var fileRenameBtn = document.createElement('button');
-        fileRenameBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-        fileRenameBtn.textContent = 'Rename File';
-        fileRenameBtn.addEventListener('click', function () {
-          var newBase = fileRenameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-          if (!newBase || newBase === fileBaseName) return;
-          var dir = srcPath.indexOf('/') >= 0 ? srcPath.substring(0, srcPath.lastIndexOf('/')) : '';
-          var newPath = dir ? dir + '/' + newBase + '.md' : newBase + '.md';
-          dropdown.parentNode.removeChild(dropdown);
-          _enterNavEditModeAsync().then(function (ready) {
-            if (!ready) return;
-            _navBatchQueue.push({ type: 'rename-page', oldPath: srcPath, newPath: newPath, item: item });
-            item.src_path = newPath;
-            item._renamed = true;
-            _addNavBadge({
-              className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-rename-badge',
-              text: 'Rename "' + fileBaseName + '" \u2192 "' + newBase + '"',
-              attrs: { 'data-rename-page': '1' }
-            });
-            _commitNavSnapshot();
-          });
-        });
-        dropdown.appendChild(fileRenameBtn);
-      }
-    }
-
+    // --- Asset settings (separate flow, early return) ---
     if (itemType === 'asset') {
       var assetSrcPath = _getItemSrcPath(item) || '';
       if (assetSrcPath) {
         var assetFileName = assetSrcPath.indexOf('/') >= 0 ? assetSrcPath.substring(assetSrcPath.lastIndexOf('/') + 1) : assetSrcPath;
         var assetRenameRow = document.createElement('div');
-        assetRenameRow.className = 'live-wysiwyg-nav-settings-row';
+        assetRenameRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
         var assetRenameLabel = document.createElement('span');
         assetRenameLabel.textContent = 'File name';
+        assetRenameLabel.style.flexShrink = '0';
         assetRenameRow.appendChild(assetRenameLabel);
         var assetRenameInput = document.createElement('input');
         assetRenameInput.type = 'text';
         assetRenameInput.value = assetFileName;
         assetRenameRow.appendChild(assetRenameInput);
         dropdown.appendChild(assetRenameRow);
+        _attachExpandBehavior(assetRenameInput);
 
-        var assetRenameBtn = document.createElement('button');
-        assetRenameBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-        assetRenameBtn.textContent = 'Rename File';
-        assetRenameBtn.addEventListener('click', function () {
+        var assetRenameRef = {};
+        var doAssetRename = function () {
           var newName = assetRenameInput.value.trim();
           if (!newName || newName === assetFileName) return;
           var assetDir = assetSrcPath.indexOf('/') >= 0 ? assetSrcPath.substring(0, assetSrcPath.lastIndexOf('/')) : '';
@@ -13906,35 +14093,202 @@
             });
             _commitNavSnapshot();
           });
+        };
+        assetRenameInput.addEventListener('input', function () {
+          assetRenameRef.btn.disabled = !assetRenameInput.value.trim() || assetRenameInput.value.trim() === assetFileName;
         });
-        dropdown.appendChild(assetRenameBtn);
-
-        addDivider();
-
-        var assetDeleteBtn = document.createElement('button');
-        assetDeleteBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-        assetDeleteBtn.style.background = '#d9534f';
-        assetDeleteBtn.textContent = 'Delete File';
-        assetDeleteBtn.addEventListener('click', function () {
-          dropdown.parentNode.removeChild(dropdown);
-          _enterNavEditModeAsync().then(function (ready) {
-            if (!ready) return;
-            item._deleted = true;
-            _addNavBadge({
-              className: 'live-wysiwyg-nav-normalize-badge',
-              text: 'Delete "' + assetFileName + '"'
+        assetRenameInput.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); doAssetRename(); }
+        });
+        addButtonRow([
+          { text: 'Rename File', disabled: true, ref: assetRenameRef, shrink: true, onClick: doAssetRename },
+          { text: 'Delete', style: 'background:#d9534f', onClick: function () {
+            dropdown.parentNode.removeChild(dropdown);
+            _enterNavEditModeAsync().then(function (ready) {
+              if (!ready) return;
+              item._deleted = true;
+              _addNavBadge({
+                className: 'live-wysiwyg-nav-normalize-badge',
+                text: 'Delete "' + assetFileName + '"'
+              });
+              _commitNavSnapshot();
+              _renderNavFromSnapshot();
             });
-            _commitNavSnapshot();
-            _renderNavFromSnapshot();
-          });
-        });
-        dropdown.appendChild(assetDeleteBtn);
+          }}
+        ]);
       }
       return;
     }
 
+    // --- Page / Section frontmatter fields ---
+    var effectiveMeta = (itemType === 'section' && item.index_meta) ? item.index_meta : item;
+    var effectiveIsIndex = itemType === 'section' || (item.isIndex === true);
+    var defaultWeight = effectiveIsIndex
+      ? (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined
+        ? nwConfig.frontmatter_defaults.index_weight : -10)
+      : (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.weight !== undefined
+        ? nwConfig.frontmatter_defaults.weight : 0);
+
+    addTextRow('Title', 'title', item.title || '');
+
+    // Weight + Headless on one row
+    var weightRow = document.createElement('div');
+    weightRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
+    var weightSpan = document.createElement('span');
+    weightSpan.textContent = 'Weight';
+    weightRow.appendChild(weightSpan);
+    var weightInput = document.createElement('input');
+    weightInput.type = 'number';
+    weightInput.value = (effectiveMeta.weight !== undefined && effectiveMeta.weight !== null) ? effectiveMeta.weight : defaultWeight;
+    weightInput.setAttribute('data-fm-key', 'weight');
+    weightInput.style.width = '80px';
+    weightRow.appendChild(weightInput);
+    if (_isRootIndex(item)) {
+      weightInput.disabled = true;
+      weightInput.title = 'Root index page does not use a weight';
+    }
+    if (nwConfig.enabled) {
+      var headlessLbl = document.createElement('label');
+      var headlessCb = document.createElement('input');
+      headlessCb.type = 'checkbox';
+      headlessCb.checked = !!(effectiveMeta.headless);
+      headlessCb.setAttribute('data-fm-key', 'headless');
+      headlessLbl.appendChild(headlessCb);
+      headlessLbl.appendChild(document.createTextNode(' Headless'));
+      weightRow.appendChild(headlessLbl);
+    }
+    dropdown.appendChild(weightRow);
+
+    // Retitled + Empty on one row (index pages only)
+    if (nwConfig.enabled && effectiveIsIndex) {
+      addCheckboxGroup([
+        { label: 'Retitled', key: 'retitled', val: effectiveMeta.retitled || false },
+        { label: 'Empty', key: 'empty', val: effectiveMeta.empty || false }
+      ]);
+    }
+
     addDivider();
 
+    // --- Folder name + Rename/Delete Folder ---
+    var sectionHasIndex = itemType === 'section' && (
+      (item.src_path != null && item.src_path !== '') ||
+      (item.index_meta != null) ||
+      (item.children && item.children.some(function (c) { return c.type === 'page' && c.isIndex; }))
+    );
+    if (itemType === 'section' && (nwConfig.enabled || !sectionHasIndex)) {
+      var folderDir = _getSectionFolderDir(item);
+      if (folderDir) {
+        var folderBaseName = folderDir.indexOf('/') >= 0 ? folderDir.substring(folderDir.lastIndexOf('/') + 1) : folderDir;
+        var folderRow = document.createElement('div');
+        folderRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
+        var folderLabel = document.createElement('span');
+        folderLabel.textContent = 'Folder name';
+        folderLabel.style.flexShrink = '0';
+        folderRow.appendChild(folderLabel);
+        var renameFolderInput = document.createElement('input');
+        renameFolderInput.type = 'text';
+        renameFolderInput.value = folderBaseName;
+        renameFolderInput.setAttribute('data-folder-rename', 'true');
+        folderRow.appendChild(renameFolderInput);
+        dropdown.appendChild(folderRow);
+        _attachExpandBehavior(renameFolderInput);
+
+        var folderRenameRef = {};
+        var doFolderRename = function () {
+          var newName = renameFolderInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+          if (!newName || newName === folderBaseName) return;
+          var parentDir = folderDir.indexOf('/') >= 0 ? folderDir.substring(0, folderDir.lastIndexOf('/')) : '';
+          var newFolder = parentDir ? parentDir + '/' + newName : newName;
+          dropdown.parentNode.removeChild(dropdown);
+          _initiateFolderRename(item, folderDir, newFolder);
+        };
+        renameFolderInput.addEventListener('input', function () {
+          var normalized = renameFolderInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+          folderRenameRef.btn.disabled = !normalized || normalized === folderBaseName;
+        });
+        renameFolderInput.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); doFolderRename(); }
+        });
+        addButtonRow([
+          { text: 'Rename Folder', disabled: true, ref: folderRenameRef, shrink: true, syncRef: _renameRef, onClick: doFolderRename },
+          { text: 'Delete', style: 'background:#d9534f', onClick: function () {
+            dropdown.parentNode.removeChild(dropdown);
+            _initiateFolderDelete(item, folderDir);
+          }}
+        ]);
+
+        addDivider();
+      }
+    } else if (nwConfig.enabled && itemType === 'page' && !_isRootIndex(item)) {
+      // --- File name + Rename/Delete File ---
+      var srcPath = _getItemSrcPath(item) || '';
+      if (srcPath) {
+        var fileName = srcPath.indexOf('/') >= 0 ? srcPath.substring(srcPath.lastIndexOf('/') + 1) : srcPath;
+        var fileBaseName = fileName.replace(/\.md$/, '');
+        var fileRow = document.createElement('div');
+        fileRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
+        var fileLabel = document.createElement('span');
+        fileLabel.textContent = 'File name';
+        fileLabel.style.flexShrink = '0';
+        fileRow.appendChild(fileLabel);
+        var fileRenameInput = document.createElement('input');
+        fileRenameInput.type = 'text';
+        fileRenameInput.value = fileBaseName;
+        fileRow.appendChild(fileRenameInput);
+        dropdown.appendChild(fileRow);
+        _attachExpandBehavior(fileRenameInput);
+
+        var fileRenameRef = {};
+        var doFileRename = function () {
+          var newBase = fileRenameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+          if (!newBase || newBase === fileBaseName) return;
+          var dir = srcPath.indexOf('/') >= 0 ? srcPath.substring(0, srcPath.lastIndexOf('/')) : '';
+          var newPath = dir ? dir + '/' + newBase + '.md' : newBase + '.md';
+          dropdown.parentNode.removeChild(dropdown);
+          _enterNavEditModeAsync().then(function (ready) {
+            if (!ready) return;
+            _navBatchQueue.push({ type: 'rename-page', oldPath: srcPath, newPath: newPath, item: item });
+            item.src_path = newPath;
+            item._renamed = true;
+            _addNavBadge({
+              className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-rename-badge',
+              text: 'Rename "' + fileBaseName + '" \u2192 "' + newBase + '"',
+              attrs: { 'data-rename-page': '1' }
+            });
+            _commitNavSnapshot();
+          });
+        };
+        fileRenameInput.addEventListener('input', function () {
+          var normalized = fileRenameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+          fileRenameRef.btn.disabled = !normalized || normalized === fileBaseName;
+        });
+        fileRenameInput.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); doFileRename(); }
+        });
+        addButtonRow([
+          { text: 'Rename File', disabled: true, ref: fileRenameRef, shrink: true, syncRef: _renameRef, onClick: doFileRename },
+          { text: 'Delete', style: 'background:#d9534f', onClick: function () {
+            dropdown.parentNode.removeChild(dropdown);
+            _enterNavEditModeAsync().then(function (ready) {
+              if (!ready) return;
+              item._deleted = true;
+              _addNavBadge({
+                className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-delete-badge',
+                text: 'Delete "' + fileBaseName + '"',
+                style: 'background:#d9534f'
+              });
+              _commitNavSnapshot();
+              _renderNavFromSnapshot();
+            });
+          }}
+        ]);
+
+        addDivider();
+      }
+    }
+
+    // --- Normalize + Apply ---
+    var bottomBtns = [];
     if (nwConfig.enabled) {
       var normalizeTarget = itemType === 'section' ? item : null;
       if (!normalizeTarget && itemType === 'page') {
@@ -13943,10 +14297,7 @@
           normalizeTarget = { type: 'section', children: liveWysiwygNavData };
         }
       }
-      var normalizeBtn = document.createElement('button');
-      normalizeBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-      normalizeBtn.textContent = 'Normalize Nav Weights';
-      normalizeBtn.addEventListener('click', function () {
+      bottomBtns.push({ text: 'Normalize Weights', shrink: true, ref: _normalizeRef, onClick: function () {
         dropdown.parentNode.removeChild(dropdown);
         _enterNavEditModeAsync().then(function (ready) {
           if (!ready) return;
@@ -13957,19 +14308,41 @@
           });
           _commitNavSnapshot();
         });
-      });
-      dropdown.appendChild(normalizeBtn);
+      }});
     }
-
-    var applyBtn = document.createElement('button');
-    applyBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
-    applyBtn.textContent = 'Apply Changes';
-    applyBtn.style.background = 'var(--md-primary-fg-color,#4051b5)';
-    applyBtn.addEventListener('click', function () {
+    bottomBtns.push({ text: 'Apply', style: 'background:var(--md-primary-fg-color,#4051b5)', onClick: function () {
       _applySettingsGearChanges(dropdown, item, itemType);
       dropdown.parentNode.removeChild(dropdown);
-    });
-    dropdown.appendChild(applyBtn);
+    }});
+    addButtonRow(bottomBtns);
+
+    if (_renameRef.btn && _normalizeRef.btn) {
+      requestAnimationFrame(function () {
+        var nw = _normalizeRef.btn.offsetWidth;
+        if (nw > 0) {
+          _renameRef.btn.style.setProperty('width', nw + 'px', 'important');
+          _renameRef.btn.style.setProperty('flex', '0 0 auto', 'important');
+        }
+      });
+    }
+  }
+
+  function _repositionDropdown(dropdown) {
+    if (!dropdown._gearBtn || !dropdown.parentNode) return;
+    var rect = dropdown._gearBtn.getBoundingClientRect();
+    var ddRect = dropdown.getBoundingClientRect();
+    var vpW = window.innerWidth;
+    var vpH = window.innerHeight;
+    var top = rect.bottom + 4;
+    var left = Math.max(4, rect.left - 100);
+    if (top + ddRect.height > vpH - 8) {
+      top = Math.max(4, rect.top - ddRect.height - 4);
+    }
+    if (left + ddRect.width > vpW - 8) {
+      left = Math.max(4, vpW - ddRect.width - 8);
+    }
+    dropdown.style.top = top + 'px';
+    dropdown.style.left = left + 'px';
   }
 
   function _showSettingsGear(item, itemType, gearBtn) {
@@ -14016,24 +14389,11 @@
 
     _buildSettingsContent(dropdown, item, itemType, nwConfig);
 
-    var rect = gearBtn.getBoundingClientRect();
+    dropdown._gearBtn = gearBtn;
     dropdown.style.position = 'fixed';
     dropdown.style.visibility = 'hidden';
     document.body.appendChild(dropdown);
-
-    var ddRect = dropdown.getBoundingClientRect();
-    var vpW = window.innerWidth;
-    var vpH = window.innerHeight;
-    var top = rect.bottom + 4;
-    var left = Math.max(4, rect.left - 100);
-    if (top + ddRect.height > vpH - 8) {
-      top = Math.max(4, rect.top - ddRect.height - 4);
-    }
-    if (left + ddRect.width > vpW - 8) {
-      left = Math.max(4, vpW - ddRect.width - 8);
-    }
-    dropdown.style.top = top + 'px';
-    dropdown.style.left = left + 'px';
+    _repositionDropdown(dropdown);
     dropdown.style.visibility = '';
 
     var closeHandler = function (e) {
@@ -14276,7 +14636,6 @@
   // NAV MENU - Snapshot-driven top warnings
   // ======================================================================
   var _navTopWarningActions = {
-    'apply-nav-weight-plugin': function () { _applyNavWeightPlugin(); },
     'start-migration': function () { _startMigrationFlow(); },
     'apply-default-weight': function (warn) { _applyDefaultPageWeight(warn._suggestedWeight); }
   };
@@ -14291,23 +14650,15 @@
         icon: 'caution',
         title: 'mkdocs-nav-weight not installed'
       });
-    } else if (cfg && !cfg.enabled) {
-      _navTopWarnings.push({
-        id: 'nav-weight-not-configured',
-        text: 'The mkdocs-nav-weight plugin is not configured. Add it to your mkdocs.yml to enable nav weight management.',
-        icon: 'caution',
-        title: 'mkdocs-nav-weight not configured',
-        actionId: 'apply-nav-weight-plugin',
-        actionText: 'Add to mkdocs.yml'
-      });
-    }
-    if (cfg && cfg.enabled && _ymlHasNavKey(_virtualMkdocsYml)) {
+    } else if ((cfg && !cfg.enabled) || _ymlHasNavKey(_virtualMkdocsYml)) {
+      var migText = !cfg.enabled
+        ? 'The mkdocs-nav-weight plugin is not configured. Migrate to enable frontmatter-based nav weight management.'
+        : 'The nav key in mkdocs.yml can cause ordering conflicts. Migrate fully to mkdocs-nav-weight.';
       _navTopWarnings.push({
         id: 'nav-coexistence',
-        text: 'Both mkdocs-nav-weight and the nav key are present in mkdocs.yml. ' +
-          'This can cause ordering conflicts. Consider migrating fully to mkdocs-nav-weight.',
+        text: migText,
         icon: 'warning',
-        title: 'Nav coexistence',
+        title: 'Migrate to mkdocs-nav-weight',
         actionId: 'start-migration',
         actionText: 'Migrate to mkdocs-nav-weight'
       });
@@ -14358,11 +14709,6 @@
         var b = document.createElement('button');
         b.textContent = btn.text;
         if (btn.primary) b.className = 'live-wysiwyg-nav-popup-primary';
-        var docDirtyForBtn = wysiwygEditor && wysiwygEditor._isDocDirty && wysiwygEditor._isDocDirty();
-        if (docDirtyForBtn && btn.primary) {
-          b.disabled = true;
-          b.title = 'Save the current page before applying';
-        }
         b.addEventListener('click', function () {
           popup.parentNode.removeChild(popup);
           if (btn.action) btn.action();
@@ -15073,8 +15419,9 @@
   }
 
   function _startMigrationFlow() {
-    _enterNavEditModeAsync().then(function (ready) {
-      if (!ready) return;
+    _prefetchMkdocsYml().then(function () {
+      var cfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
+      var pluginJustAdded = !cfg.enabled;
       var navStructure = _parseYamlNavKey(_virtualMkdocsYml);
       if (!navStructure || !navStructure.length) {
         _showNavDialog('No nav structure found in mkdocs.yml. Nothing to migrate.', [{ text: 'OK', value: 'ok' }]);
@@ -15121,6 +15468,7 @@
       var summaryHtml = '<p style="margin:0 0 12px">This will migrate your navigation from the mkdocs.yml <code>nav</code> key to mkdocs-nav-weight frontmatter.</p>' +
         '<p style="margin:0 0 4px"><strong>Summary:</strong></p>' +
         '<ul style="margin:4px 0 12px;padding-left:20px;font-size:.83rem">';
+      if (pluginJustAdded) summaryHtml += '<li>Add <code>mkdocs-nav-weight</code> plugin to mkdocs.yml</li>';
       if (splitCount) summaryHtml += '<li>Split ' + splitCount + ' existing index.md file' + (splitCount > 1 ? 's' : '') + ' (content renamed, thin index created)</li>';
       if (createCount) summaryHtml += '<li>Create ' + createCount + ' new index.md file' + (createCount > 1 ? 's' : '') + ' for sections</li>';
       if (moveCount) summaryHtml += '<li>Move ' + moveCount + ' document' + (moveCount > 1 ? 's' : '') + ' to match nav structure</li>';
@@ -15144,6 +15492,7 @@
       ]).then(function (result) {
         if (result !== 'start') return;
         if (!_navEditMode) _enterNavEditMode();
+        if (pluginJustAdded) _stageNavWeightPlugin();
         _applyMigrationToNavData(navStructure, allPaths, suggestedWeight);
         _navMigrationPending = true;
         _removeNavTopWarning('nav-coexistence');
@@ -15167,7 +15516,7 @@
     return yml + '\nplugins:' + newEntry;
   }
 
-  function _applyNavWeightPlugin() {
+  function _stageNavWeightPlugin() {
     if (typeof liveWysiwygNavWeightConfig === 'undefined') {
       window.liveWysiwygNavWeightConfig = {};
     }
@@ -15181,33 +15530,21 @@
         weight: dpw, index_weight: -10, headless: false, retitled: false, empty: false
       };
     }
-
     _virtualMkdocsYml = _insertNavWeightEntry(_virtualMkdocsYml || '');
     if (_virtualOriginalMkdocsYml != null) {
       _virtualOriginalMkdocsYml = _insertNavWeightEntry(_virtualOriginalMkdocsYml);
     }
-
-    _removeNavTopWarning('nav-weight-not-configured');
     _removeNavTopWarning('nav-weight-not-installed');
-    if (_ymlHasNavKey(_virtualMkdocsYml) && !_hasNavTopWarning('nav-coexistence')) {
-      _navTopWarnings.push({
-        id: 'nav-coexistence',
-        text: 'Both mkdocs-nav-weight and the nav key are present in mkdocs.yml. ' +
-          'This can cause ordering conflicts. Consider migrating fully to mkdocs-nav-weight.',
-        icon: 'warning',
-        title: 'Nav coexistence',
-        actionId: 'start-migration',
-        actionText: 'Migrate to mkdocs-nav-weight'
-      });
-      _ensureNavUncollapsed();
-    }
-
     if (!_navBadges.some(function (b) { return b.text === 'mkdocs-nav-weight plugin staged'; })) {
       _addNavBadge({
         className: 'live-wysiwyg-nav-normalize-badge',
         text: 'mkdocs-nav-weight plugin staged'
       });
     }
+  }
+
+  function _applyNavWeightPlugin() {
+    _stageNavWeightPlugin();
     _commitNavSnapshot();
     if (!_navEditMode) _enterNavEditMode();
   }
@@ -16134,6 +16471,60 @@
   }
 
   // ======================================================================
+  // ======================================================================
+  // Focus Mode Settings Dropdown
+  // ======================================================================
+  function _createSettingsDropdown(gearBtn) {
+    var existing = document.querySelector('.live-wysiwyg-focus-settings-dropdown');
+    if (existing) { existing.parentNode.removeChild(existing); return; }
+
+    var dropdown = document.createElement('div');
+    dropdown.className = 'live-wysiwyg-focus-settings-dropdown';
+
+    var title = document.createElement('div');
+    title.className = 'live-wysiwyg-focus-settings-title';
+    title.textContent = 'Settings';
+    dropdown.appendChild(title);
+
+    function addCheckbox(label, settingKey) {
+      var lbl = document.createElement('label');
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'live-wysiwyg-focus-settings-cb';
+      cb.checked = _getSetting(settingKey) === '1';
+      cb.addEventListener('change', function () {
+        _setSetting(settingKey, cb.checked ? '1' : '0');
+      });
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(label));
+      dropdown.appendChild(lbl);
+      return cb;
+    }
+
+    addCheckbox('Auto-launch editor on page load', 'live_wysiwyg_autolaunch');
+    addCheckbox('Focus Mode by default', 'live_wysiwyg_autofocus');
+    addCheckbox('Remain in Focus Mode on Save', 'live_wysiwyg_focus_remain');
+
+    var rect = gearBtn.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.top = (rect.bottom + 2) + 'px';
+    dropdown.style.left = rect.left + 'px';
+    document.body.appendChild(dropdown);
+
+    var ddRect = dropdown.getBoundingClientRect();
+    if (ddRect.right > window.innerWidth - 8) {
+      dropdown.style.left = Math.max(4, window.innerWidth - ddRect.width - 8) + 'px';
+    }
+
+    var closeHandler = function (e) {
+      if (!dropdown.contains(e.target) && e.target !== gearBtn) {
+        if (dropdown.parentNode) dropdown.parentNode.removeChild(dropdown);
+        document.removeEventListener('click', closeHandler, true);
+      }
+    };
+    setTimeout(function () { document.addEventListener('click', closeHandler, true); }, 0);
+  }
+
   // NAV MENU - WYSIWYG Page Management Submenu
   // ======================================================================
   function _createPageSubmenu(contentBtn) {
@@ -16196,43 +16587,6 @@
     });
     submenu.appendChild(findDeadLinksBtn);
 
-    var discardBtn = document.createElement('button');
-    discardBtn.textContent = 'Discard Changes';
-    discardBtn.addEventListener('click', function () {
-      _closeSubmenu();
-      if (_navEditMode) {
-        _confirmNavDiscard();
-      } else {
-        _showNavDialog(
-          'Discard all changes to the current document?',
-          [
-            { text: 'Cancel', value: 'cancel' },
-            { text: 'Discard', value: 'discard', className: 'live-wysiwyg-nav-dialog-danger' }
-          ]
-        ).then(function (result) {
-          if (result === 'discard') {
-            var currentSrc = _getCurrentSrcPath();
-            if (currentSrc && wysiwygEditor) {
-              var discardOv = _showFullScreenTransition('Discarding changes...');
-              _wsGetContents(currentSrc).then(function (md) {
-                if (wysiwygEditor._loadContent) {
-                  wysiwygEditor._loadContent(md);
-                }
-                if (wysiwygEditor._resetPristineContent) {
-                  wysiwygEditor._resetPristineContent(md);
-                }
-                _refreshFocusToc();
-                _fadeOutOverlay(discardOv);
-              }).catch(function () {
-                _fadeOutOverlay(discardOv);
-              });
-            }
-          }
-        });
-      }
-    });
-    submenu.appendChild(discardBtn);
-
     var rect = contentBtn.getBoundingClientRect();
     submenu.style.position = 'fixed';
     submenu.style.top = (rect.bottom + 2) + 'px';
@@ -16277,8 +16631,15 @@
     document.body.appendChild(dialogOverlay);
 
     var filenameInput = content.querySelector('.live-wysiwyg-rename-filename');
+    var titleInput = content.querySelector('.live-wysiwyg-rename-title');
     filenameInput.addEventListener('input', function () {
       filenameInput.value = filenameInput.value.replace(/[^a-z0-9-]/g, '');
+    });
+    filenameInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); titleInput.focus(); titleInput.select(); }
+    });
+    titleInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); confirmBtn.click(); }
     });
 
     cancelBtn.addEventListener('click', function () { dialogOverlay.parentNode.removeChild(dialogOverlay); });
@@ -16298,7 +16659,7 @@
       if (_batchClaimedPaths) _batchClaimedPaths.add(newPath);
       _navFocusTarget = newPath;
 
-      var navItem = _findNavItemByPath(typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : [], currentSrcPath);
+      var navItem = _findNavItemByPath(currentSrcPath);
       if (navItem) {
         navItem.src_path = newPath;
         navItem._renamed = true;
@@ -16554,7 +16915,7 @@
     if (!_focusOverlay) return;
     if (_focusOverlay.classList.contains('live-wysiwyg-focus-nav-collapsed')) {
       _focusOverlay.classList.remove('live-wysiwyg-focus-nav-collapsed');
-      document.cookie = 'live_wysiwyg_focus_nav=1;path=/;max-age=31536000;SameSite=Lax';
+      _setSetting('live_wysiwyg_focus_nav', '1');
     }
   }
 
@@ -16693,21 +17054,18 @@
       '.live-wysiwyg-focus-mode-toggle button:not(.active):hover{' +
         'background-color:var(--md-default-bg-color--lighter,#e9e9e9);' +
       '}' +
-      '.live-wysiwyg-focus-save-btn{' +
+      '.live-wysiwyg-focus-save-btn,.live-wysiwyg-focus-discard-btn{' +
         'background-color:var(--md-accent-fg-color,#007bff);color:#fff;' +
         'border:1px solid var(--md-accent-fg-color,#007bff);' +
         'border-radius:4px;padding:4px 14px;cursor:pointer;font-size:.75rem;' +
+        'overflow:hidden;max-width:0;opacity:0;padding-left:0;padding-right:0;' +
+        'border-width:0;margin:0;white-space:nowrap;' +
+        'transition:max-width .3s ease,opacity .25s ease,padding .3s ease,border-width .3s ease,margin .3s ease;' +
       '}' +
-      '.live-wysiwyg-focus-save-btn:hover{' +
-        'background-color:var(--md-primary-fg-color--dark,#0056b3);' +
-        'border-color:var(--md-primary-fg-color--dark,#0056b3);' +
+      '.live-wysiwyg-focus-save-btn.visible,.live-wysiwyg-focus-discard-btn.visible{' +
+        'max-width:120px;opacity:1;padding:4px 14px;border-width:1px;margin:0;' +
       '}' +
-      '.live-wysiwyg-focus-cancel-btn{' +
-        'background-color:var(--md-accent-fg-color,#007bff);color:#fff;' +
-        'border:1px solid var(--md-accent-fg-color,#007bff);' +
-        'border-radius:4px;padding:4px 14px;cursor:pointer;font-size:.75rem;' +
-      '}' +
-      '.live-wysiwyg-focus-cancel-btn:hover{' +
+      '.live-wysiwyg-focus-save-btn:hover,.live-wysiwyg-focus-discard-btn:hover{' +
         'background-color:var(--md-primary-fg-color--dark,#0056b3);' +
         'border-color:var(--md-primary-fg-color--dark,#0056b3);' +
       '}' +
@@ -16721,29 +17079,42 @@
       '.live-wysiwyg-focus-content-btn:hover{' +
         'background-color:var(--md-default-bg-color--lighter,#e9e9e9);' +
       '}' +
-      '.live-wysiwyg-focus-exit-btn{' +
-        'background-color:var(--md-default-bg-color,#fff);' +
-        'color:var(--md-default-fg-color,#333);' +
-        'border:1px solid var(--md-default-fg-color--lighter,#ccc);' +
-        'border-radius:4px;padding:4px 14px;cursor:pointer;font-size:.75rem;' +
+      '.live-wysiwyg-focus-settings-btn{' +
+        'background:none;border:none;cursor:pointer;font-size:1.4rem;padding:2px 6px;' +
+        'color:var(--md-accent-fg-color,#7c4dff);line-height:1;position:relative;' +
+        'border-radius:4px;transition:background .15s,color .15s;' +
       '}' +
-      '.live-wysiwyg-focus-exit-btn:hover{' +
-        'background-color:var(--md-default-bg-color--lighter,#e9e9e9);' +
+      '.live-wysiwyg-focus-settings-btn:hover{' +
+        'color:var(--md-primary-fg-color,#4051b5);background:var(--md-default-bg-color--lighter,#e9e9e9);' +
       '}' +
-      '.live-wysiwyg-focus-autofocus-label{' +
-        'display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:.75rem;' +
-        'color:var(--md-default-fg-color--light,#555);user-select:none;' +
+      '.live-wysiwyg-focus-settings-dropdown{' +
+        'position:fixed;z-index:99995;background:var(--md-default-bg-color,#fff);' +
+        'border:1px solid var(--md-default-fg-color--lightest,#ddd);border-radius:6px;' +
+        'box-shadow:0 4px 16px rgba(0,0,0,.15);min-width:220px;padding:6px 0;' +
       '}' +
-      '.live-wysiwyg-focus-autofocus-cb{' +
+      '.live-wysiwyg-focus-settings-title{' +
+        'padding:6px 12px 4px;font-size:.7rem;font-weight:600;letter-spacing:.03em;' +
+        'text-transform:uppercase;color:var(--md-accent-fg-color,#7c4dff);' +
+        'border-bottom:1px solid var(--md-accent-fg-color--transparent,rgba(124,77,255,.25));margin-bottom:2px;' +
+      '}' +
+      '.live-wysiwyg-focus-settings-dropdown label{' +
+        'display:flex;align-items:center;gap:6px;padding:5px 12px;cursor:pointer;' +
+        'font-size:.75rem;color:var(--md-default-fg-color,#333);user-select:none;' +
+        'transition:background .1s;' +
+      '}' +
+      '.live-wysiwyg-focus-settings-dropdown label:hover{' +
+        'background:var(--md-accent-fg-color--transparent,#cce5ff);' +
+      '}' +
+      '.live-wysiwyg-focus-settings-cb{' +
         'appearance:none;-webkit-appearance:none;width:14px;height:14px;' +
         'border:2px solid var(--md-default-fg-color--lighter,#ccc);border-radius:3px;' +
         'cursor:pointer;position:relative;flex-shrink:0;transition:background-color .15s,border-color .15s;' +
       '}' +
-      '.live-wysiwyg-focus-autofocus-cb:checked{' +
+      '.live-wysiwyg-focus-settings-cb:checked{' +
         'background-color:var(--md-accent-fg-color,#7c4dff);' +
         'border-color:var(--md-accent-fg-color,#7c4dff);' +
       '}' +
-      '.live-wysiwyg-focus-autofocus-cb:checked::after{' +
+      '.live-wysiwyg-focus-settings-cb:checked::after{' +
         'content:"";position:absolute;left:3px;top:0px;width:4px;height:8px;' +
         'border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg);' +
       '}' +
@@ -16826,6 +17197,12 @@
 
       '.live-wysiwyg-focus-nav-collapsed .live-wysiwyg-focus-sidebar-left{' +
         'transform:translateX(-100%);opacity:0;pointer-events:none;' +
+      '}' +
+      '.focus-mode-markdown .live-wysiwyg-focus-sidebar-left{' +
+        'transition:transform .3s ease-in-out,opacity .3s ease-in-out,width .3s ease-in-out,margin .3s ease-in-out;' +
+      '}' +
+      '.focus-mode-markdown.live-wysiwyg-focus-nav-collapsed .live-wysiwyg-focus-sidebar-left{' +
+        'width:0;margin-left:0;padding:0;' +
       '}' +
       '@media screen and (max-width:60em){' +
         '.live-wysiwyg-focus-toc{display:none;}' +
@@ -16929,24 +17306,54 @@
         'margin-left:4px;cursor:pointer;' +
       '}' +
 
-      // --- Remain on save + auto-focus checkbox wrapper ---
-      '.live-wysiwyg-focus-checkboxes{display:flex;flex-direction:column;gap:2px;}' +
-      '.live-wysiwyg-focus-remain-label{' +
-        'display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:.75rem;' +
-        'color:var(--md-default-fg-color--light,#555);user-select:none;' +
+      // (settings checkboxes now live inside the gear dropdown)
+
+      // --- Link chain indicator + themed link dropdown overrides ---
+      '.md-link-chain-indicator{' +
+        'background-color:var(--md-accent-fg-color,#7c4dff)!important;' +
+        'border-color:var(--md-accent-fg-color,#7c4dff)!important;' +
+        'color:#fff!important;' +
+        'box-shadow:0 2px 8px rgba(0,0,0,.2);' +
       '}' +
-      '.live-wysiwyg-focus-remain-cb{' +
-        'appearance:none;-webkit-appearance:none;width:14px;height:14px;' +
-        'border:2px solid var(--md-default-fg-color--lighter,#ccc);border-radius:3px;' +
-        'cursor:pointer;position:relative;flex-shrink:0;transition:background-color .15s,border-color .15s;' +
+      '.md-link-chain-indicator:hover{' +
+        'background-color:var(--md-primary-fg-color,#4051b5)!important;' +
+        'border-color:var(--md-primary-fg-color,#4051b5)!important;' +
+        'box-shadow:0 2px 12px rgba(0,0,0,.3);' +
       '}' +
-      '.live-wysiwyg-focus-remain-cb:checked{' +
-        'background-color:var(--md-accent-fg-color,#7c4dff);' +
-        'border-color:var(--md-accent-fg-color,#7c4dff);' +
+      '.md-link-settings-dropdown{' +
+        'background:var(--md-default-bg-color,#fff)!important;' +
+        'border-color:var(--md-default-fg-color--lightest,#ddd)!important;' +
+        'color:var(--md-default-fg-color,#333)!important;' +
+        'box-shadow:0 4px 16px rgba(0,0,0,.15)!important;' +
+        'min-width:220px;transition:min-width .25s ease-out;' +
       '}' +
-      '.live-wysiwyg-focus-remain-cb:checked::after{' +
-        'content:"";position:absolute;left:3px;top:0px;width:4px;height:8px;' +
-        'border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg);' +
+      '.md-link-settings-input{' +
+        'background:var(--md-default-bg-color--light,#f7f7f7)!important;' +
+        'color:var(--md-default-fg-color,#333)!important;' +
+        'border-color:var(--md-default-fg-color--lighter,#ccc)!important;' +
+      '}' +
+      '.md-link-settings-input:focus{' +
+        'border-color:var(--md-accent-fg-color,#7c4dff)!important;' +
+      '}' +
+      '.md-link-settings-input::placeholder{' +
+        'color:var(--md-default-fg-color--lighter,#888)!important;' +
+      '}' +
+      '.md-link-settings-apply{' +
+        'background:var(--md-accent-fg-color,#7c4dff)!important;' +
+        'color:#fff!important;border-color:var(--md-accent-fg-color,#7c4dff)!important;' +
+      '}' +
+      '.md-link-settings-apply:hover{' +
+        'background:var(--md-primary-fg-color,#4051b5)!important;' +
+        'border-color:var(--md-primary-fg-color,#4051b5)!important;' +
+      '}' +
+      '.md-link-settings-remove{' +
+        'background:none;color:var(--md-default-fg-color--light,#888);' +
+        'border:1px solid var(--md-default-fg-color--lighter,#ccc);' +
+        'border-radius:3px;padding:4px 12px;cursor:pointer;' +
+        'font-family:inherit;font-size:inherit;transition:background .1s,color .1s;' +
+      '}' +
+      '.md-link-settings-remove:hover{' +
+        'background:#d9534f;color:#fff;border-color:#d9534f;' +
       '}' +
 
       // --- Arrow controls wrapper (arrows + gear grouped on the left) ---
@@ -17073,15 +17480,6 @@
       '}' +
       '.live-wysiwyg-nav-pending-delete-item::before{content:"\\2022 ";color:rgba(217,83,79,.8);}' +
 
-      // --- Read-only overlay during nav edit ---
-      '.live-wysiwyg-nav-readonly-overlay{' +
-        'position:absolute;inset:0;z-index:10;' +
-        'background:rgba(0,0,0,.55);' +
-        'display:flex;align-items:center;justify-content:center;' +
-        'font-size:.8rem;color:rgba(255,255,255,.85);' +
-        'pointer-events:all;user-select:none;backdrop-filter:blur(2px);' +
-      '}' +
-
       // --- Save/Discard confirmation dialog ---
       '.live-wysiwyg-nav-dialog{' +
         'position:fixed;inset:0;z-index:99999;' +
@@ -17174,6 +17572,7 @@
         'box-shadow:0 4px 16px rgba(0,0,0,.15);padding:12px 14px;min-width:220px;' +
         'max-height:80vh;overflow-y:auto;' +
         'font-size:.75rem;color:var(--md-default-fg-color,#333);' +
+        'transition:min-width .25s ease-out;' +
       '}' +
       '.live-wysiwyg-nav-settings-dropdown label{' +
         'display:flex;align-items:center;gap:6px;padding:4px 0;cursor:pointer;' +
@@ -17186,6 +17585,24 @@
       '}' +
       '.live-wysiwyg-nav-settings-row{padding:4px 0;display:flex;flex-direction:column;gap:2px;}' +
       '.live-wysiwyg-nav-settings-row span{font-weight:600;font-size:.7rem;}' +
+      '.live-wysiwyg-nav-settings-row.live-wysiwyg-nav-settings-inline{' +
+        'flex-direction:row;align-items:center;gap:8px;' +
+      '}' +
+      '.live-wysiwyg-nav-settings-row.live-wysiwyg-nav-settings-inline input[type="text"]{' +
+        'flex:1;min-width:0;' +
+      '}' +
+      '.live-wysiwyg-nav-settings-row.live-wysiwyg-nav-settings-inline input[type="number"]{' +
+        'width:80px;flex:0 0 auto;' +
+      '}' +
+      '.live-wysiwyg-nav-settings-checkbox-group{' +
+        'flex-direction:row;flex-wrap:wrap;gap:10px;align-items:center;' +
+      '}' +
+      '.live-wysiwyg-nav-settings-btn-row{' +
+        'display:flex;gap:4px;margin-top:4px;' +
+      '}' +
+      '.live-wysiwyg-nav-settings-btn-row .live-wysiwyg-nav-settings-normalize-btn{' +
+        'flex:1;margin-top:0;' +
+      '}' +
       '.live-wysiwyg-nav-settings-divider{' +
         'border:none;border-top:1px solid var(--md-default-fg-color--lightest,#ddd);margin:6px 0;' +
       '}' +
@@ -17195,6 +17612,7 @@
         'border-radius:3px;cursor:pointer;font-size:.7rem;transition:opacity .15s;' +
       '}' +
       '.live-wysiwyg-nav-settings-normalize-btn:hover{opacity:.85;}' +
+      '.live-wysiwyg-nav-settings-normalize-btn:disabled{opacity:.4;cursor:default;}' +
 
       // --- Caution / warning icons ---
       '.live-wysiwyg-nav-empty-folder-caution{cursor:pointer;margin-left:4px;font-size:.75rem;opacity:.8;}' +
@@ -17453,12 +17871,16 @@
     var html = '';
     if (wysiwygEditor && wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
       var mdVal = wysiwygEditor.markdownArea.value;
-      var headingRe = /^(#{1,6})\s+(.*)$/gm;
-      var match;
+      var mdLines = mdVal.split('\n');
+      var inFence = false;
       var idx = 0;
-      while ((match = headingRe.exec(mdVal)) !== null) {
-        var level = match[1].length;
-        var text = match[2].replace(/\s*#*\s*$/, '').trim();
+      for (var li = 0; li < mdLines.length; li++) {
+        if (/^(`{3,}|~{3,})/.test(mdLines[li])) { inFence = !inFence; continue; }
+        if (inFence) continue;
+        var hMatch = mdLines[li].match(/^(#{1,6})\s+(.*)/);
+        if (!hMatch) continue;
+        var level = hMatch[1].length;
+        var text = hMatch[2].replace(/\s*#*\s*$/, '').trim();
         if (!text) continue;
         var paddingLeft = 0.6 + (level - 1) * 0.6;
         html += '<li class="md-nav__item">' +
@@ -17532,16 +17954,21 @@
     if (!tocListEl || !wysiwygEditor || !wysiwygEditor.markdownArea) return;
     var ma = wysiwygEditor.markdownArea;
     var cursorPos = ma.selectionStart;
-    var textBefore = ma.value.substring(0, cursorPos);
-    var headingRe = /^#{1,6}\s+/gm;
+    var mdLines = ma.value.split('\n');
+    var inFence = false;
     var activeIdx = -1;
     var idx = 0;
-    var fullHeadingRe = /^(#{1,6})\s+(.*)$/gm;
-    var match;
-    while ((match = fullHeadingRe.exec(ma.value)) !== null) {
-      var text = match[2].replace(/\s*#*\s*$/, '').trim();
+    var charPos = 0;
+    for (var li = 0; li < mdLines.length; li++) {
+      var lineStart = charPos;
+      charPos += mdLines[li].length + 1;
+      if (/^(`{3,}|~{3,})/.test(mdLines[li])) { inFence = !inFence; continue; }
+      if (inFence) continue;
+      var hMatch = mdLines[li].match(/^(#{1,6})\s+(.*)/);
+      if (!hMatch) continue;
+      var text = hMatch[2].replace(/\s*#*\s*$/, '').trim();
       if (!text) continue;
-      if (match.index <= cursorPos) {
+      if (lineStart <= cursorPos) {
         activeIdx = idx;
       }
       idx++;
@@ -17678,10 +18105,10 @@
 
     var overlay = document.createElement('div');
     overlay.className = 'live-wysiwyg-focus-overlay';
-    if ((document.cookie.match(/(?:^|;\s*)live_wysiwyg_focus_toolbar=(\d)/) || [])[1] !== '0') {
+    if (_getSetting('live_wysiwyg_focus_toolbar') !== '0') {
       overlay.classList.add('live-wysiwyg-focus-toolbar-open');
     }
-    if ((document.cookie.match(/(?:^|;\s*)live_wysiwyg_focus_nav=(\d)/) || [])[1] === '0') {
+    if (_getSetting('live_wysiwyg_focus_nav') === '0') {
       overlay.classList.add('live-wysiwyg-focus-nav-collapsed');
     }
     _focusOverlay = overlay;
@@ -17707,7 +18134,7 @@
     drawerToggle.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z" fill="currentColor"/></svg>';
     drawerToggle.addEventListener('click', function () {
       var isOpen = overlay.classList.toggle('live-wysiwyg-focus-toolbar-open');
-      document.cookie = 'live_wysiwyg_focus_toolbar=' + (isOpen ? '1' : '0') + ';path=/;max-age=31536000;SameSite=Lax';
+      _setSetting('live_wysiwyg_focus_toolbar', isOpen ? '1' : '0');
       _updateToolbarHeight(overlay, drawer);
     });
     var navToggle = document.createElement('button');
@@ -17717,7 +18144,7 @@
     navToggle.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z" fill="currentColor"/></svg>';
     navToggle.addEventListener('click', function () {
       var isCollapsed = overlay.classList.toggle('live-wysiwyg-focus-nav-collapsed');
-      document.cookie = 'live_wysiwyg_focus_nav=' + (isCollapsed ? '0' : '1') + ';path=/;max-age=31536000;SameSite=Lax';
+      _setSetting('live_wysiwyg_focus_nav', isCollapsed ? '0' : '1');
     });
     headerLeft.appendChild(navToggle);
     headerLeft.appendChild(drawerToggle);
@@ -17905,6 +18332,17 @@
       drawerControls.appendChild(contentBtn);
     }
 
+    function _updateSaveDiscardVisibility(sBtn, dBtn) {
+      var show = wysiwygEditor && wysiwygEditor._isDocDirty && wysiwygEditor._isDocDirty();
+      if (show) {
+        sBtn.classList.add('visible');
+        dBtn.classList.add('visible');
+      } else {
+        sBtn.classList.remove('visible');
+        dBtn.classList.remove('visible');
+      }
+    }
+
     var saveBtn = document.createElement('button');
     saveBtn.type = 'button';
     saveBtn.className = 'live-wysiwyg-focus-save-btn';
@@ -17914,57 +18352,48 @@
     });
     drawerControls.appendChild(saveBtn);
 
-    var cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.className = 'live-wysiwyg-focus-cancel-btn';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.addEventListener('click', function () {
-      var upstreamCancel = document.querySelector('.live-edit-cancel-button');
-      if (upstreamCancel && !upstreamCancel.disabled) {
-        exitFocusMode();
-        upstreamCancel.click();
+    var discardBtn = document.createElement('button');
+    discardBtn.type = 'button';
+    discardBtn.className = 'live-wysiwyg-focus-discard-btn';
+    discardBtn.textContent = 'Discard';
+    discardBtn.addEventListener('click', function () {
+      if (!wysiwygEditor || !(wysiwygEditor._isDocDirty && wysiwygEditor._isDocDirty())) return;
+      _showNavDialog(
+        'Discard all changes to the current document?',
+        [
+          { text: 'Cancel', value: 'cancel' },
+          { text: 'Discard', value: 'discard', className: 'live-wysiwyg-nav-dialog-danger' }
+        ]
+      ).then(function (result) {
+        if (result === 'discard') {
+          var currentSrc = _getCurrentSrcPath();
+          if (currentSrc && wysiwygEditor) {
+            _wsGetContents(currentSrc).then(function (md) {
+              if (wysiwygEditor._loadContent) wysiwygEditor._loadContent(md);
+              if (wysiwygEditor._resetPristineContent) wysiwygEditor._resetPristineContent(md);
+              _refreshFocusToc();
+              _updateSaveDiscardVisibility(saveBtn, discardBtn);
+            });
+          }
+        }
+      });
+    });
+    drawerControls.appendChild(discardBtn);
+
+    var settingsBtn = document.createElement('button');
+    settingsBtn.type = 'button';
+    settingsBtn.className = 'live-wysiwyg-focus-settings-btn';
+    settingsBtn.title = 'Settings';
+    settingsBtn.textContent = '\u2699';
+    settingsBtn.addEventListener('click', function () {
+      var existing = document.querySelector('.live-wysiwyg-focus-settings-dropdown');
+      if (existing) {
+        existing.parentNode.removeChild(existing);
+        return;
       }
+      _createSettingsDropdown(settingsBtn);
     });
-    drawerControls.appendChild(cancelBtn);
-
-    var exitBtn = document.createElement('button');
-    exitBtn.type = 'button';
-    exitBtn.className = 'live-wysiwyg-focus-exit-btn';
-    exitBtn.textContent = 'Exit Focus Mode';
-    exitBtn.addEventListener('click', function () {
-      exitFocusMode();
-    });
-    drawerControls.appendChild(exitBtn);
-
-    var autofocusLabel = document.createElement('label');
-    autofocusLabel.className = 'live-wysiwyg-focus-autofocus-label';
-    var autofocusCb = document.createElement('input');
-    autofocusCb.type = 'checkbox';
-    autofocusCb.className = 'live-wysiwyg-focus-autofocus-cb';
-    autofocusCb.checked = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_autofocus=(\d)/) || [])[1] === '1';
-    autofocusCb.addEventListener('change', function () {
-      document.cookie = 'live_wysiwyg_autofocus=' + (autofocusCb.checked ? '1' : '0') + ';path=/;max-age=31536000;SameSite=Lax';
-    });
-    autofocusLabel.appendChild(autofocusCb);
-    autofocusLabel.appendChild(document.createTextNode('Auto Focus'));
-
-    var remainLabel = document.createElement('label');
-    remainLabel.className = 'live-wysiwyg-focus-remain-label';
-    var remainCb = document.createElement('input');
-    remainCb.type = 'checkbox';
-    remainCb.className = 'live-wysiwyg-focus-remain-cb';
-    remainCb.checked = _getCookie('live_wysiwyg_focus_remain') === '1';
-    remainCb.addEventListener('change', function () {
-      _setCookie('live_wysiwyg_focus_remain', remainCb.checked ? '1' : '0');
-    });
-    remainLabel.appendChild(remainCb);
-    remainLabel.appendChild(document.createTextNode('Remain in Focus Mode on Save'));
-
-    var cbWrapper = document.createElement('div');
-    cbWrapper.className = 'live-wysiwyg-focus-checkboxes';
-    cbWrapper.appendChild(autofocusLabel);
-    cbWrapper.appendChild(remainLabel);
-    drawerControls.appendChild(cbWrapper);
+    drawerControls.appendChild(settingsBtn);
 
     drawer.appendChild(drawerControls);
 
@@ -17991,6 +18420,7 @@
 
     var sidebarLeft = document.createElement('div');
     sidebarLeft.className = 'live-wysiwyg-focus-sidebar-left';
+    _validateNavStorageSchema();
     if (typeof liveWysiwygNavData !== 'undefined' && liveWysiwygNavData.length) {
       _assignUids(liveWysiwygNavData);
       _attachFrontmatterToNavData(liveWysiwygNavData);
@@ -18161,20 +18591,35 @@
       _fadeOutOverlay(earlyOv);
     }
 
-    var cursorCookie = _getCookie('live_wysiwyg_nav_edit_cursor');
+    var cursorCookie = _getSetting('live_wysiwyg_nav_edit_cursor');
     if (cursorCookie) {
       try {
         var cursorData = JSON.parse(cursorCookie);
         _restoreEditorSelection(cursorData, mainArea);
       } catch (e) { /* parse error */ }
-      _deleteCookie('live_wysiwyg_nav_edit_cursor');
+      _deleteSetting('live_wysiwyg_nav_edit_cursor');
     }
 
     _checkDeadLinksForCurrentPage();
 
-    if (_getCookie('live_wysiwyg_migration_normalize')) {
-      _deleteCookie('live_wysiwyg_migration_normalize');
-      _setCookie('live_wysiwyg_migration_adjust_weight', '1', 120);
+    _updateSaveDiscardVisibility(saveBtn, discardBtn);
+    var _dirtyCheckHandler = function () {
+      _updateSaveDiscardVisibility(saveBtn, discardBtn);
+    };
+    if (wysiwygEditor.editableArea) {
+      wysiwygEditor.editableArea.addEventListener('input', _dirtyCheckHandler);
+    }
+    if (wysiwygEditor.markdownArea) {
+      wysiwygEditor.markdownArea.addEventListener('input', _dirtyCheckHandler);
+    }
+    overlay._dirtyCheckHandler = _dirtyCheckHandler;
+    overlay._saveBtn = saveBtn;
+    overlay._discardBtn = discardBtn;
+    overlay._updateSaveDiscard = function () { _updateSaveDiscardVisibility(saveBtn, discardBtn); };
+
+    if (_getSetting('live_wysiwyg_migration_normalize')) {
+      _deleteSetting('live_wysiwyg_migration_normalize');
+      _setSetting('live_wysiwyg_migration_adjust_weight', '1');
       console.log('[normalize-debug] migration_normalize cookie found, scheduling _autoNormalizeAfterMigration in 600ms');
       console.log('[normalize-debug] initial navData at migration_normalize time:');
       (function dumpInitNav(items, depth) {
@@ -18189,8 +18634,8 @@
         }
       })(liveWysiwygNavData || [], 0);
       setTimeout(function () { _autoNormalizeAfterMigration(); }, 600);
-    } else if (_getCookie('live_wysiwyg_migration_adjust_weight')) {
-      _deleteCookie('live_wysiwyg_migration_adjust_weight');
+    } else if (_getSetting('live_wysiwyg_migration_adjust_weight')) {
+      _deleteSetting('live_wysiwyg_migration_adjust_weight');
       setTimeout(function () {
         var adjusted = _autoAdjustDefaultPageWeight();
         if (!adjusted) {
@@ -18205,9 +18650,9 @@
   }
 
   function _showMigrationResultIfPending() {
-    var result = _getCookie('live_wysiwyg_migration_result');
+    var result = _getSetting('live_wysiwyg_migration_result');
     if (!result) return;
-    _deleteCookie('live_wysiwyg_migration_result');
+    _deleteSetting('live_wysiwyg_migration_result');
     if (result === 'warnings') {
       _queuePostSaveMessage('warning', 'Migration completed with warnings.');
     } else {
@@ -18319,7 +18764,16 @@
     }
     _focusOriginalToolbarParent = null;
 
+    var settingsDd = document.querySelector('.live-wysiwyg-focus-settings-dropdown');
+    if (settingsDd && settingsDd.parentNode) settingsDd.parentNode.removeChild(settingsDd);
+
     if (_focusOverlay && _focusOverlay.parentNode) {
+      if (_focusOverlay._dirtyCheckHandler) {
+        if (wysiwygEditor && wysiwygEditor.editableArea)
+          wysiwygEditor.editableArea.removeEventListener('input', _focusOverlay._dirtyCheckHandler);
+        if (wysiwygEditor && wysiwygEditor.markdownArea)
+          wysiwygEditor.markdownArea.removeEventListener('input', _focusOverlay._dirtyCheckHandler);
+      }
       if (_focusContentScrollHandler) {
         var mainEl = _focusOverlay.querySelector('.live-wysiwyg-focus-main');
         if (mainEl) mainEl.removeEventListener('scroll', _focusContentScrollHandler);
@@ -18347,7 +18801,7 @@
       if (isFocusModeActive) return;
       if (!wysiwygEditor) return;
       var ck = isEditorEnabledByCookie();
-      var editorEnabled = ck !== null ? ck : (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload);
+      var editorEnabled = ck !== false;
       if (!editorEnabled) return;
       var textarea = document.querySelector('.live-edit-source');
       if (!textarea || textarea.classList.contains('live-edit-hidden')) {
@@ -18847,7 +19301,7 @@
         updateToggleButton(false);
       } else {
         var ck = isEditorEnabledByCookie();
-        var shouldReload = ck !== null ? ck : (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload);
+        var shouldReload = ck !== false;
         if (shouldReload) {
           setupReplacementObserver(textarea);
         } else {
@@ -18865,7 +19319,7 @@
       if (!textarea.parentNode) return;
       if (!textarea.classList.contains('live-edit-hidden') && !textarea.dataset.liveWysiwygReplaced) {
         var ck = isEditorEnabledByCookie();
-        if (!(ck !== null ? ck : (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload))) return;
+        if (ck === false) return;
         cancelObserver.disconnect();
         cancelObserver = null;
         replaceTextareaWithWysiwyg(textarea);
@@ -18991,6 +19445,8 @@
       return textarea.value !== _pristineContent;
     };
 
+    if (wysiwygEditor._attachLinkChainHandler) wysiwygEditor._attachLinkChainHandler();
+
     wysiwygEditor._loadContent = function (markdown) {
       textarea.value = markdown;
       _pristineContent = markdown;
@@ -19006,6 +19462,9 @@
         }
       } else if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
         wysiwygEditor.markdownArea.value = markdown;
+        if (wysiwygEditor._updateMarkdownLineNumbers) wysiwygEditor._updateMarkdownLineNumbers();
+        wysiwygEditor.markdownArea.scrollTop = 0;
+        if (wysiwygEditor.markdownEditorContainer) wysiwygEditor.markdownEditorContainer.scrollTop = 0;
       }
     };
 
@@ -19036,7 +19495,7 @@
           var title = titleMatch ? titleMatch[1].replace(/^['"]|['"]$/g, '').trim() : '';
           if (title && title !== lastTitle) {
             lastTitle = title;
-            var navItem = _findNavItemByPath(liveWysiwygNavData, _getCurrentSrcPath());
+            var navItem = _findNavItemByPath(_getCurrentSrcPath());
             if (navItem) { navItem.title = title; _renderNavFromSnapshot(); }
             _refreshFocusTitle(title);
           }
@@ -19047,7 +19506,7 @@
           var titleMatch = parsed.frontmatter.match(/^title:\s*(.+)$/m);
           var title = titleMatch ? titleMatch[1].replace(/^['"]|['"]$/g, '').trim() : '';
           if (title) {
-            var navItem = _findNavItemByPath(liveWysiwygNavData, _getCurrentSrcPath());
+            var navItem = _findNavItemByPath(_getCurrentSrcPath());
             if (navItem && navItem.title === title) _commitNavSnapshot();
           }
         }, 1000);
@@ -19075,7 +19534,7 @@
           lastWeight = w;
           var srcPath = _getCurrentSrcPath();
           if (!srcPath) return;
-          var navItem = _findNavItemByPath(liveWysiwygNavData, srcPath);
+          var navItem = _findNavItemByPath(srcPath);
           if (!navItem) {
             navItem = _findSectionByIndexPath(liveWysiwygNavData, srcPath);
           }
@@ -19091,7 +19550,7 @@
           if (isNaN(w)) return;
           var srcPath = _getCurrentSrcPath();
           if (!srcPath) return;
-          var navItem = _findNavItemByPath(liveWysiwygNavData, srcPath);
+          var navItem = _findNavItemByPath(srcPath);
           if (!navItem) navItem = _findSectionByIndexPath(liveWysiwygNavData, srcPath);
           if (navItem) _commitNavSnapshot();
         }, 1000);
@@ -19476,8 +19935,7 @@
           img.alt = altText;
           if (origSrc) img.setAttribute('data-orig-src', origSrc);
 
-          var attrCookieVal = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_image_attr_syntax=(\d)/) || [])[1];
-          img.setAttribute('data-size-syntax', attrCookieVal === '0' ? 'html' : 'attr');
+          img.setAttribute('data-size-syntax', _getSetting('live_wysiwyg_image_attr_syntax') === '0' ? 'html' : 'attr');
 
           block.innerHTML = '';
           block.appendChild(img);
@@ -20506,8 +20964,7 @@
           img.alt = linkText;
           img.setAttribute('data-orig-src', url);
           img.setAttribute('data-md-literal', fullLiteral);
-          var cookieSyntax = (document.cookie.match(/(?:^|;\s*)live_wysiwyg_image_attr_syntax=(\d)/) || [])[1];
-          img.setAttribute('data-size-syntax', cookieSyntax === '0' ? 'html' : 'attr');
+          img.setAttribute('data-size-syntax', _getSetting('live_wysiwyg_image_attr_syntax') === '0' ? 'html' : 'attr');
 
           if (beforeLink) {
             anchorNode.textContent = beforeLink;
@@ -23958,27 +24415,63 @@
       document.addEventListener('keydown', function (e) {
         if (!((e.metaKey || e.ctrlKey) && e.key === 's')) return;
         if (!wysiwygEditor) return;
-        var ea = wysiwygEditor.editableArea;
-        var ma = wysiwygEditor.markdownArea;
-        var activeEl = document.activeElement;
-        var isInEditor = (ea && ea.contains(activeEl)) || activeEl === ea ||
-                         (ma && (activeEl === ma || ma.contains(activeEl)));
-        if (!isInEditor) return;
         e.preventDefault();
+        e.stopPropagation();
         if (isFocusModeActive) {
           _doFocusModeSave();
           return;
         }
-        if (wysiwygEditor._finalizeUpdate) {
-          if (wysiwygEditor.currentMode === 'wysiwyg' && ea) {
-            wysiwygEditor._finalizeUpdate(ea.innerHTML);
-          } else if (wysiwygEditor.currentMode === 'markdown' && ma) {
-            wysiwygEditor._finalizeUpdate(ma.value);
+        var ea = wysiwygEditor.editableArea;
+        var ma = wysiwygEditor.markdownArea;
+        var docDirty = wysiwygEditor._isDocDirty && wysiwygEditor._isDocDirty();
+        if (docDirty) {
+          if (wysiwygEditor._finalizeUpdate) {
+            if (wysiwygEditor.currentMode === 'wysiwyg' && ea) {
+              wysiwygEditor._finalizeUpdate(ea.innerHTML);
+            } else if (wysiwygEditor.currentMode === 'markdown' && ma) {
+              wysiwygEditor._finalizeUpdate(ma.value);
+            }
           }
+          var saveBtn = document.querySelector('.live-edit-save-button');
+          if (saveBtn && !saveBtn.classList.contains('live-edit-hidden')) {
+            saveBtn.click();
+          }
+          return;
         }
-        var saveBtn = document.querySelector('.live-edit-save-button');
-        if (saveBtn && !saveBtn.classList.contains('live-edit-hidden')) {
-          saveBtn.click();
+        if (_navEditMode) {
+          _confirmNavSave();
+        }
+      });
+    })();
+
+    (function attachCtrlDotToggle() {
+      if (document.__liveWysiwygCtrlDotAttached) return;
+      document.__liveWysiwygCtrlDotAttached = true;
+      document.addEventListener('keydown', function (e) {
+        if (!((e.metaKey || e.ctrlKey) && e.key === '.')) return;
+        if (!wysiwygEditor) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (isFocusModeActive) {
+          var toggle = document.querySelector('.live-wysiwyg-focus-mode-toggle');
+          if (toggle) {
+            var btns = toggle.querySelectorAll('button');
+            for (var i = 0; i < btns.length; i++) {
+              if (!btns[i].classList.contains('active')) { btns[i].click(); return; }
+            }
+          }
+          return;
+        }
+        var newMode = wysiwygEditor.currentMode === 'wysiwyg' ? 'markdown' : 'wysiwyg';
+        wysiwygEditor.switchToMode(newMode);
+        if (newMode === 'wysiwyg') {
+          requestAnimationFrame(function () {
+            scrollToCenterCursor(wysiwygEditor.editableArea, false);
+          });
+        } else if (wysiwygEditor.markdownArea) {
+          requestAnimationFrame(function () {
+            scrollToCenterCursor(wysiwygEditor.markdownArea, true, wysiwygEditor.markdownArea.selectionStart, wysiwygEditor.markdownEditorContainer);
+          });
         }
       });
     })();
@@ -24026,7 +24519,7 @@
 
       if (!isFocusModeActive && window.__liveWysiwygEarlyOverlay) {
         enterFocusMode();
-      } else if (!isFocusModeActive && (document.cookie.match(/(?:^|;\s*)live_wysiwyg_autofocus=(\d)/) || [])[1] === '1') {
+      } else if (!isFocusModeActive && _getSetting('live_wysiwyg_autofocus') === '1') {
         enterFocusMode();
       }
 
@@ -24038,7 +24531,7 @@
     if (!textarea || textarea.classList.contains('live-edit-hidden')) return false;
     var focusNavRelaunch = !!window.__liveWysiwygEarlyOverlay;
     var cookieEnabled = isEditorEnabledByCookie();
-    var shouldAutoload = focusNavRelaunch || (cookieEnabled !== null ? cookieEnabled : (typeof liveWysiwygAutoload !== 'undefined' && liveWysiwygAutoload));
+    var shouldAutoload = focusNavRelaunch || cookieEnabled !== false;
     ensureToggleButton(textarea, false);
     if (shouldAutoload) {
       replaceTextareaWithWysiwyg(textarea);
@@ -24059,7 +24552,7 @@
 
   function _watchForEditButton(retryCount) {
     if (_autoClickEditButton()) {
-      _deleteCookie('live_wysiwyg_focus_nav_retry');
+      _deleteSetting('live_wysiwyg_focus_nav_retry');
       return;
     }
 
@@ -24068,7 +24561,7 @@
       var observer = new MutationObserver(function (mutations) {
         if (_autoClickEditButton()) {
           observer.disconnect();
-          _deleteCookie('live_wysiwyg_focus_nav_retry');
+          _deleteSetting('live_wysiwyg_focus_nav_retry');
         }
       });
       observer.observe(controls, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'disabled'] });
@@ -24077,7 +24570,7 @@
         if (!document.querySelector('.live-edit-source:not(.live-edit-hidden)')) {
           _handleEditButtonFail(retryCount);
         } else {
-          _deleteCookie('live_wysiwyg_focus_nav_retry');
+          _deleteSetting('live_wysiwyg_focus_nav_retry');
         }
       }, 8000);
       return;
@@ -24095,15 +24588,15 @@
       if (!document.querySelector('.live-edit-source:not(.live-edit-hidden)')) {
         _handleEditButtonFail(retryCount);
       } else {
-        _deleteCookie('live_wysiwyg_focus_nav_retry');
+        _deleteSetting('live_wysiwyg_focus_nav_retry');
       }
     }, 8000);
   }
 
   function _handleEditButtonFail(retryCount) {
     if (retryCount < 3) {
-      _setCookie('live_wysiwyg_focus_nav_retry', String(retryCount + 1), 30);
-      _setCookie('live_wysiwyg_focus_nav', '1', 60);
+      _setSetting('live_wysiwyg_focus_nav_retry', String(retryCount + 1));
+      _setSetting('live_wysiwyg_focus_nav', '1');
       var overlay = window.__liveWysiwygEarlyOverlay;
       if (overlay) {
         var txt = overlay.querySelector('div[style*="font-size"]');
@@ -24111,7 +24604,7 @@
       }
       setTimeout(function () { location.reload(); }, 500);
     } else {
-      _deleteCookie('live_wysiwyg_focus_nav_retry');
+      _deleteSetting('live_wysiwyg_focus_nav_retry');
       var overlay = window.__liveWysiwygEarlyOverlay;
       if (overlay) {
         var spinner = overlay.querySelector('div[style*="border-radius:50%"]');
@@ -24133,14 +24626,17 @@
 
   function init() {
     if (!observeForTextarea()) {
+      if (_getSetting('live_wysiwyg_autolaunch') === '1' && !window.__liveWysiwygEarlyOverlay) {
+        _autoClickEditButton();
+      }
       startBodyObserver();
       if (window.__liveWysiwygEarlyOverlay) {
-        var retryCookie = _getCookie('live_wysiwyg_focus_nav_retry');
+        var retryCookie = _getSetting('live_wysiwyg_focus_nav_retry');
         var retryCount = retryCookie ? parseInt(retryCookie, 10) : 0;
         _watchForEditButton(retryCount);
       }
     } else if (window.__liveWysiwygEarlyOverlay) {
-      _deleteCookie('live_wysiwyg_focus_nav_retry');
+      _deleteSetting('live_wysiwyg_focus_nav_retry');
     }
   }
 
@@ -24151,7 +24647,7 @@
       _doAjaxNavigate(location.href, '', state.srcPath);
     } else {
       var popOv = _showFullScreenTransition('Navigating...');
-      _setCookie('live_wysiwyg_focus_nav', '1', 60);
+      _setSetting('live_wysiwyg_focus_nav', '1');
       _fadeOverlayToOpaque(popOv, function () {
         location.reload();
       });

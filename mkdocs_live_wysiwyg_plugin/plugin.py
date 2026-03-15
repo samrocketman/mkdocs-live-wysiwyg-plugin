@@ -499,9 +499,8 @@ class LiveWysiwygPlugin(BasePlugin):
 
         early_inject_script = (
             '(function(){'
-            'var m=document.cookie.match(/(?:^|;\\s*)live_wysiwyg_focus_nav=1/);'
-            'if(!m)return;'
-            'document.cookie="live_wysiwyg_focus_nav=;path=/;max-age=0;SameSite=Lax";'
+            'try{var st=JSON.parse(localStorage.getItem("liveWysiwygSettings")||"{}");'
+            'if(st.live_wysiwyg_focus_nav!=="1")return;}catch(e){return;}'
             'var o=document.createElement("div");'
             'o.className="live-wysiwyg-early-overlay";'
             'o.style.cssText="position:fixed;inset:0;z-index:99989;'

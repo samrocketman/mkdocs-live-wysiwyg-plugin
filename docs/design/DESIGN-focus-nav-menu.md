@@ -24,7 +24,7 @@ Core systems:
 
 4. **Link Rewriting** (`_rewriteLinksInContent`, `_rewriteInboundLinks`): Rewrites relative paths in moved documents (outbound) and across all referencing documents (inbound). Respects exclusion zones (code blocks, inline code, HTML comments). Preserves anchors and query strings. Case-sensitive matching.
 
-5. **Nav Menu Builder** (`_buildNavMenu`, `_buildNavItems`): Populates the left sidebar (~253px wide) with a hierarchical nav tree using Material for MkDocs CSS classes and variables. Arrow controls and settings gear are grouped inside a flex wrapper (`.live-wysiwyg-nav-controls-wrapper`) positioned to the left of each item. Section expand/collapse uses CSS grid animation (`grid-template-rows: 0fr/1fr`). Page `<li>` elements get `data-nav-src-path` for lookup. Section `<li>` elements get `data-nav-index-path` set to their index child's `src_path` (used by the caution icon system to display warnings for hidden index.md files on the folder title).
+5. **Nav Menu Builder** (`_buildNavMenu`, `_buildNavItems`): Populates the left sidebar (~253px wide) with a hierarchical nav tree using Material for MkDocs CSS classes and variables. Arrow controls and settings gear are grouped inside a flex wrapper (`.live-wysiwyg-nav-controls-wrapper`) positioned to the left of each item. Section expand/collapse uses CSS grid animation (`grid-template-rows: 0fr/1fr`). Every `<li>` gets a `data-nav-uid` attribute matching its navData item's `_uid` — this is the primary DOM lookup key for post-operation visual focus. Page `<li>` elements also get `data-nav-src-path` for event-to-data bridging (mapping clicks back to navData items). Section `<li>` elements get `data-nav-index-path` set to their index child's `src_path` (used by the caution icon renderer to place warnings for hidden index.md files on the folder title). None of these DOM attributes are used for nav item positioning, movement, or sibling lookup — those operations use the navData tree exclusively.
 
 6. **Nav Edit Mode** (`_enterNavEditMode`, `_exitNavEditMode`): Manages the editing state: read-only overlay, keyboard overrides (Cmd+S → save, ESC → discard, Cmd+Z/Y → nav undo/redo), Save/Discard/Undo/Redo buttons.
 
@@ -34,7 +34,7 @@ Core systems:
 
 9. **Content Dirty Tracking** (`_pristineContent`, `_resetPristineContent`, `_loadContent`): Tracks whether the user has made edits by comparing current content against the baseline. The upstream save/cancel buttons are only shown when actual changes exist, preventing false "unsaved changes" warnings caused by WYSIWYG/markdown rendering differences.
 
-10. **Focused Item Interaction** (`_setNavFocus`, `_clearNavFocus`, `_navFocusedLi`): When the user clicks an arrow to move a nav item, that item becomes "focused" — it gets a visible outline and its controls stay visible. Hovering a different item temporarily shows that item's controls (suppressing the focused item's). Moving the mouse off the nav menu restores the focused item's controls. This allows rapid repeated arrow clicks for positioning.
+10. **Focused Item Interaction** (`_setNavFocus`, `_clearNavFocus`, `_navFocusedLi`): After a move operation completes (data mutation + snapshot commit + DOM rebuild), `_findNavLi(item)` locates the rendered `<li>` by `data-nav-uid` and applies visual focus — a visible outline and persistent controls. This is the only DOM lookup in the move flow and is purely cosmetic. Hovering a different item temporarily shows that item's controls (suppressing the focused item's). Moving the mouse off the nav menu restores the focused item's controls. This allows rapid repeated arrow clicks for positioning.
 
 ## Navigation Flow
 
@@ -180,12 +180,16 @@ Every operation pushes to undo stack, clears redo stack. Undo pops and computes 
 
 ### Arrow Navigation
 
+All arrow moves operate exclusively on the navData tree. Move functions accept only the navData `item` object — no DOM elements. `_findNavItemInTree(item._uid)` locates the item's position (parent array + index) for splice operations. After the navData mutation and snapshot commit, `_renderNavFromSnapshot()` rebuilds the DOM, and `_findNavLi(item)` (via `data-nav-uid`) sets visual focus on the moved item. The DOM lookup is post-operation and purely cosmetic.
+
 - **Up/Down**: Reorder within folder. Sections (folders) are treated as same-level peers — a page moves one position at a time past sections, not over them. The moved page gets a midpoint weight between its new adjacent siblings (which may be section index.md weights via `_getItemWeight`).
 - **Left**: Move to parent folder (no-op and hidden at root)
 - **Right**: Move into adjacent folder below (or above if none below). No folders → new folder prompt
 - **Shift+Up**: Move into deepest child of section above
 - **Shift+Down**: Move into first level of section below
 - **Shift+Right**: Always prompt for new/choose folder
+
+**Auto-normalization**: If any sibling at the destination level lacks a weight, `_autoNormalizeSiblingWeights` assigns sequential weights to all siblings before the snapshot is committed. This eliminates the need for a blocking normalization prerequisite dialog — items of all types (pages, sections, assets, hidden content) can be moved freely.
 
 ### Root Index (`index.md`)
 
@@ -214,9 +218,9 @@ Each nav item `<li>` has `padding-left:56px; margin-left:-56px` to extend the ho
 
 Two gears: page (current page frontmatter) and folder (parent folder index.md). Fields: title, weight, headless, retitled (index.md only), empty (index.md only), plus Normalize button.
 
-### Normalization Prerequisite
+### Normalization on Move
 
-Before any arrow move is allowed, `_checkNormalizationPrerequisite` verifies that at least one sibling item at the same nav level has a weight assigned. `_findNavSiblings` walks the nav tree to find the item, then collects ALL items (pages and sections) at that level. `_getItemWeight` reads `weight` directly from pages and `index_meta.weight` from sections. If no weights exist, the user is prompted to normalize first.
+Arrow moves no longer require a normalization prerequisite. Instead, `_handleArrowClick` auto-normalizes after the move: if any non-deleted, non-headless sibling at the destination level lacks a weight, `_autoNormalizeSiblingWeights(siblings)` assigns sequential weights (100, 200, 300...) to all siblings in the parent array before committing the snapshot. `_findNavSiblings` walks the navData tree to find the item and its siblings. `_getItemWeight` reads `weight` directly from pages and `index_meta.weight` from sections. All sibling and position lookups use the navData tree — the DOM is not consulted.
 
 ### Weight Adjustment
 
@@ -235,7 +239,7 @@ The effective default weight is `default_page_weight` from the nav-weight config
 - **Heading-only links**: `#anchor` always skipped (same-page reference)
 - **Filename conflicts**: Case-insensitive check + incrementor. Batch queue tracks claimed paths
 - **Double rendering check**: In-memory WYSIWYG↔Markdown round-trip. Failure → original content preserved, caution icon added
-- **Caution icon system**: Cookie `live_wysiwyg_caution_pages`, yellow triangle, popup with Resolve/Resolve All. `_applyCautionIcons` first queries `[data-nav-src-path]` on page `<li>` elements; for `index.md` paths that have no direct match (hidden when `retitled: true` and `empty: true`), it falls back to `[data-nav-index-path]` on the parent section `<li>`, placing the caution icon on the folder title
+- **Caution icon system**: Cookie `live_wysiwyg_caution_pages`, yellow triangle, popup with Resolve/Resolve All. Caution icons are rendered inline during `_buildNavItems` from `item._warnings` on navData items — the DOM is a rendering target only. The legacy `_applyCautionIcons` path (which queries `[data-nav-src-path]` and `[data-nav-index-path]` on `<li>` elements) is used only for post-save localStorage-driven icon placement on the already-rendered DOM; it does not influence data operations or item positioning
 - **Pristine content tracking**: Editor content is compared against `_pristineContent` (set when content is loaded) to accurately detect user-initiated changes vs. rendering differences
 
 ## File Naming Convention

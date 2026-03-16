@@ -8,6 +8,10 @@ When a site uses the `nav` key in `mkdocs.yml` to define navigation structure, m
 
 The migration is triggered from the focus mode nav menu when both `mkdocs-nav-weight` is enabled and a `nav` key exists in `mkdocs.yml`. A warning icon appears; clicking it offers a "Migrate to mkdocs-nav-weight" button.
 
+## Data Model
+
+The migration operates entirely on `liveWysiwygNavData` and snapshots. `_applyMigrationToNavData` synchronously mutates the navData tree — it does not query or modify the DOM. The nav menu DOM is rebuilt from the resulting snapshot via `_renderNavFromSnapshot()` after the migration is staged. The save planner (`_computeSavePlan` / `_planDiskOperations`) then diffs snapshots to produce disk operations. No DOM element, attribute, or query result influences migration logic.
+
 ## Seven Phases
 
 The migration executes as a batch operation with seven sequential phases. All phases run within a single batch save — the user sees a progress overlay and can review results before the final rebuild.

@@ -552,6 +552,10 @@
       dropdown.style.top = (rect.bottom + 2) + 'px';
       dropdown.style.left = left + 'px';
     }
+    dropdown.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); dismissActiveSettingsDropdown(); }
+    });
+
     document.body.appendChild(dropdown);
     positionDropdown();
 
@@ -2569,22 +2573,6 @@
       return null;
     }
 
-    function _linkDdExpand(input, dropdown) {
-      if (!dropdown._baseWidth) dropdown._baseWidth = dropdown.offsetWidth;
-      var inputs = dropdown.querySelectorAll('.md-link-settings-input');
-      var maxOverflow = 0;
-      for (var i = 0; i < inputs.length; i++) {
-        var ov = inputs[i].scrollWidth - inputs[i].clientWidth;
-        if (ov > maxOverflow) maxOverflow = ov;
-      }
-      if (maxOverflow <= 0) return;
-      var needed = dropdown._baseWidth + maxOverflow + 4;
-      var curMin = parseFloat(dropdown.style.minWidth) || 0;
-      if (needed > curMin) {
-        dropdown.style.minWidth = needed + 'px';
-        _repositionLinkDropdown(dropdown);
-      }
-    }
 
     function _repositionLinkDropdown(dropdown) {
       if (!dropdown._posRef || !dropdown.parentNode) return;
@@ -2771,19 +2759,20 @@
 
       urlInput.addEventListener('keydown', function (ev) {
         if (ev.key === 'Enter') { ev.preventDefault(); doApply(); }
+        if (ev.key === 'Escape') { ev.preventDefault(); dismissLinkDropdown(); }
       });
       textInput.addEventListener('keydown', function (ev) {
         if (ev.key === 'Enter') { ev.preventDefault(); doApply(); }
-      });
-
-      [urlInput, textInput].forEach(function (inp) {
-        inp.addEventListener('focus', function () { _linkDdExpand(inp, dropdown); });
-        inp.addEventListener('input', function () { _linkDdExpand(inp, dropdown); });
+        if (ev.key === 'Escape') { ev.preventDefault(); dismissLinkDropdown(); }
       });
 
       var ddHost = _focusOverlay || document.body;
       ddHost.appendChild(dropdown);
       _repositionLinkDropdown(dropdown);
+      _attachContainerExpandBehavior(dropdown, {
+        selector: '.md-link-settings-input',
+        onResize: function () { _repositionLinkDropdown(dropdown); }
+      });
       requestAnimationFrame(function () { urlInput.focus(); urlInput.select(); });
 
       var chainIcon = (_focusOverlay || document).querySelector('.md-link-chain-indicator');
@@ -3350,6 +3339,10 @@
 
     document.body.appendChild(dropdown);
     positionDropdown();
+    _attachContainerExpandBehavior(dropdown, {
+      selector: '.md-image-insert-input',
+      onResize: positionDropdown
+    });
     requestAnimationFrame(function () { urlInput.focus(); });
 
     var closeHandler = function (ev) {
@@ -3503,9 +3496,9 @@
     var cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.className = 'md-image-gear-cb';
-    var cookieAttr = _getSetting('live_wysiwyg_image_attr_syntax');
+    var attrSyntaxSetting = _getSetting('live_wysiwyg_image_attr_syntax');
     var imgSyntax = img.getAttribute('data-size-syntax');
-    cb.checked = imgSyntax ? imgSyntax === 'attr' : cookieAttr !== '0';
+    cb.checked = imgSyntax ? imgSyntax === 'attr' : attrSyntaxSetting !== '0';
     if (!imgSyntax) {
       img.setAttribute('data-size-syntax', cb.checked ? 'attr' : 'html');
     }
@@ -3595,8 +3588,16 @@
       dropdown.style.left = left + 'px';
     }
 
+    dropdown.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); dismissImageGearDropdown(); }
+    });
+
     document.body.appendChild(dropdown);
     positionDropdown();
+    _attachContainerExpandBehavior(dropdown, {
+      selector: '.md-image-gear-input',
+      onResize: positionDropdown
+    });
 
     var closeHandler = function (ev) {
       if (dropdown.contains(ev.target) || ev.target === gearBtn || gearBtn.contains(ev.target)) return;
@@ -7681,7 +7682,7 @@
 
   var _LS_EDITOR_KEY = 'liveWysiwygEditorEnabled';
 
-  function getEditorStateFromCookie() {
+  function getEditorState() {
     var val = _getSetting(_LS_EDITOR_KEY);
     if (val == null) return null;
     if (typeof val === 'object') return val;
@@ -7691,19 +7692,19 @@
     return { enabled: enabled, mode: mode };
   }
 
-  function setEditorStateCookie(enabled, mode) {
+  function setEditorState(enabled, mode) {
     var modeVal = (mode === 'markdown' || mode === 'wysiwyg') ? mode : 'wysiwyg';
     _setSetting(_LS_EDITOR_KEY, { enabled: !!enabled, mode: modeVal });
   }
 
-  function isEditorEnabledByCookie() {
-    var state = getEditorStateFromCookie();
+  function isEditorEnabled() {
+    var state = getEditorState();
     if (state === null) return null;
     return state.enabled;
   }
 
-  function getEditorModeFromCookie() {
-    var state = getEditorStateFromCookie();
+  function getEditorMode() {
+    var state = getEditorState();
     if (state === null) return 'wysiwyg';
     return state.mode;
   }
@@ -7720,7 +7721,6 @@
   var _focusOverlay = null;
   var _focusTocObserver = null;
   var _focusContentScrollHandler = null;
-  var _focusEscapeHandler = null;
   var _focusTocDebounceTimer = null;
   var _focusHeadingScrollHandler = null;
   var _focusSavedBodyOverflow = '';
@@ -7827,6 +7827,11 @@
   // ======================================================================
   var _LS_KEY = 'liveWysiwygSettings';
   var _settingsCache = null;
+  var _settingDefaults = {
+    'live_wysiwyg_autolaunch': '1',
+    'live_wysiwyg_autofocus': '1',
+    'live_wysiwyg_focus_remain': '1'
+  };
 
   function _getSettings() {
     if (_settingsCache) return _settingsCache;
@@ -7836,7 +7841,9 @@
   }
 
   function _getSetting(key) {
-    return _getSettings()[key];
+    var val = _getSettings()[key];
+    if (val !== undefined) return val;
+    return _settingDefaults.hasOwnProperty(key) ? _settingDefaults[key] : undefined;
   }
 
   function _setSetting(key, value) {
@@ -7853,15 +7860,7 @@
     try { localStorage.setItem(_LS_KEY, JSON.stringify(s)); } catch (e) {}
   }
 
-  (function _migrateFromCookies() {
-    if (_getSetting('_migrated')) return;
-    var cookies = {};
-    try {
-      document.cookie.split(';').forEach(function (c) {
-        var parts = c.trim().split('=');
-        if (parts.length >= 2) cookies[parts[0]] = decodeURIComponent(parts.slice(1).join('='));
-      });
-    } catch (e) { return; }
+  (function _deleteOldCookies() {
     var keys = [
       'liveWysiwygEditorEnabled', 'liveWysiwygIndent',
       'live_wysiwyg_autofocus', 'live_wysiwyg_focus_remain',
@@ -7871,19 +7870,8 @@
       'live_wysiwyg_migration_result', 'live_wysiwyg_migration_normalize',
       'live_wysiwyg_migration_adjust_weight'
     ];
-    var s = _getSettings();
     for (var i = 0; i < keys.length; i++) {
-      if (cookies[keys[i]] !== undefined && s[keys[i]] === undefined) {
-        s[keys[i]] = cookies[keys[i]];
-      }
-    }
-    s._migrated = true;
-    _settingsCache = s;
-    try { localStorage.setItem(_LS_KEY, JSON.stringify(s)); } catch (e) {}
-    for (var j = 0; j < keys.length; j++) {
-      if (cookies[keys[j]] !== undefined) {
-        document.cookie = keys[j] + '=;path=/;max-age=0;SameSite=Lax';
-      }
+      document.cookie = keys[i] + '=;path=/;max-age=0;SameSite=Lax';
     }
   })();
 
@@ -8085,12 +8073,8 @@
     if (newTitleLine) outLines.splice(0, 0, newTitleLine);
     if (newWeightLine) outLines.push(newWeightLine);
 
-    if (!outLines.length) {
-      console.log('[fm-debug] _buildFrontmatterFromFm -> empty (fm keys:', Object.keys(fm).join(','), 'isIndex:', isIndex, ')');
-      return '';
-    }
+    if (!outLines.length) return '';
     var fmResult = '---\n' + outLines.join('\n') + '\n---\n';
-    console.log('[fm-debug] _buildFrontmatterFromFm -> ' + outLines.length + ' lines, isIndex=' + isIndex + ', output:', JSON.stringify(fmResult));
     return fmResult;
   }
 
@@ -8152,11 +8136,9 @@
   function _getOrCreateBulkWs() {
     return new Promise(function (resolve, reject) {
       if (_bulkWs && _bulkWs.readyState === WebSocket.OPEN) {
-        console.log('[batch-debug] _getOrCreateBulkWs: reusing existing WS, readyState:', _bulkWs.readyState);
         resolve(_bulkWs);
         return;
       }
-      console.log('[batch-debug] _getOrCreateBulkWs: creating new WS, old state:', _bulkWs ? _bulkWs.readyState : 'null');
       if (typeof ws_port === 'undefined') {
         reject(new Error('ws_port not available'));
         return;
@@ -8190,7 +8172,6 @@
 
   function _wsSendOnce(action, path, contents) {
     return _getOrCreateBulkWs().then(function (ws) {
-      console.log('[batch-debug] _wsSend:', action, path, 'ws.readyState:', ws.readyState);
       return new Promise(function (resolve, reject) {
         var msg = { action: action, path: path };
         if (contents !== undefined) msg.contents = contents;
@@ -8208,13 +8189,11 @@
           }
         };
         var closeHandler = function () {
-          console.warn('[batch-debug] WS closed during', action, path, 'ws.readyState:', ws.readyState);
           cleanup();
           _bulkWs = null;
           reject({ _wsRetryable: true, message: 'WS closed during ' + action + ' ' + path });
         };
         var errorHandler = function () {
-          console.warn('[batch-debug] WS error during', action, path);
           cleanup();
           _bulkWs = null;
           reject({ _wsRetryable: true, message: 'WS error during ' + action + ' ' + path });
@@ -8247,7 +8226,6 @@
       attempt++;
       return _wsSendOnce(action, path, contents).catch(function (err) {
         if (err && err._wsRetryable && attempt < _WS_MAX_RETRIES) {
-          console.log('[batch-debug] WS retry ' + attempt + '/' + _WS_MAX_RETRIES + ' for', action, path);
           return _waitForRebuildAndReconnect().then(tryOnce);
         }
         throw err._wsRetryable ? new Error(err.message) : err;
@@ -8407,7 +8385,7 @@
     });
   })();
 
-  // Set suppress flag early if the migration-normalize cookie is present.
+  // Set suppress flag early if the migration-normalize setting is present.
   // This runs synchronously before the live-edit plugin creates its WebSocket
   // (which happens on DOMContentLoaded), closing the race window.
   function _isMigrationChainActive() {
@@ -8725,11 +8703,15 @@
       _showNavDialog(
         'An external change triggered a site rebuild.',
         [{ text: 'Refresh', value: 'refresh', className: 'live-wysiwyg-nav-dialog-primary' }]
-      ).then(function () {
+      ).then(function (result) {
         _focusModeRebuildPromptOpen = false;
-        _focusModeRefreshContent().then(function () {
+        if (result === 'refresh') {
+          _focusModeRefreshContent().then(function () {
+            _startFocusModeRebuildPoller();
+          });
+        } else {
           _startFocusModeRebuildPoller();
-        });
+        }
       });
     } else {
       cmdSHandler = function (e) {
@@ -8761,11 +8743,13 @@
               _startFocusModeRebuildPoller();
             });
           }
-        } else {
+        } else if (result === 'discard') {
           if (_navEditMode) _exitNavEditMode(true);
           _focusModeRefreshContent().then(function () {
             _startFocusModeRebuildPoller();
           });
+        } else {
+          _startFocusModeRebuildPoller();
         }
       });
     }
@@ -8819,18 +8803,12 @@
   }
 
   function _waitForRebuildAndReconnect() {
-    console.log('[batch-debug] _waitForRebuildAndReconnect: closing bulk WS');
     _closeBulkWs();
     return _waitForRebuild().then(function () {
-      console.log('[batch-debug] _waitForRebuildAndReconnect: rebuild done, refreshing port');
       return _refreshLinkCheckPort();
     }).then(function () {
-      console.log('[batch-debug] _waitForRebuildAndReconnect: port refreshed, reconnecting WS');
       return _getOrCreateBulkWs();
-    }).then(function () {
-      console.log('[batch-debug] _waitForRebuildAndReconnect: WS reconnected, readyState:', _bulkWs ? _bulkWs.readyState : 'null');
     }).catch(function (err) {
-      console.warn('[batch-debug] _waitForRebuildAndReconnect: error during reconnect:', err);
       return _getOrCreateBulkWs();
     });
   }
@@ -8962,7 +8940,6 @@
         }
       }
     }
-    if (excludedCount) console.log('[outbound-debug] _rewriteLinksInContent: ' + excludedCount + ' links skipped (code block / inline code) for ' + oldSrcPath);
     if (!replacements.length) return content;
     replacements.sort(function (a, b) { return b.start - a.start; });
     var result = content;
@@ -9240,22 +9217,32 @@
       var actions = document.createElement('div');
       actions.className = 'live-wysiwyg-nav-dialog-actions';
       var primaryValue = null;
+      var dangerValue = null;
+      var primaryBtn = null;
+      var dangerBtn = null;
       buttons.forEach(function (btn) {
         var b = document.createElement('button');
         b.textContent = btn.text;
         if (btn.className) b.className += ' ' + btn.className;
-        if (btn.className && btn.className.indexOf('live-wysiwyg-nav-dialog-primary') >= 0) primaryValue = btn.value;
+        if (btn.className && btn.className.indexOf('live-wysiwyg-nav-dialog-primary') >= 0) {
+          primaryValue = btn.value; primaryBtn = b;
+        }
+        if (btn.className && btn.className.indexOf('live-wysiwyg-nav-dialog-danger') >= 0) {
+          dangerValue = btn.value; dangerBtn = b;
+        }
         b.addEventListener('click', function () { finish(btn.value); });
         actions.appendChild(b);
       });
       content.appendChild(actions);
       overlay.appendChild(content);
+      var confirmValue = primaryValue || dangerValue || (buttons.length ? buttons[0].value : null);
       overlay.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' && primaryValue != null) { e.preventDefault(); finish(primaryValue); }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); return; }
+        if (e.key === 'Enter' && confirmValue != null) { e.preventDefault(); e.stopPropagation(); finish(confirmValue); }
       });
       document.body.appendChild(overlay);
-      var primaryBtn = actions.querySelector('.live-wysiwyg-nav-dialog-primary');
-      if (primaryBtn) primaryBtn.focus();
+      var focusBtn = primaryBtn || dangerBtn || actions.firstChild;
+      if (focusBtn) focusBtn.focus();
     });
   }
 
@@ -9279,22 +9266,32 @@
       var actions = document.createElement('div');
       actions.className = 'live-wysiwyg-nav-dialog-actions';
       var primaryValue = null;
+      var dangerValue = null;
+      var primaryBtn = null;
+      var dangerBtn = null;
       buttons.forEach(function (btn) {
         var b = document.createElement('button');
         b.textContent = btn.text;
         if (btn.className) b.className += ' ' + btn.className;
-        if (btn.className && btn.className.indexOf('live-wysiwyg-nav-dialog-primary') >= 0) primaryValue = btn.value;
+        if (btn.className && btn.className.indexOf('live-wysiwyg-nav-dialog-primary') >= 0) {
+          primaryValue = btn.value; primaryBtn = b;
+        }
+        if (btn.className && btn.className.indexOf('live-wysiwyg-nav-dialog-danger') >= 0) {
+          dangerValue = btn.value; dangerBtn = b;
+        }
         b.addEventListener('click', function () { finish(btn.value); });
         actions.appendChild(b);
       });
       content.appendChild(actions);
       overlay.appendChild(content);
+      var confirmValue = primaryValue || dangerValue || (buttons.length ? buttons[0].value : null);
       overlay.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' && primaryValue != null) { e.preventDefault(); finish(primaryValue); }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); return; }
+        if (e.key === 'Enter' && confirmValue != null) { e.preventDefault(); e.stopPropagation(); finish(confirmValue); }
       });
       document.body.appendChild(overlay);
-      var primaryBtn = actions.querySelector('.live-wysiwyg-nav-dialog-primary');
-      if (primaryBtn) primaryBtn.focus();
+      var focusBtn = primaryBtn || dangerBtn || actions.firstChild;
+      if (focusBtn) focusBtn.focus();
     });
   }
 
@@ -9483,25 +9480,21 @@
 
       var inNav = {};
       _collectNavTreePaths(liveWysiwygNavData, inNav);
-      console.log('[hidden-debug] _precomputeHiddenPages inNav paths:', Object.keys(inNav));
       var hiddenPaths = [];
       for (var i = 0; i < liveWysiwygAllMdSrcPaths.length; i++) {
         var p = liveWysiwygAllMdSrcPaths[i];
         if (!inNav[p]) hiddenPaths.push(p);
       }
-      console.log('[hidden-debug] _precomputeHiddenPages initial hiddenPaths:', hiddenPaths);
 
       var sectionIndexNeeds = [];
       _collectSectionsNeedingIndexCheck(liveWysiwygNavData, sectionIndexNeeds);
       var sectionIndexPaths = sectionIndexNeeds.map(function (n) { return n.indexPath; });
-      console.log('[hidden-debug] _precomputeHiddenPages sectionIndexPaths:', sectionIndexPaths);
 
       var sectionIndexSet = {};
       for (var si2 = 0; si2 < sectionIndexPaths.length; si2++) {
         sectionIndexSet[sectionIndexPaths[si2]] = true;
       }
       hiddenPaths = hiddenPaths.filter(function (hp) { return !sectionIndexSet[hp]; });
-      console.log('[hidden-debug] _precomputeHiddenPages final hiddenPaths (after section index filter):', hiddenPaths);
 
       var allPaths = hiddenPaths.concat(sectionIndexPaths);
       if (!allPaths.length) {
@@ -9557,12 +9550,8 @@
             empty: hMeta.empty || null,
             _fm: Object.assign({}, hMeta)
           };
-          console.log('[hidden-debug] _precomputeHiddenPages adding synthetic hidden item: ' + srcPath + ' headless=true isIndex=' + isIndex + ' _fm=' + JSON.stringify(syntheticItem._fm) + ' meta=' + JSON.stringify(hMeta));
 
           var targetItems = _ensureSectionForDir(dir);
-          if (dir) {
-            console.log('[hidden-debug]   placed into section for dir=' + dir);
-          }
           if (isIndex && targetItems.length) {
             targetItems.splice(0, 0, syntheticItem);
           } else {
@@ -9570,7 +9559,6 @@
           }
         }
 
-        console.log('[hidden-debug] _precomputeHiddenPages COMPLETE, added ' + hiddenPaths.length + ' hidden items');
         _navHiddenPagesPrecomputed = true;
         resolve();
       }).catch(function () {
@@ -9773,6 +9761,13 @@
     return !_hasVisibleMdContent(section.children);
   }
 
+  function _isMovableWithoutNormalization(item, itemType) {
+    if (itemType === 'asset') return true;
+    if (item.headless || item.empty) return true;
+    if (itemType === 'section') return true;
+    return false;
+  }
+
   function _buildNavItems(parentUl, items, depth) {
     var currentSrcPath = _getCurrentSrcPath();
     for (var i = 0; i < items.length; i++) {
@@ -9782,6 +9777,7 @@
       var isHiddenSection = item.type === 'section' && _isSectionAllHidden(item);
       var li = document.createElement('li');
       li.className = 'md-nav__item';
+      if (item._uid) li.setAttribute('data-nav-uid', item._uid);
 
       if (item._renamed) li.classList.add('live-wysiwyg-nav-item--renamed');
       if (item._new) li.classList.add('live-wysiwyg-nav-item--new');
@@ -10063,7 +10059,8 @@
           li.style.display = 'none';
         }
 
-        if (_navEditMode && !_ymlHasNavKey(_virtualMkdocsYml)) {
+        if ((_navEditMode || (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)) &&
+            !_ymlHasNavKey(_virtualMkdocsYml)) {
           var assetCtrl = _createNavWeightControls(item, 'asset', depth);
           var assetWrapper = document.createElement('div');
           assetWrapper.className = 'live-wysiwyg-nav-controls-wrapper';
@@ -10142,7 +10139,7 @@
     gearBtn.className = 'live-wysiwyg-nav-settings-gear';
 
     var nwEnabled = typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled;
-    if (!nwEnabled && itemType !== 'asset') {
+    if (!nwEnabled && !_isMovableWithoutNormalization(item, itemType)) {
       leftBtn.disabled = rightBtn.disabled = upBtn.disabled = downBtn.disabled = true;
     }
 
@@ -10207,22 +10204,7 @@
     return undefined;
   }
 
-  function _checkNormalizationPrerequisite(item) {
-    if (typeof liveWysiwygNavWeightConfig === 'undefined' || !liveWysiwygNavWeightConfig.enabled) return true;
-    var siblings = _findNavSiblings(item);
-    var hasWeighted = siblings.some(function (s) { return _getItemWeight(s) != null; });
-    if (hasWeighted) return true;
-    _showNavDialog(
-      'No pages at this level have nav weights assigned. You must normalize nav weights before reorganizing.',
-      [
-        { text: 'Cancel', value: 'cancel' },
-        { text: 'Normalize Nav Weights', value: 'normalize', className: 'live-wysiwyg-nav-dialog-primary' }
-      ]
-    ).then(function (result) {
-      if (result === 'normalize') _normalizeAllNavWeights();
-    });
-    return false;
-  }
+  
 
   function _findNavSiblings(item) {
     var result = [];
@@ -10311,8 +10293,6 @@
   }
 
   function _handleArrowClick(item, itemType, direction, shiftKey) {
-    if (!_checkNormalizationPrerequisite(item)) return;
-
     var isLeft = direction.indexOf('left') !== -1;
     var isRight = direction.indexOf('right') !== -1;
     var isUp = direction.indexOf('up') !== -1;
@@ -10329,33 +10309,41 @@
     function _doArrowMove() {
     _navKeyboardActiveItem = item;
 
-    var li = _findNavLi(item);
-    if (!li) return;
-
     if (isUp) {
       if (isSimpleVertical) {
-        _moveNavItemUpDirect(li, item);
+        _moveNavItemUpDirect(item);
       } else {
-        _moveNavItemUp(li, item, shiftKey);
+        _moveNavItemUp(item, shiftKey);
       }
     } else if (isDown) {
       if (isSimpleVertical) {
-        _moveNavItemDownDirect(li, item);
+        _moveNavItemDownDirect(item);
       } else {
-        _moveNavItemDown(li, item, shiftKey);
+        _moveNavItemDown(item, shiftKey);
       }
     } else if (isLeft) {
-      _moveNavItemLeft(li, item);
+      _moveNavItemLeft(item);
     } else if (isRight) {
-      _moveNavItemRight(li, item, shiftKey);
+      _moveNavItemRight(item, shiftKey);
     }
 
     var moveDir = isUp ? 'up' : isDown ? 'down' : isLeft ? 'up' : 'down';
     var loc = item._uid ? _findNavItemInTree(item._uid) : null;
     if (loc) {
       var parentSection = _findParentSection(item._uid);
-      if (parentSection && (parentSection._new || parentSection._renamed)) {
-        _autoNormalizeSiblingWeights(loc.parent);
+      var needsFullNormalize = parentSection && (parentSection._new || parentSection._renamed);
+      if (!needsFullNormalize) {
+        var siblingsNeedNormalize = loc.parent.some(function (sib) {
+          if (sib._deleted) return false;
+          if (sib.type === 'page' && sib.isIndex) return false;
+          if (sib.type === 'page' && sib.headless) return false;
+          if (sib.type === 'section' && sib.children && !_hasVisibleMdContent(sib.children)) return false;
+          return _getItemWeight(sib) == null;
+        });
+        if (siblingsNeedNormalize) needsFullNormalize = true;
+      }
+      if (needsFullNormalize) {
+        _normalizeLevelWeights(parentSection || null);
       } else {
         _updateInMemoryWeightFromDom(item, moveDir);
       }
@@ -10376,7 +10364,7 @@
     _doArrowMove();
   }
 
-  function _moveNavItemUpDirect(li, item) {
+  function _moveNavItemUpDirect(item) {
     if (!item || !item._uid) return;
     var loc = _findNavItemInTree(item._uid);
     if (!loc || loc.index <= 0) return;
@@ -10386,7 +10374,7 @@
     loc.parent.splice(loc.index - 1, 0, item);
   }
 
-  function _moveNavItemDownDirect(li, item) {
+  function _moveNavItemDownDirect(item) {
     if (!item || !item._uid) return;
     var loc = _findNavItemInTree(item._uid);
     if (!loc || loc.index >= loc.parent.length - 1) return;
@@ -10497,7 +10485,7 @@
     return null;
   }
 
-  function _moveNavItemUp(li, item, shiftKey) {
+  function _moveNavItemUp(item, shiftKey) {
     if (!item || !item._uid) return;
     var loc = _findNavItemInTree(item._uid);
     if (!loc) return;
@@ -10539,7 +10527,7 @@
     return sectionLi && sectionLi.classList && sectionLi.classList.contains('md-nav__item--nested') ? sectionLi : null;
   }
 
-  function _moveNavItemDown(li, item, shiftKey) {
+  function _moveNavItemDown(item, shiftKey) {
     if (!item || !item._uid) return;
     var loc = _findNavItemInTree(item._uid);
     if (!loc) return;
@@ -10585,7 +10573,7 @@
     }
   }
 
-  function _moveNavItemLeft(li, item) {
+  function _moveNavItemLeft(item) {
     if (!item || !item._uid) return;
     var parentSection = _findParentSection(item._uid);
     if (!parentSection) return;
@@ -10605,11 +10593,11 @@
     _navBatchQueue.push({ type: 'move-left', item: item });
   }
 
-  function _moveNavItemRight(li, item, shiftKey) {
+  function _moveNavItemRight(item, shiftKey) {
     if (!item || !item._uid) return;
 
     if (shiftKey) {
-      _promptNewFolder(li, item);
+      _promptNewFolder(item);
       return;
     }
 
@@ -10637,20 +10625,116 @@
       aboveSection.children.push(item);
       _navBatchQueue.push({ type: 'move-right', item: item, targetSection: aboveSection, position: 'end' });
     } else {
-      _promptNewFolder(li, item);
+      _promptNewFolder(item);
     }
   }
 
-  function _promptNewFolder(li, item) {
+  /**
+   * Unified auto-expand for any container with text/number inputs.
+   * Uses a captured base width to prevent compounding expansion on repeated focus.
+   *
+   * @param {HTMLElement} container  - Element whose width grows (dropdown or dialog content)
+   * @param {Object}      [opts]
+   * @param {string}      [opts.prop='minWidth']    - CSS property to expand ('minWidth' or 'maxWidth')
+   * @param {string}      [opts.selector]           - Input selector (default: 'input[type="text"], input[type="number"]')
+   * @param {Function}    [opts.onResize]            - Called after expansion (e.g. reposition dropdown)
+   * @param {HTMLElement[]} [opts.inputs]            - Explicit input list (overrides selector)
+   */
+  function _attachContainerExpandBehavior(container, opts) {
+    opts = opts || {};
+    var prop = opts.prop || 'minWidth';
+    var cssProp = prop.replace(/[A-Z]/g, function (c) { return '-' + c.toLowerCase(); });
+    var onResize = opts.onResize || null;
+    var inputs = opts.inputs;
+    if (!inputs) {
+      var sel = opts.selector || 'input[type="text"], input[type="number"]';
+      inputs = container.querySelectorAll(sel);
+    }
+    var animId = null;
+    var animStart = 0;
+    var animFrom = 0;
+    var animTo = 0;
+    var ANIM_MS = 300;
+    var cssReady = false;
+    var lastTarget = 0;
+
+    function easeInOut(t) {
+      return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    }
+
+    function animTick(now) {
+      var elapsed = now - animStart;
+      var t = Math.min(elapsed / ANIM_MS, 1);
+      var val = animFrom + (animTo - animFrom) * easeInOut(t);
+      container.style[prop] = val + 'px';
+      if (onResize) onResize();
+      if (t < 1) {
+        animId = requestAnimationFrame(animTick);
+      } else {
+        animId = null;
+        container.style.transition = cssProp + ' .3s ease-in-out';
+        cssReady = true;
+      }
+    }
+
+    // Contraction intentionally skipped for UI stability — avoids
+    // distracting shrink animations when the user switches between inputs.
+    var OVERFLOW_THRESHOLD = 3;
+    function measure() {
+      if (animId) return;
+      var maxOverflow = 0;
+      for (var i = 0; i < inputs.length; i++) {
+        var ov = inputs[i].scrollWidth - inputs[i].clientWidth;
+        if (ov > OVERFLOW_THRESHOLD && ov > maxOverflow) maxOverflow = ov;
+      }
+      if (maxOverflow <= 0) return;
+
+      var cur = container.offsetWidth;
+      var needed = cur + maxOverflow + 4;
+
+      var rect = container.getBoundingClientRect();
+      var maxWidth = window.innerWidth - rect.left - 8;
+      if (needed > maxWidth) needed = maxWidth;
+      if (needed <= cur || needed <= lastTarget) return;
+
+      lastTarget = needed;
+      if (!cssReady) {
+        animFrom = cur;
+        animTo = needed;
+        animStart = performance.now();
+        animId = requestAnimationFrame(animTick);
+      } else {
+        container.style[prop] = needed + 'px';
+        if (onResize) onResize();
+      }
+    }
+
+    for (var i = 0; i < inputs.length; i++) {
+      (function (inp) {
+        inp.addEventListener('focus', function () {
+          requestAnimationFrame(function () { measure(); });
+        });
+        inp.addEventListener('click', function () {
+          requestAnimationFrame(function () { measure(); });
+        });
+        inp.addEventListener('input', function () { measure(); });
+      })(inputs[i]);
+    }
+    return measure;
+  }
+
+  function _promptNewFolder(item) {
     var dialogOverlay = document.createElement('div');
     dialogOverlay.className = 'live-wysiwyg-nav-dialog';
     var content = document.createElement('div');
     content.className = 'live-wysiwyg-nav-dialog-content';
     content.innerHTML = '<p>Create a new folder for this page:</p>' +
-      '<div class="live-wysiwyg-nav-settings-row"><span>Folder name (a-z, 0-9, -)</span>' +
+      '<div class="live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline"><span>Folder name</span>' +
       '<input type="text" class="live-wysiwyg-nav-folder-name" placeholder="new-section"></div>' +
-      '<div class="live-wysiwyg-nav-settings-row"><span>Display name</span>' +
-      '<input type="text" class="live-wysiwyg-nav-folder-title" placeholder="New Section"></div>';
+      '<div class="live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline"><span>Display name</span>' +
+      '<input type="text" class="live-wysiwyg-nav-folder-title" placeholder="New Section"></div>' +
+      '<div class="live-wysiwyg-nav-settings-row"><label>' +
+      '<input type="checkbox" class="live-wysiwyg-nav-skip-index"> Only create folder</label></div>';
     var actions = document.createElement('div');
     actions.className = 'live-wysiwyg-nav-dialog-actions';
     var createBtn = document.createElement('button');
@@ -10663,17 +10747,32 @@
     content.appendChild(actions);
     dialogOverlay.appendChild(content);
     document.body.appendChild(dialogOverlay);
+    _attachContainerExpandBehavior(content, { prop: 'maxWidth' });
 
     var nameInput = content.querySelector('.live-wysiwyg-nav-folder-name');
     var titleInput = content.querySelector('.live-wysiwyg-nav-folder-title');
+    var skipIndexCheckbox = content.querySelector('.live-wysiwyg-nav-skip-index');
     nameInput.addEventListener('input', function () {
       nameInput.value = nameInput.value.replace(/[^a-z0-9-]/g, '');
+    });
+    nameInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); titleInput.focus(); titleInput.select(); }
+    });
+    titleInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); createBtn.click(); }
+    });
+    dialogOverlay.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation();
+        if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay);
+      }
     });
 
     cancelBtn.addEventListener('click', function () { dialogOverlay.parentNode.removeChild(dialogOverlay); });
     createBtn.addEventListener('click', function () {
       var folderName = nameInput.value.trim();
       var folderTitle = titleInput.value.trim() || folderName;
+      var skipIndex = skipIndexCheckbox && skipIndexCheckbox.checked;
       if (!folderName) { nameInput.focus(); return; }
       dialogOverlay.parentNode.removeChild(dialogOverlay);
 
@@ -10686,16 +10785,19 @@
         src_path: indexPath,
         children: [item],
         _new: true,
-        _uid: _generateUid(),
-        index_meta: { weight: _getItemWeight(item) || 100, headless: false, retitled: true, empty: true }
+        _uid: _generateUid()
       };
+      if (!skipIndex) {
+        syntheticSection.index_meta = { weight: _getItemWeight(item) || 100, headless: false, retitled: true, empty: true };
+      }
 
-      if (_batchClaimedPaths) _batchClaimedPaths.add(indexPath);
+      if (!skipIndex && _batchClaimedPaths) _batchClaimedPaths.add(indexPath);
       _navBatchQueue.push({
         type: 'create-folder',
         item: item,
         folderName: folderName,
         folderTitle: folderTitle,
+        skipIndex: !!skipIndex,
         syntheticSection: syntheticSection
       });
       var navItems = typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : [];
@@ -10726,19 +10828,118 @@
     });
   }
 
-  function _autoNormalizeSiblingWeights(siblings) {
-    if (!siblings) return;
-    var ordered = [];
-    for (var j = 0; j < siblings.length; j++) {
-      var sib = siblings[j];
-      if (sib.type === 'page' && sib.headless) continue;
-      ordered.push(sib);
+  function _normalizeLevelWeights(sectionItem) {
+    var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
+    var indexWeight = (nwCfg.frontmatter_defaults && nwCfg.frontmatter_defaults.index_weight !== undefined)
+      ? nwCfg.frontmatter_defaults.index_weight
+      : (nwCfg.index_weight !== undefined ? nwCfg.index_weight : -10);
+
+    var levelItems, parentDir;
+    if (sectionItem && sectionItem.children) {
+      levelItems = sectionItem.children;
+      parentDir = _getSectionFolderDir(sectionItem) || '';
+    } else {
+      levelItems = (typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : []);
+      parentDir = '';
     }
-    for (var k = 0; k < ordered.length; k++) {
-      var w = (k + 1) * 100;
-      _setItemWeight(ordered[k], w);
-      var sp = _getItemSrcPath(ordered[k]);
-      if (sp) _syncCurrentPageWeight(sp, w);
+    if (!levelItems.length) return;
+
+    var orderedItems = [];
+    for (var i = 0; i < levelItems.length; i++) {
+      var item = levelItems[i];
+      if (item._deleted) continue;
+      if (item.type === 'page') {
+        if (item.isIndex) {
+          item.weight = null;
+          if (item._fm) item._fm.weight = null;
+          continue;
+        }
+        if (item.headless) continue;
+        orderedItems.push(item);
+      } else if (item.type === 'section' && item.children) {
+        if (!_hasVisibleMdContent(item.children)) continue;
+        var folderDir = _getSectionFolderDir(item);
+
+        var indexChild = item.children.find(function (c) { return c.type === 'page' && c.isIndex; });
+        if (indexChild && !(indexChild.retitled && indexChild.empty)) {
+          var title = indexChild.title || item.title;
+          var baseName = _generateFilename(title);
+          var claimedPaths = [];
+          for (var ci = 0; ci < item.children.length; ci++) {
+            if (item.children[ci].src_path) claimedPaths.push(item.children[ci].src_path);
+          }
+          var existingPaths = (typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [])
+            .filter(function (p) { return p.indexOf((folderDir || parentDir) + '/') === 0 && p !== indexChild.src_path; });
+          var newFilename = _resolveFilenameConflict(baseName, existingPaths, claimedPaths);
+          var fd = folderDir || parentDir;
+          var renamedPath = fd ? fd + '/' + newFilename : newFilename;
+
+          indexChild._renamed = true;
+          indexChild._originalPath = indexChild.src_path;
+          indexChild.src_path = renamedPath;
+          indexChild.isIndex = false;
+
+          var newIndexPath = fd ? fd + '/index.md' : 'index.md';
+          var thinIndex = {
+            type: 'page', src_path: newIndexPath, title: title, isIndex: true,
+            retitled: true, empty: true, weight: indexWeight,
+            _fm: { title: title, retitled: true, empty: true, weight: indexWeight },
+            _new: true, _uid: _generateUid()
+          };
+          item.children.splice(0, 0, thinIndex);
+          if (item.src_path === indexChild._originalPath) {
+            item.src_path = newIndexPath;
+          }
+
+          orderedItems.push({ _proxy: true, _target: thinIndex, isIndex: true });
+          orderedItems.push({ _proxy: true, _target: indexChild });
+        } else if (indexChild) {
+          orderedItems.push({ _proxy: true, _target: indexChild, isIndex: true, _section: item });
+        } else if (item.src_path && item.index_meta) {
+          orderedItems.push({ _proxy: true, _target: item, isIndex: true, useIndexMeta: true });
+        } else {
+          var fd = folderDir || parentDir;
+          if (fd) {
+            var newIndexPath = fd + '/index.md';
+            var sectionTitle = item.title || fd.split('/').pop().replace(/-/g, ' ').replace(/\b\w/g, function (ch) { return ch.toUpperCase(); });
+            var thinIndex = {
+              type: 'page', src_path: newIndexPath, title: sectionTitle, isIndex: true,
+              retitled: true, empty: true, weight: indexWeight,
+              _fm: { title: sectionTitle, retitled: true, empty: true, weight: indexWeight },
+              _new: true, _uid: _generateUid()
+            };
+            item.children.splice(0, 0, thinIndex);
+            item.src_path = newIndexPath;
+            orderedItems.push({ _proxy: true, _target: thinIndex, isIndex: true });
+          }
+        }
+      }
+    }
+    for (var j = 0; j < orderedItems.length; j++) {
+      var w = (j + 1) * 100;
+      var entry = orderedItems[j];
+      if (entry._proxy) {
+        var tgt = entry._target;
+        if (entry.useIndexMeta && tgt.index_meta) {
+          tgt.index_meta.weight = w;
+        } else if (entry.isIndex && tgt.type === 'page') {
+          tgt.weight = w;
+          if (tgt._fm) tgt._fm.weight = w;
+        } else {
+          tgt.weight = w;
+          if (tgt._fm) tgt._fm.weight = w;
+        }
+        if (entry._section && entry._section.index_meta) {
+          entry._section.index_meta.weight = w;
+        }
+        var sp = tgt.src_path || '';
+        if (sp) _syncCurrentPageWeight(sp, w);
+      } else {
+        entry.weight = w;
+        if (entry._fm) entry._fm.weight = w;
+        var sp = _getItemSrcPath(entry);
+        if (sp) _syncCurrentPageWeight(sp, w);
+      }
     }
   }
 
@@ -10826,6 +11027,7 @@
 
     _navCmdSHandler = function (e) {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        if (document.querySelector('.live-wysiwyg-nav-dialog')) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         _confirmNavSave();
@@ -10833,6 +11035,7 @@
     };
     _navEditEscHandler = function (e) {
       if (e.key === 'Escape') {
+        if (document.querySelector('.live-wysiwyg-nav-dialog')) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         _confirmNavDiscard();
@@ -10840,6 +11043,7 @@
     };
     _navContentEditingGuard = function (e) {
       if (!_navEditMode) return;
+      if (document.querySelector('.live-wysiwyg-nav-dialog')) return;
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault(); e.stopImmediatePropagation(); _navUndo(); return;
       }
@@ -10865,10 +11069,6 @@
     document.addEventListener('keydown', _navEditEscHandler, true);
     document.addEventListener('keydown', _navContentEditingGuard, true);
 
-    if (_focusEscapeHandler) {
-      document.removeEventListener('keydown', _focusEscapeHandler, true);
-    }
-
     _rebuildNavMenuForEditMode();
   }
 
@@ -10882,10 +11082,6 @@
     if (_navCmdSHandler) { document.removeEventListener('keydown', _navCmdSHandler, true); _navCmdSHandler = null; }
     if (_navEditEscHandler) { document.removeEventListener('keydown', _navEditEscHandler, true); _navEditEscHandler = null; }
     if (_navContentEditingGuard) { document.removeEventListener('keydown', _navContentEditingGuard, true); _navContentEditingGuard = null; }
-
-    if (_focusEscapeHandler) {
-      document.addEventListener('keydown', _focusEscapeHandler, true);
-    }
 
     if (_navEditActionsEl && _navEditActionsEl.parentNode) {
       _navEditActionsEl.parentNode.removeChild(_navEditActionsEl);
@@ -11276,6 +11472,7 @@
         _updateUndoRedoBtns();
       }
     }
+    _persistWarningsFromSnapshot();
   }
 
   function _navUndo() {
@@ -11292,6 +11489,10 @@
 
   function _findNavLi(item) {
     if (!_navSidebarEl || !item) return null;
+    if (item._uid) {
+      var byUid = _navSidebarEl.querySelector('[data-nav-uid="' + item._uid + '"]');
+      if (byUid) return byUid;
+    }
     var p = _getItemSrcPath(item);
     if (!p) return null;
     if (item.type === 'section') {
@@ -11518,7 +11719,7 @@
           { text: 'Delete All', value: 'delete-all', className: 'live-wysiwyg-nav-dialog-danger' }
         ]
       ).then(function (result) {
-        if (result === 'cancel') return;
+        if (!result || result === 'cancel') return;
         if (result === 'skip') {
           _navBatchQueue.push({ type: 'delete-folder', folder: pfd.folderDir, exclusions: targetList });
         } else {
@@ -11581,13 +11782,24 @@
     var origFlat = _flattenNavTree(originalSnap.navData, null, '');
     var currFlat = _flattenNavTree(currentSnap.navData, null, '');
 
-    console.log('[save-debug] _computeSavePlan flattened trees:');
-    console.log('[save-debug]   origFlat UIDs (' + Object.keys(origFlat).length + '):', Object.keys(origFlat).map(function(u) { var e = origFlat[u]; return u + '=' + (e.srcPath || e.folderDir || '?'); }));
-    console.log('[save-debug]   currFlat UIDs (' + Object.keys(currFlat).length + '):', Object.keys(currFlat).map(function(u) { var e = currFlat[u]; return u + '=' + (e.srcPath || e.folderDir || '?'); }));
-
     var pages = [];
     var sections = [];
     var uid;
+
+    var _sectionDesiredDirCache = {};
+    function _resolveDesiredDir(suid) {
+      if (_sectionDesiredDirCache.hasOwnProperty(suid)) return _sectionDesiredDirCache[suid];
+      var cEntry = currFlat[suid];
+      if (!cEntry || !cEntry.folderDir) { _sectionDesiredDirCache[suid] = null; return null; }
+      var baseName = cEntry.folderDir.split('/').pop();
+      var effectiveParentDir = '';
+      if (cEntry.parentUid && currFlat[cEntry.parentUid] && currFlat[cEntry.parentUid].folderDir) {
+        effectiveParentDir = _resolveDesiredDir(cEntry.parentUid) || '';
+      }
+      var desired = effectiveParentDir ? effectiveParentDir + '/' + baseName : baseName;
+      _sectionDesiredDirCache[suid] = desired;
+      return desired;
+    }
 
     for (uid in origFlat) {
       if (!origFlat.hasOwnProperty(uid)) continue;
@@ -11595,14 +11807,17 @@
 
       if (origEntry.folderDir) {
         if (currFlat[uid]) {
-          sections.push({ uid: uid, diskDir: origEntry.folderDir, desiredDir: currFlat[uid].folderDir || origEntry.folderDir, isNew: false, isDeleted: false });
+          var _sDesiredDir = _resolveDesiredDir(uid) || origEntry.folderDir;
+          sections.push({ uid: uid, diskDir: origEntry.folderDir, desiredDir: _sDesiredDir, isNew: false, isDeleted: false });
         } else {
           sections.push({ uid: uid, diskDir: origEntry.folderDir, desiredDir: null, isNew: false, isDeleted: true });
         }
         continue;
       }
 
-      if (!origEntry.srcPath) continue;
+      if (!origEntry.srcPath) {
+        continue;
+      }
 
       if (origEntry.itemType === 'asset') continue;
 
@@ -11691,6 +11906,7 @@
           createFolderOps.push({
             type: 'create-folder', item: cfop.item,
             folderName: cfop.folderName, folderTitle: cfop.folderTitle,
+            skipIndex: cfop.skipIndex,
             syntheticSection: cfop.syntheticSection
           });
           break;
@@ -11718,23 +11934,30 @@
       if (!currFlat.hasOwnProperty(uid)) continue;
       if (currFlat[uid].itemType === 'asset') currAssetUids.push(uid + '=' + currFlat[uid].srcPath);
     }
-    console.log('[save-debug] asset UIDs in origFlat (' + origAssetUids.length + '):', origAssetUids);
-    console.log('[save-debug] asset UIDs in currFlat (' + currAssetUids.length + '):', currAssetUids);
+    var _sectionDirRenameMap = {};
+    for (var _sri = 0; _sri < sections.length; _sri++) {
+      if (sections[_sri].diskDir && sections[_sri].desiredDir && sections[_sri].diskDir !== sections[_sri].desiredDir) {
+        _sectionDirRenameMap[sections[_sri].diskDir] = sections[_sri].desiredDir;
+      }
+    }
+
     for (uid in origFlat) {
       if (!origFlat.hasOwnProperty(uid)) continue;
       var origAsset = origFlat[uid];
       if (origAsset.itemType !== 'asset' || !origAsset.srcPath) continue;
       if (!currFlat[uid]) {
-        console.log('[save-debug] asset DELETE: uid=' + uid + ' path=' + origAsset.srcPath + ' (not found in currFlat)');
         assetDeletes.push({ path: origAsset.srcPath });
         continue;
       }
       var currAsset = currFlat[uid];
-      if (currAsset.srcPath && currAsset.srcPath !== origAsset.srcPath) {
-        console.log('[save-debug] asset MOVE: uid=' + uid + ' ' + origAsset.srcPath + ' -> ' + currAsset.srcPath);
-        assetMoves.push({ oldPath: origAsset.srcPath, newPath: currAsset.srcPath });
-      } else {
-        console.log('[save-debug] asset UNCHANGED: uid=' + uid + ' path=' + origAsset.srcPath);
+      var effectiveNewPath = currAsset.srcPath;
+      var assetDir = _getDir(origAsset.srcPath);
+      if (_sectionDirRenameMap[assetDir]) {
+        var assetFileName = origAsset.srcPath.split('/').pop();
+        effectiveNewPath = _sectionDirRenameMap[assetDir] + '/' + assetFileName;
+      }
+      if (effectiveNewPath && effectiveNewPath !== origAsset.srcPath) {
+        assetMoves.push({ oldPath: origAsset.srcPath, newPath: effectiveNewPath });
       }
     }
 
@@ -11742,7 +11965,12 @@
     for (uid in currFlat) {
       if (!currFlat.hasOwnProperty(uid)) continue;
       if (currFlat[uid].itemType === 'asset' && currFlat[uid].srcPath) {
-        currentAssetPaths.push(currFlat[uid].srcPath);
+        var _capDir = _getDir(currFlat[uid].srcPath);
+        if (_sectionDirRenameMap[_capDir]) {
+          currentAssetPaths.push(_sectionDirRenameMap[_capDir] + '/' + currFlat[uid].srcPath.split('/').pop());
+        } else {
+          currentAssetPaths.push(currFlat[uid].srcPath);
+        }
       }
     }
 
@@ -11756,21 +11984,6 @@
       createFolderOps: createFolderOps,
       mkdocsYmlOps: mkdocsYmlOps
     };
-    console.log('[save-debug] _computeSavePlan desired state:');
-    console.log('[save-debug]   pages (' + pages.length + '):');
-    for (var di = 0; di < pages.length; di++) {
-      var dp = pages[di];
-      console.log('[save-debug]     ' + dp.uid + ' disk=' + dp.diskPath + ' desired=' + dp.desiredPath +
-        ' new=' + dp.isNew + ' del=' + dp.isDeleted + ' idx=' + dp.isIndex + ' newFm=' + dp.newFrontmatter +
-        ' setContent=' + (dp.setContent !== null ? dp.setContent.length + 'ch' : 'null') +
-        ' createContent=' + (dp.createContent !== null ? dp.createContent.length + 'ch' : 'null') +
-        ' fm=' + JSON.stringify(dp.desiredFm));
-    }
-    console.log('[save-debug]   sections (' + sections.length + '):');
-    for (var si = 0; si < sections.length; si++) {
-      var ds = sections[si];
-      console.log('[save-debug]     ' + ds.uid + ' disk=' + ds.diskDir + ' desired=' + ds.desiredDir + ' new=' + ds.isNew + ' del=' + ds.isDeleted);
-    }
     return result;
   }
 
@@ -11913,10 +12126,7 @@
         }
       }
       if (!hasLivingChildren) {
-        console.log('[save-debug] folder-delete QUEUED: ' + sec.diskDir + ' (uid=' + sec.uid + ', no living children)');
         batch1.push({ type: 'delete-folder', folder: sec.diskDir });
-      } else {
-        console.log('[save-debug] folder-delete SKIPPED: ' + sec.diskDir + ' (uid=' + sec.uid + ', has living children: ' + livingChildReason + ')');
       }
     }
 
@@ -12007,35 +12217,16 @@
       p = desiredState.pages[i];
       if (p.isDeleted && p.diskPath) deletedPaths[p.diskPath] = true;
     }
-    console.log('[rewrite-debug] allRenames built:', JSON.stringify(allRenames));
-    console.log('[rewrite-debug] deletedPaths built:', JSON.stringify(deletedPaths));
     if (Object.keys(allRenames).length || Object.keys(deletedPaths).length) {
       batch2ContentMigration.push({ type: 'rewrite-links', renameMap: allRenames, deletedPaths: deletedPaths });
-      console.log('[rewrite-debug] rewrite-links op QUEUED with ' + Object.keys(allRenames).length + ' renames');
-    } else {
-      console.log('[rewrite-debug] rewrite-links op NOT queued (no renames or deletes)');
     }
 
     var mkdocsYmlOps = desiredState.mkdocsYmlOps || [];
 
-    console.log('[save-debug] _planDiskOperations results:');
-    console.log('[save-debug]   folderRenames (' + folderRenames.length + '):', folderRenames.map(function(f) { return f.oldFolder + ' -> ' + f.newFolder; }));
-    console.log('[save-debug]   coveredByFolderRename:', Object.keys(coveredByFolderRename));
-    console.log('[save-debug]   precomputedRenames:', JSON.stringify(precomputedRenames));
-    console.log('[save-debug]   assetMoves (' + assetMoves.length + '):', assetMoves.map(function(a) { return a.oldPath + ' -> ' + a.newPath; }));
-    console.log('[save-debug]   assetDeletes (' + assetDeletes.length + '):', assetDeletes.map(function(a) { return a.path; }));
-    console.log('[save-debug]   batch1 (' + batch1.length + '):', batch1.map(function(o) { return o.type + ' ' + (o.oldFolder || o.folder || o.oldPath || ''); }));
-    console.log('[save-debug]   batch2 deletes (' + batch2DeleteFiles.length + '):', batch2DeleteFiles.map(function(o) { return o.path; }));
-    console.log('[save-debug]   batch2 moves (' + batch2MoveFiles.length + '):', batch2MoveFiles.map(function(o) { return o.oldPath + ' -> ' + o.newPath; }));
-    console.log('[save-debug]   batch2 creates (' + batch2CreateFiles.length + '):', batch2CreateFiles.map(function(o) { return (o.type === 'create-folder' ? 'folder:' + o.folderName : o.path); }));
-    console.log('[save-debug]   batch2 contentMigration (' + batch2ContentMigration.length + '):', batch2ContentMigration.map(function(o) {
-      if (o.type === 'rewrite-links') return 'rewrite-links (' + Object.keys(o.renameMap || {}).length + ' renames)';
-      return o.type + ' ' + o.src_path + (o.setContent ? ' [setContent=' + o.setContent.length + 'ch]' : '') + (o.newFrontmatter ? ' [newFm]' : '') + ' fm=' + JSON.stringify(o.fm);
-    }));
-
+    var _finalBatch2 = [].concat(mkdocsYmlOps, batch2DeleteFiles, batch2MoveFiles, convertOps, createFolderOps, batch2CreateFiles, batch2ContentMigration);
     return {
       batch1: batch1,
-      batch2: [].concat(mkdocsYmlOps, batch2DeleteFiles, batch2MoveFiles, convertOps, createFolderOps, batch2CreateFiles, batch2ContentMigration),
+      batch2: _finalBatch2,
       precomputedRenames: precomputedRenames
     };
   }
@@ -12055,28 +12246,8 @@
     var originalSnap = _navSnapshots[0];
     var activeSnap = _navSnapshots[_navSnapshotIndex];
 
-    var origSnapAssets = [];
-    var activeSnapAssets = [];
-    (function dumpSnapAssets(items, list) {
-      for (var da = 0; da < items.length; da++) {
-        if (items[da].type === 'asset') list.push(items[da]._uid + '=' + items[da].src_path);
-        if (items[da].children) dumpSnapAssets(items[da].children, list);
-      }
-    })(originalSnap.navData, origSnapAssets);
-    (function dumpSnapAssets2(items, list) {
-      for (var da = 0; da < items.length; da++) {
-        if (items[da].type === 'asset') list.push(items[da]._uid + '=' + items[da].src_path);
-        if (items[da].children) dumpSnapAssets2(items[da].children, list);
-      }
-    })(activeSnap.navData, activeSnapAssets);
-    console.log('[batch-debug] originalSnap assets (' + origSnapAssets.length + '):', origSnapAssets);
-    console.log('[batch-debug] activeSnap assets (' + activeSnapAssets.length + '):', activeSnapAssets);
-
     var desiredState = _computeSavePlan(originalSnap, activeSnap);
     var plan = _planDiskOperations(desiredState);
-
-    console.log('[batch-debug] plan.batch1 (' + plan.batch1.length + '):', plan.batch1.map(function(o) { return o.type + (o.oldFolder ? ' ' + o.oldFolder + '->' + o.newFolder : '') + (o.folder ? ' ' + o.folder : ''); }));
-    console.log('[batch-debug] plan.batch2 (' + plan.batch2.length + '):', plan.batch2.map(function(o) { return o.type + ' ' + (o.path || o.src_path || (o.item && o.item.src_path) || o.oldPath || ''); }));
 
     var orderedOps = [];
     if (plan.batch1.length) {
@@ -12084,8 +12255,6 @@
       orderedOps.push({ type: 'wait-for-rebuild' });
     }
     orderedOps = orderedOps.concat(plan.batch2);
-
-    console.log('[batch-debug] orderedOps total: ' + orderedOps.length + ', types:', orderedOps.map(function(o) { return o.type; }));
 
     if (wysiwygEditor && wysiwygEditor._isDocDirty && wysiwygEditor._isDocDirty()) {
       if (wysiwygEditor._finalizeUpdate) {
@@ -12292,12 +12461,8 @@
   }
 
   function _dispatchSingleOp(op) {
-    console.log('[batch-debug] dispatch:', op.type, op.path || op.src_path || op.oldFolder || op.folder || (op.item && op.item.src_path) || '', '_bulkWs state:', _bulkWs ? _bulkWs.readyState : 'null');
     if (op.type === 'wait-for-rebuild') {
-      console.log('[batch-debug] >>> wait-for-rebuild starting');
-      return _waitForRebuildAndReconnect().then(function () {
-        console.log('[batch-debug] >>> wait-for-rebuild done, _bulkWs state:', _bulkWs ? _bulkWs.readyState : 'null');
-      });
+      return _waitForRebuildAndReconnect();
     }
     if (op.type === 'save-content') return _executeSaveContentOp(op);
     if (op.type === 'move-up' || op.type === 'move-down') return _executeMoveWeightOp(op);
@@ -12336,7 +12501,6 @@
           _batchRenamedPaths[prKey] = options.precomputedRenames[prKey];
         }
       }
-      console.log('[batch-debug] seeded _batchRenamedPaths from precomputed:', Object.keys(_batchRenamedPaths).length, 'entries');
     }
     _installReloadGuard();
 
@@ -12355,22 +12519,6 @@
 
     indexReady.then(function (freshIndex) {
       _batchLinkIndex = freshIndex;
-      console.log('[rewrite-debug] _batchLinkIndex set, keys:', freshIndex ? Object.keys(freshIndex) : 'null');
-      if (freshIndex) {
-        for (var _dbgK in freshIndex) {
-          if (Object.prototype.hasOwnProperty.call(freshIndex, _dbgK)) {
-            var _dbgRefs = freshIndex[_dbgK];
-            if (Array.isArray(_dbgRefs)) {
-              for (var _dbgI = 0; _dbgI < _dbgRefs.length; _dbgI++) {
-                var _dbgT = _dbgRefs[_dbgI] && _dbgRefs[_dbgI].target;
-                if (_dbgT && /deployStage/i.test(_dbgT)) {
-                  console.log('[rewrite-debug]   linkIndex[' + _dbgK + '] has ref: ' + _dbgT);
-                }
-              }
-            }
-          }
-        }
-      }
       var chain = Promise.resolve();
       for (var i = 0; i < orderedOps.length; i++) {
         (function (op, idx) {
@@ -12392,14 +12540,12 @@
       }
       return chain;
     }).then(function () {
-      console.log('[save-debug] All ops complete. failures:', failures.length, '_batchDeletedPaths:', Object.keys(_batchDeletedPaths), '_batchRenamedPaths:', JSON.stringify(_batchRenamedPaths));
       _updateNavProgress(statusContainer, 99, 'Waiting for rebuild...');
       _closeBulkWs();
       return _waitForRebuild();
     }).then(function () {
       _finishBatchSave(statusContainer, failures, focusTarget, options);
     }).catch(function (err) {
-      console.error('[save-debug] Batch chain error:', err);
       _finishBatchSave(statusContainer, failures, focusTarget, options);
     });
   }
@@ -12871,6 +13017,7 @@
 
   function _executeCreateFolderOp(op) {
     if (!op.folderName) return Promise.resolve();
+    if (op.skipIndex) return Promise.resolve();
     var parentDir = op.item && op.item.src_path ? _getDir(op.item.src_path) : '';
     var indexPath = (parentDir ? parentDir + '/' : '') + op.folderName + '/index.md';
     var indexContent = '---\ntitle: ' + _fmSerialize(op.folderTitle || op.folderName) +
@@ -12883,15 +13030,11 @@
 
   function _executeCreatePageOp(op) {
     if (!op.path || !op.content) {
-      console.warn('[save-debug] _executeCreatePageOp SKIPPED (no path or content):', op.path, 'contentLen:', op.content ? op.content.length : 'null');
       return Promise.resolve();
     }
-    console.log('[save-debug] _executeCreatePageOp START:', op.path, 'contentLen:', op.content.length, 'content[0..120]:', JSON.stringify(op.content.substring(0, 120)));
     return _wsNewFile(op.path, '').then(function () {
       delete _batchDeletedPaths[op.path];
       return _wsSetContents(op.path, op.content);
-    }).then(function () {
-      console.log('[save-debug] _executeCreatePageOp DONE:', op.path);
     });
   }
 
@@ -12918,10 +13061,8 @@
 
   function _executeDeletePageOp(op) {
     if (!op.path) return Promise.resolve();
-    console.log('[save-debug] _executeDeletePageOp:', op.path);
     return _wsDeleteFile(op.path).then(function (resp) {
       _batchDeletedPaths[op.path] = true;
-      console.log('[save-debug] _executeDeletePageOp DONE:', op.path);
       return resp;
     });
   }
@@ -12929,14 +13070,11 @@
   function _executeRenamePageOp(op) {
     if (!op.oldPath || !op.newPath) return Promise.resolve();
     var actualOldPath = _resolveChainedRename(op.oldPath);
-    console.log('[save-debug] _executeRenamePageOp START:', op.oldPath, '->', op.newPath, '(actualOld:', actualOldPath + ')');
     if (_batchDeletedPaths[actualOldPath]) {
-      console.error('[save-debug] _executeRenamePageOp BLOCKED: file already deleted:', actualOldPath, '_batchDeletedPaths:', Object.keys(_batchDeletedPaths));
       _addCautionPage(op.oldPath, 'File was already deleted when rename was attempted');
       return Promise.reject(new Error('File already deleted: ' + actualOldPath));
     }
     return _wsGetContents(actualOldPath).then(function (content) {
-      console.log('[save-debug] _executeRenamePageOp got content for', actualOldPath, 'len:', content ? content.length : 'null');
       var updated = content;
       if (op.newTitle) {
         updated = _updateFrontmatter(content, { title: op.newTitle }, actualOldPath.endsWith('index.md'));
@@ -12948,14 +13086,12 @@
         return Promise.reject(new Error('Double render check failed for ' + actualOldPath));
       }
       return _wsDeleteFile(actualOldPath).then(function () {
-        console.log('[save-debug] _executeRenamePageOp deleted old:', actualOldPath);
         _batchDeletedPaths[actualOldPath] = true;
         return _wsNewFile(op.newPath, '').then(function () {
           return _wsSetContents(op.newPath, rewritten);
         });
       });
     }).then(function () {
-      console.log('[save-debug] _executeRenamePageOp DONE:', op.oldPath, '->', op.newPath);
       _batchRenamedPaths[op.oldPath] = op.newPath;
       _migrateCautionForRename(actualOldPath, op.newPath);
       var linkIndex = _batchLinkIndex;
@@ -12979,9 +13115,7 @@
   function _executeSetFrontmatterOp(op) {
     if (!op.src_path) return Promise.resolve();
     var actualPath = _resolveChainedRename(op.src_path);
-    console.log('[save-debug] _executeSetFrontmatterOp START:', op.src_path, '(actualPath:', actualPath + ')', 'newFm:', op.newFrontmatter, 'isIndex:', op.isIndex, 'hasSetContent:', typeof op.setContent === 'string', 'fm:', JSON.stringify(op.fm), 'origFm:', JSON.stringify(op.origFm));
     if (_batchDeletedPaths[actualPath]) {
-      console.warn('[save-debug] _executeSetFrontmatterOp SKIPPED (deleted):', actualPath);
       return Promise.resolve();
     }
     if (op.fm) {
@@ -12992,21 +13126,14 @@
         var effectiveOrig = scParsed.hasBlock ? scParsed.fields : (op.origFm || {});
         var newFm = _buildFrontmatterFromFm(mergedFm, op.isIndex, effectiveOrig);
         var finalContent = newFm + scBody;
-        console.log('[save-debug] _executeSetFrontmatterOp setContent path:', actualPath, 'bodyLen:', scBody.length, 'fmYaml:', JSON.stringify(newFm), 'totalLen:', finalContent.length);
-        return _wsSetContents(actualPath, finalContent).then(function () {
-          console.log('[save-debug] _executeSetFrontmatterOp DONE (setContent):', actualPath);
-        });
+        return _wsSetContents(actualPath, finalContent);
       }
       return _wsGetContents(actualPath).then(function (content) {
-        console.log('[save-debug] _executeSetFrontmatterOp got disk content for', actualPath, 'len:', content ? content.length : 'null', 'content[0..120]:', content ? JSON.stringify(content.substring(0, 120)) : 'null');
         var parsed = _parseFrontmatter(content);
         var body = parsed.hasBlock ? content.substring(parsed.bodyStart) : content;
         var newFm = _buildFrontmatterFromFm(op.fm, op.isIndex, op.origFm);
         var finalContent = newFm + body;
-        console.log('[save-debug] _executeSetFrontmatterOp writing:', actualPath, 'fmYaml:', JSON.stringify(newFm), 'bodyLen:', body.length, 'totalLen:', finalContent.length);
         return _wsSetContents(actualPath, finalContent);
-      }).then(function () {
-        console.log('[save-debug] _executeSetFrontmatterOp DONE (read+write):', actualPath);
       });
     }
     if (!op.updates) return Promise.resolve();
@@ -13066,31 +13193,24 @@
   }
 
   function _executeMoveFileOp(op) {
-    console.log('[rewrite-debug] _executeMoveFileOp START:', op.oldPath, '->', op.newPath);
     return _apiPost('/move-file', { old_path: op.oldPath, new_path: op.newPath }).then(function (result) {
-      console.log('[rewrite-debug] _executeMoveFileOp DONE:', op.oldPath, '->', op.newPath, 'result:', JSON.stringify(result));
       _batchRenamedPaths[op.oldPath] = op.newPath;
-      console.log('[rewrite-debug] _batchRenamedPaths after move-file:', JSON.stringify(_batchRenamedPaths));
     });
   }
 
   function _executeDeleteFileOp(op) {
     if (!op.path) return Promise.resolve();
-    console.log('[save-debug] _executeDeleteFileOp:', op.path);
     return _apiPost('/delete-file', { path: op.path }).then(function (result) {
       _batchDeletedPaths[op.path] = true;
-      console.log('[save-debug] _executeDeleteFileOp DONE:', op.path, 'result:', JSON.stringify(result));
     });
   }
 
   function _executeRenameFolderOp(op) {
     if (!op.oldFolder || !op.newFolder) return Promise.resolve();
-    console.log('[save-debug] _executeRenameFolderOp START:', op.oldFolder, '->', op.newFolder);
     var reqBody = { old_path: op.oldFolder, new_path: op.newFolder };
     var oldPrefix = op.oldFolder + '/';
     var newPrefix = op.newFolder + '/';
     return _apiPost('/rename-folder', reqBody).then(function (result) {
-      console.log('[save-debug] _executeRenameFolderOp DONE:', op.oldFolder, '->', op.newFolder, 'result:', JSON.stringify(result));
       for (var oldP in _batchRenamedPaths) {
         if (Object.prototype.hasOwnProperty.call(_batchRenamedPaths, oldP)) {
           var cur = _batchRenamedPaths[oldP];
@@ -13110,7 +13230,6 @@
         }
       }
       if (!movedMdFiles.length) return;
-      console.log('[outbound-debug] _executeRenameFolderOp: rewriting outbound links for ' + movedMdFiles.length + ' md files');
       var chain = Promise.resolve();
       movedMdFiles.forEach(function (entry) {
         chain = chain.then(function () {
@@ -13120,7 +13239,6 @@
           return _wsGetContents(entry.diskPath).then(function (content) {
             var rewritten = _rewriteOutboundLinks(content, oldDir, newDir);
             if (rewritten !== content) {
-              console.log('[outbound-debug]   CHANGED ' + entry.diskPath + ' (' + content.length + ' -> ' + rewritten.length + ' chars)');
               return _wsSetContents(entry.diskPath, rewritten);
             }
           });
@@ -13184,7 +13302,7 @@
         if (absTarget === null && oldPageDir !== null) {
           absTarget = _resolvePath(oldPageDir, decoded);
         }
-        if (absTarget === null) { console.log('[rewrite-debug]     resolve NULL: decoded=' + decoded + ' newPageDir=' + newPageDir); continue; }
+        if (absTarget === null) continue;
         if (!renameMap[absTarget] && oldPageDir !== null) {
           var fallbackAbs = _resolvePath(oldPageDir, decoded);
           if (fallbackAbs !== null && renameMap[fallbackAbs]) {
@@ -13217,7 +13335,6 @@
     var renameMap = op.renameMap || {};
     var deletedPaths = op.deletedPaths || {};
     var linkIndex = _batchLinkIndex;
-    console.log('[rewrite-debug] _executeRewriteLinksOp: renames=' + Object.keys(renameMap).length + ' deletes=' + Object.keys(deletedPaths).length + ' indexPages=' + (linkIndex ? Object.keys(linkIndex).length : 0));
     if (!linkIndex || typeof linkIndex !== 'object') return Promise.resolve();
     if (!Object.keys(renameMap).length && !Object.keys(deletedPaths).length) return Promise.resolve();
 
@@ -13246,7 +13363,6 @@
     }
 
     var pages = Object.keys(pagesToUpdate);
-    console.log('[rewrite-debug]   pagesToUpdate: ' + pages.length + ' pages');
     if (!pages.length) return Promise.resolve();
 
     var chain = Promise.resolve();
@@ -13258,7 +13374,6 @@
           var newPagePath = renameMap[pagePath] || pagePath;
           var updated = _rewriteAllMovedLinksInPage(content, renameMap, pagePath, newPagePath);
           if (updated !== content) {
-            console.log('[rewrite-debug]   CHANGED: ' + actualPagePath + ' (' + content.length + ' -> ' + updated.length + ' chars)');
             return _wsSetContents(actualPagePath, updated);
           }
         }).catch(function (err) {
@@ -13305,154 +13420,22 @@
 
 
   function _applyNormalizeFolderToNavData(sectionItem) {
-    if (!sectionItem || !sectionItem.children) return;
-    var orderedItems = [];
-    for (var i = 0; i < sectionItem.children.length; i++) {
-      var child = sectionItem.children[i];
-      if (child._deleted) continue;
-      if (child.type === 'page') {
-        if (child.isIndex) continue;
-        orderedItems.push(child);
-      } else if (child.type === 'section') {
-        var indexChild = (child.children || []).find(function (c) { return c.type === 'page' && c.isIndex; });
-        if (indexChild) {
-          orderedItems.push(indexChild);
-        } else if (child.src_path && child.index_meta) {
-          orderedItems.push(child);
-        }
-      }
-    }
-    for (var j = 0; j < orderedItems.length; j++) {
-      var w = (j + 1) * 100;
-      var target = orderedItems[j];
-      if (target.isIndex && target.type === 'page') {
-        if (target.index_meta) target.index_meta.weight = w;
-        else target.weight = w;
-        if (target._fm) target._fm.weight = w;
-      } else if (target.type === 'section' && target.index_meta) {
-        target.index_meta.weight = w;
-      } else {
-        target.weight = w;
-        if (target._fm) target._fm.weight = w;
-      }
-    }
+    _normalizeLevelWeights(sectionItem);
   }
 
   function _applyNormalizeWeightsToNavData(items) {
-    var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
-    var indexWeight = (nwCfg.frontmatter_defaults && nwCfg.frontmatter_defaults.index_weight !== undefined)
-      ? nwCfg.frontmatter_defaults.index_weight
-      : (nwCfg.index_weight !== undefined ? nwCfg.index_weight : -10);
-
-    function processLevel(levelItems, parentDir) {
-      var orderedItems = [];
+    _normalizeLevelWeights(null);
+    function recurse(levelItems) {
       for (var i = 0; i < levelItems.length; i++) {
         var item = levelItems[i];
-        if (item._deleted) continue;
-        if (item.type === 'page') {
-          if (item.isIndex) {
-            console.log('[normalize-debug] processLevel SKIP isIndex: ' + item.src_path);
-            item.weight = null;
-            if (item._fm) item._fm.weight = null;
-            continue;
-          }
-          if (item.headless) {
-            console.log('[normalize-debug] processLevel SKIP headless: ' + item.src_path);
-            continue;
-          }
-          console.log('[normalize-debug] processLevel INCLUDE: ' + item.src_path + ' headless=' + item.headless);
-          orderedItems.push(item);
-        } else if (item.type === 'section' && item.children) {
-          if (!_hasVisibleMdContent(item.children)) {
-            console.log('[normalize-debug] processLevel SKIP hidden section: ' + (item.title || '?'));
-            continue;
-          }
-          var folderDir = _getSectionFolderDir(item);
-          processLevel(item.children, folderDir || parentDir);
-
-          var indexChild = item.children.find(function (c) { return c.type === 'page' && c.isIndex; });
-          if (indexChild && !(indexChild.retitled && indexChild.empty)) {
-            var title = indexChild.title || item.title;
-            var baseName = _generateFilename(title);
-            var claimedPaths = [];
-            for (var ci = 0; ci < item.children.length; ci++) {
-              if (item.children[ci].src_path) claimedPaths.push(item.children[ci].src_path);
-            }
-            var existingPaths = (typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [])
-              .filter(function (p) { return p.indexOf((folderDir || parentDir) + '/') === 0 && p !== indexChild.src_path; });
-            var newFilename = _resolveFilenameConflict(baseName, existingPaths, claimedPaths);
-            var fd = folderDir || parentDir;
-            var renamedPath = fd ? fd + '/' + newFilename : newFilename;
-
-            indexChild._renamed = true;
-            indexChild._originalPath = indexChild.src_path;
-            indexChild.src_path = renamedPath;
-            indexChild.isIndex = false;
-
-            var newIndexPath = fd ? fd + '/index.md' : 'index.md';
-            var thinIndex = {
-              type: 'page', src_path: newIndexPath, title: title, isIndex: true,
-              retitled: true, empty: true, weight: indexWeight,
-              _fm: { title: title, retitled: true, empty: true, weight: indexWeight },
-              _new: true, _uid: _generateUid()
-            };
-            item.children.splice(0, 0, thinIndex);
-            if (item.src_path === indexChild._originalPath) {
-              item.src_path = newIndexPath;
-            }
-
-            orderedItems.push({ _proxy: true, _target: thinIndex, isIndex: true });
-            orderedItems.push({ _proxy: true, _target: indexChild });
-          } else if (indexChild) {
-            orderedItems.push({ _proxy: true, _target: indexChild, isIndex: true });
-          } else if (item.src_path && item.index_meta) {
-            orderedItems.push({ _proxy: true, _target: item, isIndex: true, useIndexMeta: true });
-          } else {
-            var fd = folderDir || parentDir;
-            if (fd) {
-              var newIndexPath = fd + '/index.md';
-              var sectionTitle = item.title || fd.split('/').pop().replace(/-/g, ' ').replace(/\b\w/g, function (ch) { return ch.toUpperCase(); });
-              var thinIndex = {
-                type: 'page', src_path: newIndexPath, title: sectionTitle, isIndex: true,
-                retitled: true, empty: true, weight: indexWeight,
-                _fm: { title: sectionTitle, retitled: true, empty: true, weight: indexWeight },
-                _new: true, _uid: _generateUid()
-              };
-              item.children.splice(0, 0, thinIndex);
-              item.src_path = newIndexPath;
-              console.log('[normalize-debug] processLevel CREATE index for indexless section: ' + newIndexPath);
-              orderedItems.push({ _proxy: true, _target: thinIndex, isIndex: true });
-            }
-          }
-        }
-      }
-      console.log('[normalize-debug] processLevel dir=' + parentDir + ' orderedItems=' + orderedItems.length + ': ' + orderedItems.map(function(e) { return e._proxy ? '(proxy ' + (e._target.src_path || e._target.title) + ')' : (e.src_path || '?'); }).join(', '));
-      for (var j = 0; j < orderedItems.length; j++) {
-        var w = (j + 1) * 100;
-        var entry = orderedItems[j];
-        if (entry._proxy) {
-          var tgt = entry._target;
-          if (entry.useIndexMeta && tgt.index_meta) {
-            tgt.index_meta.weight = w;
-            console.log('[normalize-debug]   ASSIGN w=' + w + ' (index_meta) ' + (tgt.src_path || tgt.title));
-          } else if (entry.isIndex && tgt.type === 'page') {
-            tgt.weight = w;
-            if (tgt._fm) tgt._fm.weight = w;
-            console.log('[normalize-debug]   ASSIGN w=' + w + ' (index page) ' + tgt.src_path);
-          } else {
-            tgt.weight = w;
-            if (tgt._fm) tgt._fm.weight = w;
-            console.log('[normalize-debug]   ASSIGN w=' + w + ' (proxy) ' + tgt.src_path);
-          }
-        } else {
-          entry.weight = w;
-          if (entry._fm) entry._fm.weight = w;
-          console.log('[normalize-debug]   ASSIGN w=' + w + ' ' + entry.src_path + ' headless=' + entry.headless);
+        if (item.type === 'section' && item.children) {
+          if (!_hasVisibleMdContent(item.children)) continue;
+          _normalizeLevelWeights(item);
+          recurse(item.children);
         }
       }
     }
-
-    processLevel(items, '');
+    recurse(items);
   }
 
   function _findParentSectionItem(pageItem) {
@@ -13780,7 +13763,9 @@
     }
     for (var j = 0; j < section.children.length; j++) {
       var c = section.children[j];
-      if (c.type === 'asset' && c.src_path) return _getDir(c.src_path);
+      if (c.type === 'asset' && c.src_path) {
+        return _getDir(c.src_path);
+      }
     }
     for (var j = 0; j < section.children.length; j++) {
       var s = section.children[j];
@@ -13848,6 +13833,12 @@
             }
           }
         });
+
+        var sectionHasIdx = (item.index_meta != null) ||
+          (item.children && item.children.some(function (c) { return c.type === 'page' && c.isIndex; }));
+        if (!sectionHasIdx) {
+          item.title = newFolder.split('/').pop();
+        }
 
         item._renamed = true;
         _markChildrenRenamed(item);
@@ -13971,26 +13962,8 @@
   }
 
   function _buildSettingsContent(dropdown, item, itemType, nwConfig) {
-    var _expandableInputs = [];
     var _renameRef = {};
     var _normalizeRef = {};
-
-    function _measureAndExpand(input) {
-      var overflow = input.scrollWidth - input.clientWidth;
-      if (overflow <= 0) return;
-      var curMin = parseFloat(dropdown.style.minWidth) || 0;
-      var newMin = dropdown.offsetWidth + overflow + 4;
-      if (newMin > curMin) {
-        dropdown.style.minWidth = newMin + 'px';
-        requestAnimationFrame(function () { _repositionDropdown(dropdown); });
-      }
-    }
-
-    function _attachExpandBehavior(input) {
-      _expandableInputs.push(input);
-      input.addEventListener('focus', function () { _measureAndExpand(input); });
-      input.addEventListener('input', function () { _measureAndExpand(input); });
-    }
 
     function addTextRow(label, key, val) {
       var row = document.createElement('div');
@@ -14005,7 +13978,6 @@
       input.setAttribute('data-fm-key', key);
       row.appendChild(input);
       dropdown.appendChild(row);
-      _attachExpandBehavior(input);
       return input;
     }
 
@@ -14054,128 +14026,65 @@
       dropdown.appendChild(row);
     }
 
-    // --- Asset settings (separate flow, early return) ---
-    if (itemType === 'asset') {
-      var assetSrcPath = _getItemSrcPath(item) || '';
-      if (assetSrcPath) {
-        var assetFileName = assetSrcPath.indexOf('/') >= 0 ? assetSrcPath.substring(assetSrcPath.lastIndexOf('/') + 1) : assetSrcPath;
-        var assetRenameRow = document.createElement('div');
-        assetRenameRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
-        var assetRenameLabel = document.createElement('span');
-        assetRenameLabel.textContent = 'File name';
-        assetRenameLabel.style.flexShrink = '0';
-        assetRenameRow.appendChild(assetRenameLabel);
-        var assetRenameInput = document.createElement('input');
-        assetRenameInput.type = 'text';
-        assetRenameInput.value = assetFileName;
-        assetRenameRow.appendChild(assetRenameInput);
-        dropdown.appendChild(assetRenameRow);
-        _attachExpandBehavior(assetRenameInput);
-
-        var assetRenameRef = {};
-        var doAssetRename = function () {
-          var newName = assetRenameInput.value.trim();
-          if (!newName || newName === assetFileName) return;
-          var assetDir = assetSrcPath.indexOf('/') >= 0 ? assetSrcPath.substring(0, assetSrcPath.lastIndexOf('/')) : '';
-          var newAssetPath = assetDir ? assetDir + '/' + newName : newName;
-          dropdown.parentNode.removeChild(dropdown);
-          _enterNavEditModeAsync().then(function (ready) {
-            if (!ready) return;
-            item.src_path = newAssetPath;
-            item.title = newName;
-            var dotIdx = newName.lastIndexOf('.');
-            item.extension = dotIdx > 0 ? newName.substring(dotIdx) : '';
-            item._renamed = true;
-            _addNavBadge({
-              className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-rename-badge',
-              text: 'Rename "' + assetFileName + '" \u2192 "' + newName + '"',
-              attrs: { 'data-rename-asset': '1' }
-            });
-            _commitNavSnapshot();
-          });
-        };
-        assetRenameInput.addEventListener('input', function () {
-          assetRenameRef.btn.disabled = !assetRenameInput.value.trim() || assetRenameInput.value.trim() === assetFileName;
-        });
-        assetRenameInput.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter') { e.preventDefault(); doAssetRename(); }
-        });
-        addButtonRow([
-          { text: 'Rename File', disabled: true, ref: assetRenameRef, shrink: true, onClick: doAssetRename },
-          { text: 'Delete', style: 'background:#d9534f', onClick: function () {
-            dropdown.parentNode.removeChild(dropdown);
-            _enterNavEditModeAsync().then(function (ready) {
-              if (!ready) return;
-              item._deleted = true;
-              _addNavBadge({
-                className: 'live-wysiwyg-nav-normalize-badge',
-                text: 'Delete "' + assetFileName + '"'
-              });
-              _commitNavSnapshot();
-              _renderNavFromSnapshot();
-            });
-          }}
-        ]);
-      }
-      return;
-    }
-
-    // --- Page / Section frontmatter fields ---
-    var effectiveMeta = (itemType === 'section' && item.index_meta) ? item.index_meta : item;
-    var effectiveIsIndex = itemType === 'section' || (item.isIndex === true);
-    var defaultWeight = effectiveIsIndex
-      ? (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined
-        ? nwConfig.frontmatter_defaults.index_weight : -10)
-      : (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.weight !== undefined
-        ? nwConfig.frontmatter_defaults.weight : 0);
-
-    addTextRow('Title', 'title', item.title || '');
-
-    // Weight + Headless on one row
-    var weightRow = document.createElement('div');
-    weightRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
-    var weightSpan = document.createElement('span');
-    weightSpan.textContent = 'Weight';
-    weightRow.appendChild(weightSpan);
-    var weightInput = document.createElement('input');
-    weightInput.type = 'number';
-    weightInput.value = (effectiveMeta.weight !== undefined && effectiveMeta.weight !== null) ? effectiveMeta.weight : defaultWeight;
-    weightInput.setAttribute('data-fm-key', 'weight');
-    weightInput.style.width = '80px';
-    weightRow.appendChild(weightInput);
-    if (_isRootIndex(item)) {
-      weightInput.disabled = true;
-      weightInput.title = 'Root index page does not use a weight';
-    }
-    if (nwConfig.enabled) {
-      var headlessLbl = document.createElement('label');
-      var headlessCb = document.createElement('input');
-      headlessCb.type = 'checkbox';
-      headlessCb.checked = !!(effectiveMeta.headless);
-      headlessCb.setAttribute('data-fm-key', 'headless');
-      headlessLbl.appendChild(headlessCb);
-      headlessLbl.appendChild(document.createTextNode(' Headless'));
-      weightRow.appendChild(headlessLbl);
-    }
-    dropdown.appendChild(weightRow);
-
-    // Retitled + Empty on one row (index pages only)
-    if (nwConfig.enabled && effectiveIsIndex) {
-      addCheckboxGroup([
-        { label: 'Retitled', key: 'retitled', val: effectiveMeta.retitled || false },
-        { label: 'Empty', key: 'empty', val: effectiveMeta.empty || false }
-      ]);
-    }
-
-    addDivider();
-
-    // --- Folder name + Rename/Delete Folder ---
+    // --- Determine whether this section has an index page ---
     var sectionHasIndex = itemType === 'section' && (
       (item.src_path != null && item.src_path !== '') ||
       (item.index_meta != null) ||
       (item.children && item.children.some(function (c) { return c.type === 'page' && c.isIndex; }))
     );
-    if (itemType === 'section' && (nwConfig.enabled || !sectionHasIndex)) {
+    var noIndexSection = itemType === 'section' && !sectionHasIndex;
+
+    // --- Page / Section frontmatter fields (skipped for assets and no-index sections) ---
+    var effectiveMeta = (itemType === 'section' && item.index_meta) ? item.index_meta : item;
+    var effectiveIsIndex = itemType === 'section' || (item.isIndex === true);
+    if (itemType !== 'asset' && !noIndexSection) {
+      var defaultWeight = effectiveIsIndex
+        ? (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined
+          ? nwConfig.frontmatter_defaults.index_weight : -10)
+        : (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.weight !== undefined
+          ? nwConfig.frontmatter_defaults.weight : 0);
+
+      addTextRow('Title', 'title', item.title || '');
+
+      var weightRow = document.createElement('div');
+      weightRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
+      var weightSpan = document.createElement('span');
+      weightSpan.textContent = 'Weight';
+      weightRow.appendChild(weightSpan);
+      var weightInput = document.createElement('input');
+      weightInput.type = 'number';
+      weightInput.value = (effectiveMeta.weight !== undefined && effectiveMeta.weight !== null) ? effectiveMeta.weight : defaultWeight;
+      weightInput.setAttribute('data-fm-key', 'weight');
+      weightInput.style.width = '80px';
+      weightRow.appendChild(weightInput);
+      if (_isRootIndex(item)) {
+        weightInput.disabled = true;
+        weightInput.title = 'Root index page does not use a weight';
+      }
+      if (nwConfig.enabled) {
+        var headlessLbl = document.createElement('label');
+        var headlessCb = document.createElement('input');
+        headlessCb.type = 'checkbox';
+        headlessCb.checked = !!(effectiveMeta.headless);
+        headlessCb.setAttribute('data-fm-key', 'headless');
+        headlessLbl.appendChild(headlessCb);
+        headlessLbl.appendChild(document.createTextNode(' Headless'));
+        weightRow.appendChild(headlessLbl);
+      }
+      dropdown.appendChild(weightRow);
+
+      if (nwConfig.enabled && effectiveIsIndex) {
+        addCheckboxGroup([
+          { label: 'Retitled', key: 'retitled', val: effectiveMeta.retitled || false },
+          { label: 'Empty', key: 'empty', val: effectiveMeta.empty || false }
+        ]);
+      }
+
+      addDivider();
+    }
+
+    // --- Folder name + Rename/Delete Folder ---
+    if (itemType === 'section' && (nwConfig.enabled || noIndexSection)) {
       var folderDir = _getSectionFolderDir(item);
       if (folderDir) {
         var folderBaseName = folderDir.indexOf('/') >= 0 ? folderDir.substring(folderDir.lastIndexOf('/') + 1) : folderDir;
@@ -14191,7 +14100,6 @@
         renameFolderInput.setAttribute('data-folder-rename', 'true');
         folderRow.appendChild(renameFolderInput);
         dropdown.appendChild(folderRow);
-        _attachExpandBehavior(renameFolderInput);
 
         var folderRenameRef = {};
         var doFolderRename = function () {
@@ -14219,12 +14127,13 @@
 
         addDivider();
       }
-    } else if (nwConfig.enabled && itemType === 'page' && !_isRootIndex(item)) {
-      // --- File name + Rename/Delete File ---
+    } else if ((nwConfig.enabled && itemType === 'page' && !_isRootIndex(item)) || itemType === 'asset') {
+      // --- File name + Rename/Delete File (pages and assets) ---
       var srcPath = _getItemSrcPath(item) || '';
       if (srcPath) {
+        var isAsset = itemType === 'asset';
         var fileName = srcPath.indexOf('/') >= 0 ? srcPath.substring(srcPath.lastIndexOf('/') + 1) : srcPath;
-        var fileBaseName = fileName.replace(/\.md$/, '');
+        var fileDisplayName = isAsset ? fileName : fileName.replace(/\.md$/, '');
         var fileRow = document.createElement('div');
         fileRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
         var fileLabel = document.createElement('span');
@@ -14233,34 +14142,57 @@
         fileRow.appendChild(fileLabel);
         var fileRenameInput = document.createElement('input');
         fileRenameInput.type = 'text';
-        fileRenameInput.value = fileBaseName;
+        fileRenameInput.value = fileDisplayName;
         fileRow.appendChild(fileRenameInput);
         dropdown.appendChild(fileRow);
-        _attachExpandBehavior(fileRenameInput);
 
         var fileRenameRef = {};
         var doFileRename = function () {
-          var newBase = fileRenameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-          if (!newBase || newBase === fileBaseName) return;
           var dir = srcPath.indexOf('/') >= 0 ? srcPath.substring(0, srcPath.lastIndexOf('/')) : '';
-          var newPath = dir ? dir + '/' + newBase + '.md' : newBase + '.md';
+          var newName, newPath, badgeText, badgeAttrs;
+          if (isAsset) {
+            newName = fileRenameInput.value.trim();
+            if (!newName || newName === fileDisplayName) return;
+            newPath = dir ? dir + '/' + newName : newName;
+            badgeText = 'Rename "' + fileDisplayName + '" \u2192 "' + newName + '"';
+            badgeAttrs = { 'data-rename-asset': '1' };
+          } else {
+            var newBase = fileRenameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+            if (!newBase || newBase === fileDisplayName) return;
+            newPath = dir ? dir + '/' + newBase + '.md' : newBase + '.md';
+            newName = newBase;
+            badgeText = 'Rename "' + fileDisplayName + '" \u2192 "' + newBase + '"';
+            badgeAttrs = { 'data-rename-page': '1' };
+          }
           dropdown.parentNode.removeChild(dropdown);
           _enterNavEditModeAsync().then(function (ready) {
             if (!ready) return;
-            _navBatchQueue.push({ type: 'rename-page', oldPath: srcPath, newPath: newPath, item: item });
+            if (!isAsset) {
+              _navBatchQueue.push({ type: 'rename-page', oldPath: srcPath, newPath: newPath, item: item });
+            }
             item.src_path = newPath;
             item._renamed = true;
+            if (isAsset) {
+              item.title = newName;
+              var dotIdx = newName.lastIndexOf('.');
+              item.extension = dotIdx > 0 ? newName.substring(dotIdx) : '';
+            }
             _addNavBadge({
               className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-rename-badge',
-              text: 'Rename "' + fileBaseName + '" \u2192 "' + newBase + '"',
-              attrs: { 'data-rename-page': '1' }
+              text: badgeText,
+              attrs: badgeAttrs
             });
             _commitNavSnapshot();
           });
         };
         fileRenameInput.addEventListener('input', function () {
-          var normalized = fileRenameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-          fileRenameRef.btn.disabled = !normalized || normalized === fileBaseName;
+          var val = fileRenameInput.value.trim();
+          if (isAsset) {
+            fileRenameRef.btn.disabled = !val || val === fileDisplayName;
+          } else {
+            var normalized = val.toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+            fileRenameRef.btn.disabled = !normalized || normalized === fileDisplayName;
+          }
         });
         fileRenameInput.addEventListener('keydown', function (e) {
           if (e.key === 'Enter') { e.preventDefault(); doFileRename(); }
@@ -14274,7 +14206,7 @@
               item._deleted = true;
               _addNavBadge({
                 className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-delete-badge',
-                text: 'Delete "' + fileBaseName + '"',
+                text: 'Delete "' + fileDisplayName + '"',
                 style: 'background:#d9534f'
               });
               _commitNavSnapshot();
@@ -14283,20 +14215,16 @@
           }}
         ]);
 
-        addDivider();
+        if (itemType !== 'asset') addDivider();
       }
     }
 
+    if (itemType === 'asset' || noIndexSection) return;
+
     // --- Normalize + Apply ---
     var bottomBtns = [];
-    if (nwConfig.enabled) {
-      var normalizeTarget = itemType === 'section' ? item : null;
-      if (!normalizeTarget && itemType === 'page') {
-        normalizeTarget = _findParentSectionItem(item);
-        if (!normalizeTarget && typeof liveWysiwygNavData !== 'undefined') {
-          normalizeTarget = { type: 'section', children: liveWysiwygNavData };
-        }
-      }
+    if (nwConfig.enabled && itemType === 'section') {
+      var normalizeTarget = item;
       bottomBtns.push({ text: 'Normalize Weights', shrink: true, ref: _normalizeRef, onClick: function () {
         dropdown.parentNode.removeChild(dropdown);
         _enterNavEditModeAsync().then(function (ready) {
@@ -14348,13 +14276,12 @@
   function _showSettingsGear(item, itemType, gearBtn) {
     var existing = document.querySelector('.live-wysiwyg-nav-settings-dropdown');
     if (existing) { existing.parentNode.removeChild(existing); return; }
-    var isCurrentPage = _getItemSrcPath(item) === _getCurrentSrcPath();
-    var isHeadless = item.headless || (item.index_meta && item.index_meta.headless);
-    if (itemType === 'page' && !isCurrentPage && !isHeadless && !_isRootIndex(item) && !_checkNormalizationPrerequisite(item)) return;
 
     var dropdown = document.createElement('div');
     dropdown.className = 'live-wysiwyg-nav-settings-dropdown';
     var nwConfig = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : { enabled: false };
+
+    _buildSettingsContent(dropdown, item, itemType, nwConfig);
 
     var sectionHasIndex = itemType === 'section' && (
       (item.src_path != null && item.src_path !== '') ||
@@ -14379,15 +14306,22 @@
         _enterNavEditModeAsync().then(function (ready) {
           if (!ready) return;
           _navBatchQueue.push({ type: 'create-page', path: indexPath, content: indexContent });
+          item.src_path = indexPath;
+          item.index_meta = {
+            weight: indexWeight,
+            headless: false,
+            retitled: true,
+            empty: true
+          };
+          _addNavBadge({
+            className: 'live-wysiwyg-nav-normalize-badge',
+            text: 'Create index for "' + (item.title || folderDir) + '"'
+          });
+          _commitNavSnapshot();
         });
       });
       dropdown.appendChild(createIndexBtn);
-      var createHr = document.createElement('hr');
-      createHr.className = 'live-wysiwyg-nav-settings-divider';
-      dropdown.appendChild(createHr);
     }
-
-    _buildSettingsContent(dropdown, item, itemType, nwConfig);
 
     dropdown._gearBtn = gearBtn;
     dropdown.style.position = 'fixed';
@@ -14395,6 +14329,9 @@
     document.body.appendChild(dropdown);
     _repositionDropdown(dropdown);
     dropdown.style.visibility = '';
+    _attachContainerExpandBehavior(dropdown, {
+      onResize: function () { _repositionDropdown(dropdown); }
+    });
 
     var closeHandler = function (e) {
       if (!dropdown.contains(e.target) && e.target !== gearBtn) {
@@ -15323,9 +15260,6 @@
         if (items[ca].children) collectAssets(items[ca].children);
       }
     })(liveWysiwygNavData);
-    console.log('[migration-debug] asset preservation: collected ' + oldAssets.length + ' assets from old navData:',
-      oldAssets.map(function(a) { return a.src_path + ' (_uid=' + a._uid + ')'; }));
-    console.log('[migration-debug] asset preservation: folderRenameMap:', JSON.stringify(folderRenameMap));
 
     for (var oa = 0; oa < oldAssets.length; oa++) {
       var asset = oldAssets[oa];
@@ -15347,7 +15281,6 @@
         asset._originalPath = asset.src_path;
         asset._renamed = true;
         asset.src_path = targetDir ? targetDir + '/' + filename : filename;
-        console.log('[migration-debug] asset preservation: remapped ' + asset._originalPath + ' -> ' + asset.src_path);
       }
       var targetItems = _findSectionChildren(newNavData, targetDir);
       var createdSection = false;
@@ -15356,8 +15289,6 @@
         createdSection = true;
       }
       targetItems.push(asset);
-      console.log('[migration-debug] asset preservation: placed ' + asset.src_path + ' (_uid=' + asset._uid +
-        ') into dir=' + targetDir + (createdSection ? ' (created synthetic section)' : ' (existing section)'));
     }
 
     liveWysiwygNavData.length = 0;
@@ -15365,26 +15296,6 @@
       liveWysiwygNavData.push(newNavData[n]);
     }
     _assignUids(liveWysiwygNavData);
-    console.log('[migration-debug] _applyMigrationToNavData FINAL navData:');
-    (function dumpMigNav(items, depth) {
-      for (var dm = 0; dm < items.length; dm++) {
-        var it = items[dm];
-        if (it.type === 'page') {
-          console.log('[migration-debug]   ' + '  '.repeat(depth) + 'PAGE ' + it.src_path +
-            ' headless=' + it.headless + ' isIndex=' + it.isIndex + ' _new=' + it._new +
-            ' _renamed=' + it._renamed + ' _originalPath=' + it._originalPath +
-            ' setContent=' + (typeof it.setContent === 'string' ? it.setContent.length + 'ch' : 'none') +
-            ' _fm=' + JSON.stringify(it._fm));
-        } else if (it.type === 'section') {
-          console.log('[migration-debug]   ' + '  '.repeat(depth) + 'SECTION ' + (it.title || '?') +
-            ' _uid=' + it._uid + ' _new=' + it._new + ' folderDir=' + _getSectionFolderDir(it));
-          if (it.children) dumpMigNav(it.children, depth + 1);
-        } else if (it.type === 'asset') {
-          console.log('[migration-debug]   ' + '  '.repeat(depth) + 'ASSET ' + it.src_path +
-            ' _renamed=' + it._renamed + ' _originalPath=' + it._originalPath);
-        }
-      }
-    })(liveWysiwygNavData, 0);
   }
 
   function _removeNavKeyFromYaml(yaml) {
@@ -15994,7 +15905,7 @@
     if (analysis.groups.length > 0) {
       _fadeOutOverlay(overlay);
       _showDeadLinkAnalysisWizard(analysis, deadByPage, mode).then(function (filtered) {
-        _commitDeadLinkResults(filtered, mode);
+        if (filtered) _commitDeadLinkResults(filtered, mode);
       });
     } else {
       _fadeOutOverlay(overlay);
@@ -16186,25 +16097,38 @@
       var actions = document.createElement('div');
       actions.className = 'live-wysiwyg-nav-dialog-actions';
 
+      var finished = false;
+      function finishWizard(val) {
+        if (finished) return;
+        finished = true;
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        resolve(val);
+      }
+
       var applyBtn = document.createElement('button');
+      applyBtn.className = 'live-wysiwyg-nav-dialog-primary';
       applyBtn.textContent = 'Apply';
       applyBtn.addEventListener('click', function () {
-        overlay.parentNode.removeChild(overlay);
-        resolve(_applyDeadLinkExclusions(deadByPage, excludeSet));
+        finishWizard(_applyDeadLinkExclusions(deadByPage, excludeSet));
       });
       actions.appendChild(applyBtn);
 
       var includeAllBtn = document.createElement('button');
       includeAllBtn.textContent = 'Include All';
       includeAllBtn.addEventListener('click', function () {
-        overlay.parentNode.removeChild(overlay);
-        resolve(deadByPage);
+        finishWizard(deadByPage);
       });
       actions.appendChild(includeAllBtn);
+
+      overlay.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finishWizard(null); return; }
+        if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); applyBtn.click(); }
+      });
 
       content.appendChild(actions);
       overlay.appendChild(content);
       document.body.appendChild(overlay);
+      applyBtn.focus();
     });
   }
 
@@ -16613,9 +16537,9 @@
     var content = document.createElement('div');
     content.className = 'live-wysiwyg-nav-dialog-content';
     content.innerHTML = '<p>Rename this page:</p>' +
-      '<div class="live-wysiwyg-nav-settings-row"><span>File name</span>' +
+      '<div class="live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline"><span>File name</span>' +
       '<input type="text" class="live-wysiwyg-rename-filename" value="' + currentFilename.replace(/"/g, '&quot;') + '"></div>' +
-      '<div class="live-wysiwyg-nav-settings-row"><span>Title</span>' +
+      '<div class="live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline"><span>Title</span>' +
       '<input type="text" class="live-wysiwyg-rename-title" value="' + currentTitle.replace(/"/g, '&quot;') + '"></div>';
     var actions = document.createElement('div');
     actions.className = 'live-wysiwyg-nav-dialog-actions';
@@ -16629,6 +16553,7 @@
     content.appendChild(actions);
     dialogOverlay.appendChild(content);
     document.body.appendChild(dialogOverlay);
+    _attachContainerExpandBehavior(content, { prop: 'maxWidth' });
 
     var filenameInput = content.querySelector('.live-wysiwyg-rename-filename');
     var titleInput = content.querySelector('.live-wysiwyg-rename-title');
@@ -16640,6 +16565,12 @@
     });
     titleInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); confirmBtn.click(); }
+    });
+    dialogOverlay.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation();
+        if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay);
+      }
     });
 
     cancelBtn.addEventListener('click', function () { dialogOverlay.parentNode.removeChild(dialogOverlay); });
@@ -16678,13 +16609,13 @@
     var content = document.createElement('div');
     content.className = 'live-wysiwyg-nav-dialog-content';
     content.innerHTML = '<p>Create a new page:</p>' +
-      '<div class="live-wysiwyg-nav-settings-row"><span>File name</span>' +
+      '<div class="live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline"><span>File name</span>' +
       '<input type="text" class="live-wysiwyg-new-filename" placeholder="new-page"></div>' +
-      '<div class="live-wysiwyg-nav-settings-row"><span>Title</span>' +
+      '<div class="live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline"><span>Title</span>' +
       '<input type="text" class="live-wysiwyg-new-title" placeholder="New Page"></div>' +
-      '<div class="live-wysiwyg-nav-settings-row"><span>Weight</span>' +
+      '<div class="live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline"><span>Weight</span>' +
       '<input type="number" class="live-wysiwyg-new-weight" placeholder="optional"></div>' +
-      '<div class="live-wysiwyg-nav-settings-row"><span>Content (optional)</span>' +
+      '<div class="live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline"><span>Content (optional)</span>' +
       '<input type="text" class="live-wysiwyg-new-content" placeholder="Short description or TODO"></div>';
     var actions = document.createElement('div');
     actions.className = 'live-wysiwyg-nav-dialog-actions';
@@ -16698,10 +16629,32 @@
     content.appendChild(actions);
     dialogOverlay.appendChild(content);
     document.body.appendChild(dialogOverlay);
+    _attachContainerExpandBehavior(content, { prop: 'maxWidth' });
 
     var filenameInput = content.querySelector('.live-wysiwyg-new-filename');
+    var newTitleInput = content.querySelector('.live-wysiwyg-new-title');
+    var newWeightInput = content.querySelector('.live-wysiwyg-new-weight');
+    var newContentInput = content.querySelector('.live-wysiwyg-new-content');
     filenameInput.addEventListener('input', function () {
       filenameInput.value = filenameInput.value.replace(/[^a-z0-9-]/g, '');
+    });
+    filenameInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); newTitleInput.focus(); newTitleInput.select(); }
+    });
+    newTitleInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); newWeightInput.focus(); newWeightInput.select(); }
+    });
+    newWeightInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); newContentInput.focus(); newContentInput.select(); }
+    });
+    newContentInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); confirmBtn.click(); }
+    });
+    dialogOverlay.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation();
+        if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay);
+      }
     });
 
     cancelBtn.addEventListener('click', function () { dialogOverlay.parentNode.removeChild(dialogOverlay); });
@@ -17325,7 +17278,7 @@
         'border-color:var(--md-default-fg-color--lightest,#ddd)!important;' +
         'color:var(--md-default-fg-color,#333)!important;' +
         'box-shadow:0 4px 16px rgba(0,0,0,.15)!important;' +
-        'min-width:220px;transition:min-width .25s ease-out;' +
+        'min-width:220px;' +
       '}' +
       '.md-link-settings-input{' +
         'background:var(--md-default-bg-color--light,#f7f7f7)!important;' +
@@ -17488,7 +17441,7 @@
       '.live-wysiwyg-nav-dialog-content{' +
         'background:var(--md-default-bg-color,#fff);border-radius:8px;padding:24px 28px;' +
         'max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.25);' +
-        'color:var(--md-default-fg-color,#333);' +
+        'color:var(--md-default-fg-color,#333);font-size:.75rem;' +
       '}' +
       '.live-wysiwyg-nav-dialog-content p{margin:0 0 16px;font-size:.85rem;line-height:1.5;}' +
       '.live-wysiwyg-nav-dialog-actions{display:flex;gap:8px;justify-content:flex-end;}' +
@@ -17572,13 +17525,15 @@
         'box-shadow:0 4px 16px rgba(0,0,0,.15);padding:12px 14px;min-width:220px;' +
         'max-height:80vh;overflow-y:auto;' +
         'font-size:.75rem;color:var(--md-default-fg-color,#333);' +
-        'transition:min-width .25s ease-out;' +
       '}' +
-      '.live-wysiwyg-nav-settings-dropdown label{' +
+      '.live-wysiwyg-nav-settings-dropdown label,' +
+      '.live-wysiwyg-nav-dialog-content label{' +
         'display:flex;align-items:center;gap:6px;padding:4px 0;cursor:pointer;' +
       '}' +
       '.live-wysiwyg-nav-settings-dropdown input[type="text"],' +
-      '.live-wysiwyg-nav-settings-dropdown input[type="number"]{' +
+      '.live-wysiwyg-nav-settings-dropdown input[type="number"],' +
+      '.live-wysiwyg-nav-dialog-content input[type="text"],' +
+      '.live-wysiwyg-nav-dialog-content input[type="number"]{' +
         'width:100%;padding:3px 6px;border:1px solid var(--md-default-fg-color--lighter,#ccc);' +
         'border-radius:3px;font-size:.75rem;box-sizing:border-box;' +
         'background:var(--md-default-bg-color,#fff);color:var(--md-default-fg-color,#333);' +
@@ -18568,15 +18523,6 @@
     };
     mainArea.addEventListener('scroll', _focusContentScrollHandler);
 
-    _focusEscapeHandler = function (e) {
-      if (e.key === 'Escape' && isFocusModeActive) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        exitFocusMode();
-      }
-    };
-    document.addEventListener('keydown', _focusEscapeHandler, true);
-
     var focusModeBtn = wysiwygEditor.toolbar && wysiwygEditor.toolbar.querySelector('.live-wysiwyg-focus-btn');
     if (focusModeBtn) focusModeBtn.classList.add('active');
 
@@ -18591,10 +18537,10 @@
       _fadeOutOverlay(earlyOv);
     }
 
-    var cursorCookie = _getSetting('live_wysiwyg_nav_edit_cursor');
-    if (cursorCookie) {
+    var cursorSetting = _getSetting('live_wysiwyg_nav_edit_cursor');
+    if (cursorSetting) {
       try {
-        var cursorData = JSON.parse(cursorCookie);
+        var cursorData = JSON.parse(cursorSetting);
         _restoreEditorSelection(cursorData, mainArea);
       } catch (e) { /* parse error */ }
       _deleteSetting('live_wysiwyg_nav_edit_cursor');
@@ -18620,19 +18566,6 @@
     if (_getSetting('live_wysiwyg_migration_normalize')) {
       _deleteSetting('live_wysiwyg_migration_normalize');
       _setSetting('live_wysiwyg_migration_adjust_weight', '1');
-      console.log('[normalize-debug] migration_normalize cookie found, scheduling _autoNormalizeAfterMigration in 600ms');
-      console.log('[normalize-debug] initial navData at migration_normalize time:');
-      (function dumpInitNav(items, depth) {
-        for (var dii = 0; dii < items.length; dii++) {
-          var it = items[dii];
-          if (it.type === 'page') {
-            console.log('[normalize-debug]   ' + '  '.repeat(depth) + 'PAGE ' + it.src_path + ' headless=' + it.headless + ' isIndex=' + it.isIndex + ' weight=' + it.weight + ' _fm=' + JSON.stringify(it._fm));
-          } else if (it.type === 'section' && it.children) {
-            console.log('[normalize-debug]   ' + '  '.repeat(depth) + 'SECTION ' + (it.title || '?') + ' src_path=' + it.src_path);
-            dumpInitNav(it.children, depth + 1);
-          }
-        }
-      })(liveWysiwygNavData || [], 0);
       setTimeout(function () { _autoNormalizeAfterMigration(); }, 600);
     } else if (_getSetting('live_wysiwyg_migration_adjust_weight')) {
       _deleteSetting('live_wysiwyg_migration_adjust_weight');
@@ -18662,27 +18595,13 @@
 
   function _autoNormalizeAfterMigration() {
     if (typeof liveWysiwygNavData === 'undefined' || !liveWysiwygNavData.length) {
-      console.log('[normalize-debug] _autoNormalizeAfterMigration: navData empty, aborting');
       _wsRedirectSuppressActive = false;
       return;
     }
     if (!_navHiddenPagesPrecomputed) {
-      console.log('[normalize-debug] _autoNormalizeAfterMigration: waiting for _navHiddenPagesPrecomputed...');
       setTimeout(_autoNormalizeAfterMigration, 200);
       return;
     }
-    console.log('[normalize-debug] _autoNormalizeAfterMigration: proceeding, navData items:', liveWysiwygNavData.length);
-    (function dumpPages(items, depth) {
-      for (var i = 0; i < items.length; i++) {
-        var it = items[i];
-        if (it.type === 'page') {
-          console.log('[normalize-debug]   ' + '  '.repeat(depth) + 'PAGE ' + it.src_path + ' headless=' + it.headless + ' isIndex=' + it.isIndex + ' weight=' + it.weight + ' _fm=' + JSON.stringify(it._fm));
-        } else if (it.type === 'section' && it.children) {
-          console.log('[normalize-debug]   ' + '  '.repeat(depth) + 'SECTION ' + (it.title || '?') + ' src_path=' + it.src_path + ' folderDir=' + _getSectionFolderDir(it));
-          dumpPages(it.children, depth + 1);
-        }
-      }
-    })(liveWysiwygNavData, 0);
     _installReloadGuard();
     _wsRedirectSuppressActive = false;
     _enterNavEditModeAsync().then(function (ready) {
@@ -18729,11 +18648,6 @@
     var savedSelection = _captureEditorSelection();
 
     isFocusModeActive = false;
-
-    if (_focusEscapeHandler) {
-      document.removeEventListener('keydown', _focusEscapeHandler, true);
-      _focusEscapeHandler = null;
-    }
 
     if (_focusTocObserver) {
       _focusTocObserver.disconnect();
@@ -18800,8 +18714,8 @@
       if (!fsEl) return;
       if (isFocusModeActive) return;
       if (!wysiwygEditor) return;
-      var ck = isEditorEnabledByCookie();
-      var editorEnabled = ck !== false;
+      var edEnabled = isEditorEnabled();
+      var editorEnabled = edEnabled !== false;
       if (!editorEnabled) return;
       var textarea = document.querySelector('.live-edit-source');
       if (!textarea || textarea.classList.contains('live-edit-hidden')) {
@@ -19165,11 +19079,11 @@
     toggleButton.title = isWysiwygActive ? 'Switch to plain textarea' : 'Switch to WYSIWYG editor';
     toggleButton.addEventListener('click', function () {
       if (wysiwygEditor) {
-        setEditorStateCookie(false, wysiwygEditor.currentMode);
+        setEditorState(false, wysiwygEditor.currentMode);
         destroyWysiwyg(textarea, false, true);
         updateToggleButton(false);
       } else {
-        setEditorStateCookie(true, getEditorModeFromCookie());
+        setEditorState(true, getEditorMode());
         replaceTextareaWithWysiwyg(textarea);
         updateToggleButton(true);
       }
@@ -19189,6 +19103,8 @@
     function checkAndHandle() {
       if (observeForTextarea()) {
         stopBodyObserver();
+      } else if (_getSetting('live_wysiwyg_autolaunch') === '1' && !window.__liveWysiwygEarlyOverlay) {
+        _autoClickEditButton();
       }
     }
     bodyObserver = new MutationObserver(function (mutations) {
@@ -19276,7 +19192,7 @@
     if (widthStyle && widthStyle.parentNode) widthStyle.parentNode.removeChild(widthStyle);
     if (leavingEditMode) {
       if (lastMode) {
-        setEditorStateCookie(true, lastMode);
+        setEditorState(true, lastMode);
       }
       pendingReadModeSelection = null;
       removeToggleButton();
@@ -19300,8 +19216,8 @@
         ensureToggleButton(textarea, false);
         updateToggleButton(false);
       } else {
-        var ck = isEditorEnabledByCookie();
-        var shouldReload = ck !== false;
+        var edEnabled = isEditorEnabled();
+        var shouldReload = edEnabled !== false;
         if (shouldReload) {
           setupReplacementObserver(textarea);
         } else {
@@ -19318,8 +19234,8 @@
     cancelObserver = new MutationObserver(function () {
       if (!textarea.parentNode) return;
       if (!textarea.classList.contains('live-edit-hidden') && !textarea.dataset.liveWysiwygReplaced) {
-        var ck = isEditorEnabledByCookie();
-        if (ck === false) return;
+        var edEnabled = isEditorEnabled();
+        if (edEnabled === false) return;
         cancelObserver.disconnect();
         cancelObserver = null;
         replaceTextareaWithWysiwyg(textarea);
@@ -19371,7 +19287,7 @@
       document.head.appendChild(widthStyle);
     }
 
-    var preferredMode = getEditorModeFromCookie();
+    var preferredMode = getEditorMode();
     try {
       wysiwygEditor = new MarkdownWYSIWYG('live-edit-wysiwyg-container', {
         initialValue: initialValue,
@@ -24398,12 +24314,12 @@
     ensureToggleButton(textarea, true);
     updateToggleButton(true);
 
-    (function patchEditorModeCookie() {
+    (function patchEditorModeState() {
       var orig = wysiwygEditor.switchToMode;
       wysiwygEditor.switchToMode = function (mode, isInitialSetup) {
         var result = orig.apply(this, arguments);
         if (!isInitialSetup && wysiwygEditor) {
-          setEditorStateCookie(true, mode);
+          setEditorState(true, mode);
         }
         return result;
       };
@@ -24530,8 +24446,8 @@
     var textarea = document.querySelector('.live-edit-source');
     if (!textarea || textarea.classList.contains('live-edit-hidden')) return false;
     var focusNavRelaunch = !!window.__liveWysiwygEarlyOverlay;
-    var cookieEnabled = isEditorEnabledByCookie();
-    var shouldAutoload = focusNavRelaunch || cookieEnabled !== false;
+    var editorEnabled = isEditorEnabled();
+    var shouldAutoload = focusNavRelaunch || editorEnabled !== false;
     ensureToggleButton(textarea, false);
     if (shouldAutoload) {
       replaceTextareaWithWysiwyg(textarea);
@@ -24610,17 +24526,8 @@
         var spinner = overlay.querySelector('div[style*="border-radius:50%"]');
         if (spinner) spinner.style.display = 'none';
         var txt = overlay.querySelector('div[style*="font-size"]');
-        if (txt) txt.textContent = 'Connection could not be established. Press ESC to exit focus mode.';
+        if (txt) txt.textContent = 'Connection could not be established. Please reload the page.';
       }
-      document.addEventListener('keydown', function escExit(e) {
-        if (e.key === 'Escape') {
-          document.removeEventListener('keydown', escExit);
-          if (window.__liveWysiwygEarlyOverlay) {
-            window.__liveWysiwygEarlyOverlay.parentNode.removeChild(window.__liveWysiwygEarlyOverlay);
-            window.__liveWysiwygEarlyOverlay = null;
-          }
-        }
-      });
     }
   }
 
@@ -24631,8 +24538,8 @@
       }
       startBodyObserver();
       if (window.__liveWysiwygEarlyOverlay) {
-        var retryCookie = _getSetting('live_wysiwyg_focus_nav_retry');
-        var retryCount = retryCookie ? parseInt(retryCookie, 10) : 0;
+        var retrySetting = _getSetting('live_wysiwyg_focus_nav_retry');
+        var retryCount = retrySetting ? parseInt(retrySetting, 10) : 0;
         _watchForEditButton(retryCount);
       }
     } else if (window.__liveWysiwygEarlyOverlay) {

@@ -1507,7 +1507,7 @@ class MarkdownWYSIWYG {
                     document.execCommand('insertText', false, '    ');
                 }
             }
-        } else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        } else if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
             e.preventDefault(); this._undo();
         } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
             e.preventDefault(); this._redo();

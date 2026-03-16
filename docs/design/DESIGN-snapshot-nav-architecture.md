@@ -10,11 +10,12 @@ All code lives in `live-wysiwyg-integration.js`.
 
 1. **Actions only modify data.** No action handler touches the DOM. Actions modify `liveWysiwygNavData`, set data flags (`_renamed`, `_new`, `_originalPath`, `_warnings`, `_deadLinks`), then call `_commitNavSnapshot()`.
 2. **DOM renders from active snapshot.** `_renderNavFromSnapshot()` applies `_navSnapshots[_navSnapshotIndex]` to globals and calls `_buildNavMenu`. All visual state — including caution icons — comes from data on navData items.
-3. **Save is a two-step process: desired state then disk planning.** No batch queue is maintained during editing. On save, `_computeSavePlan()` diffs snapshot 0 vs the active snapshot and produces a declarative desired state (where every page should end up, with what frontmatter). Then `_planDiskOperations()` converts that desired state into an optimized 2-batch execution plan, detecting folder renames to minimize disk writes.
-4. **Content refactoring is a decoupled diff phase.** Link rewriting, title/weight updates, headless changes are computed from the diff and applied in Batch 2d, after all structural changes.
-5. **UIDs for cross-snapshot matching.** Every navData item gets a stable `_uid` via `_generateUid()`. UIDs survive renames and moves, enabling robust diffing.
-6. **Warnings are snapshot-tracked.** Per-item `_warnings` and `_deadLinks` arrays live on navData items. They are deep-cloned into snapshots and naturally participate in undo/redo.
-7. **Single snapshot diff, declarative desired state.** The migration, normalization, and all user edits are expressed as mutations to `liveWysiwygNavData`. A single diff between snapshot 0 (original state) and the active snapshot (current state) produces a declarative desired state — not operations. The desired state describes where every page and section should end up, with what frontmatter and content. A separate disk planning phase then converts this into the minimum set of operations (folder renames, file moves, creates, deletes, frontmatter writes) needed to achieve that state.
+3. **navData is the sole source of truth for nav operations.** All item positioning, movement, sibling lookup, parent detection, and weight computation operate on the `liveWysiwygNavData` tree (or the active snapshot). The DOM is a read-only rendering target — it is never queried to determine item position, sibling order, or parent–child relationships. Functions like `_findNavItemInTree`, `_findParentSection`, and `_findNavSiblings` walk the navData tree, not the DOM. DOM `data-nav-uid` attributes exist solely for post-operation focus (scrolling a moved item into view) and event-to-data bridging (mapping a click target back to a navData item). If a DOM lookup fails, only visual focus is lost — the data operation has already succeeded.
+4. **Save is a two-step process: desired state then disk planning.** No batch queue is maintained during editing. On save, `_computeSavePlan()` diffs snapshot 0 vs the active snapshot and produces a declarative desired state (where every page should end up, with what frontmatter). Then `_planDiskOperations()` converts that desired state into an optimized 2-batch execution plan, detecting folder renames to minimize disk writes.
+5. **Content refactoring is a decoupled diff phase.** Link rewriting, title/weight updates, headless changes are computed from the diff and applied in Batch 2d, after all structural changes.
+6. **UIDs for cross-snapshot matching.** Every navData item gets a stable `_uid` via `_generateUid()`. UIDs survive renames and moves, enabling robust diffing.
+7. **Warnings are snapshot-tracked.** Per-item `_warnings` and `_deadLinks` arrays live on navData items. They are deep-cloned into snapshots and naturally participate in undo/redo.
+8. **Single snapshot diff, declarative desired state.** The migration, normalization, and all user edits are expressed as mutations to `liveWysiwygNavData`. A single diff between snapshot 0 (original state) and the active snapshot (current state) produces a declarative desired state — not operations. The desired state describes where every page and section should end up, with what frontmatter and content. A separate disk planning phase then converts this into the minimum set of operations (folder renames, file moves, creates, deletes, frontmatter writes) needed to achieve that state.
 
 ## Snapshot System
 
@@ -311,6 +312,24 @@ Both actions create a snapshot, so they can be undone.
 | `_warnings` | `_addCautionPage`, dead link scan | Array of `{reason, renames}` — caution reasons |
 | `_deadLinks` | `_addDeadLinksForPage` | `{internal: [...], external: [...]}` — dead link details |
 | `_deleted` | Delete handlers | Item marked for deletion; excluded from nav render and diff |
+
+## Nav Item Movement
+
+### Data-Only Move Pipeline
+
+All arrow-key and shortcut-driven move operations follow a data-only pipeline:
+
+1. **Locate item in navData** via `_findNavItemInTree(item._uid)`, which returns `{ parent, index }` — the item's sibling array and position within it.
+2. **Mutate navData** — splice the item out of its current position and into the target position (or into a different parent array for cross-section moves).
+3. **Auto-normalize sibling weights** — if any sibling in the destination level lacks a weight, `_autoNormalizeSiblingWeights(siblings)` assigns sequential weights to all siblings before snapshotting.
+4. **Commit snapshot** via `_commitNavSnapshot()`, which deep-clones the modified navData and triggers `_renderNavFromSnapshot()` to rebuild the DOM.
+5. **Post-move focus** — after the DOM rebuild, `_findNavLi(item)` locates the rendered `<li>` by `data-nav-uid` for visual focus (outline, scroll into view). This is the only DOM lookup in the move flow and it is purely cosmetic — if it fails, the data operation has already succeeded.
+
+Move functions (`_moveNavItemUp`, `_moveNavItemDown`, `_moveNavItemLeft`, `_moveNavItemRight`, `_promptNewFolder`) accept only the navData `item` object. They do not accept or use DOM elements.
+
+### Why Not DOM
+
+Early versions of the move system used `_findNavLi(item)` inside `_handleArrowClick` to find the DOM `<li>` before executing the move, and passed `li` to every move function. This caused silent failures for sections (folders) whose DOM elements could not be found — sections without index pages had no `src_path` to query by, and even sections with index pages sometimes failed DOM lookup via `data-nav-index-path` or `data-nav-src-path`. Since all move logic actually operates on the navData tree (via `_findNavItemInTree`), the DOM lookup was unnecessary and was removed. The `data-nav-uid` attribute was introduced to make post-move focus reliable for all item types.
 
 ## Binary (Asset) File Handling
 

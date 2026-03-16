@@ -323,14 +323,12 @@
       e.stopPropagation();
       wrappedSelect(item.getAttribute('data-lang'));
     });
-    filter.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
+    _attachDialogKeyboard(filter, {
+      category: 'informational',
+      onDismiss: function () { wrappedSelect(null); },
+      onConfirm: function () {
         var first = list.querySelector('.md-code-lang-item');
         if (first) wrappedSelect(first.getAttribute('data-lang'));
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        wrappedSelect(null);
       }
     });
 
@@ -552,8 +550,11 @@
       dropdown.style.top = (rect.bottom + 2) + 'px';
       dropdown.style.left = left + 'px';
     }
-    dropdown.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape') { ev.preventDefault(); dismissActiveSettingsDropdown(); }
+    var firstBtn = dropdown.querySelector('button');
+    _attachDialogKeyboard(dropdown, {
+      category: 'settings',
+      onDismiss: function () { dismissActiveSettingsDropdown(); },
+      autoFocus: firstBtn
     });
 
     document.body.appendChild(dropdown);
@@ -1398,13 +1399,20 @@
     cancelBtn.addEventListener('click', function () { dismiss(); if (onCancel) onCancel(); });
     proceedBtn.addEventListener('click', function () { dismiss(); if (onProceed) onProceed(); });
     overlay.addEventListener('mousedown', function (ev) { if (ev.target === overlay) { dismiss(); if (onCancel) onCancel(); } });
+    proceedBtn.tabIndex = 1;
+    cancelBtn.tabIndex = 2;
     btnRow.appendChild(cancelBtn);
     btnRow.appendChild(proceedBtn);
     dialog.appendChild(msg);
     dialog.appendChild(btnRow);
     overlay.appendChild(dialog);
+    _attachDialogKeyboard(overlay, {
+      category: 'confirmation',
+      onDismiss: function () { dismiss(); if (onCancel) onCancel(); },
+      onConfirm: function () { dismiss(); if (onProceed) onProceed(); },
+      autoFocus: proceedBtn
+    });
     document.body.appendChild(overlay);
-    proceedBtn.focus();
   }
 
   function createAdmonitionSettingsDropdown(anchorBtn, adEl, ea) {
@@ -1667,6 +1675,13 @@
     }
 
     buildUI();
+    var typeSelectEl = dropdown.querySelector('.md-admonition-type-select');
+    _attachDialogKeyboard(dropdown, {
+      category: 'settings',
+      onDismiss: function () { dismissAdmonitionSettingsDropdown(); },
+      autoFocus: typeSelectEl
+    });
+
     document.body.appendChild(dropdown);
     positionDropdown();
 
@@ -2093,23 +2108,20 @@
       dd.style.display = 'block';
       dd.style.top = (rect.bottom + window.scrollY + 2) + 'px';
       dd.style.left = (rect.left + window.scrollX) + 'px';
+      _admonitionDropdownDismiss = hideDropdown;
       setTimeout(function () {
         document.addEventListener('click', onDocClick, true);
-        document.addEventListener('keydown', onDocEsc, true);
       }, 0);
     }
 
     function hideDropdown() {
       if (dropdown) dropdown.style.display = 'none';
       document.removeEventListener('click', onDocClick, true);
-      document.removeEventListener('keydown', onDocEsc, true);
+      _admonitionDropdownDismiss = null;
     }
 
     function onDocClick(e) {
       if (dropdown && !dropdown.contains(e.target)) hideDropdown();
-    }
-    function onDocEsc(e) {
-      if (e.key === 'Escape') hideDropdown();
     }
 
     function insertAdmonition(editor, type) {
@@ -2751,19 +2763,27 @@
         dismissLinkDropdown();
       }
 
+      urlInput.tabIndex = 1;
+      textInput.tabIndex = 2;
+      if (removeRow) { var removeBtn2 = removeRow.querySelector('.md-link-settings-remove'); if (removeBtn2) removeBtn2.tabIndex = 3; }
+      applyBtn.tabIndex = removeRow ? 4 : 3;
+
+      var dirty = false;
+      function markDirty() { dirty = true; }
+      urlInput.addEventListener('input', markDirty);
+      textInput.addEventListener('input', markDirty);
+
       applyBtn.addEventListener('mousedown', function (ev) {
         ev.preventDefault();
         ev.stopPropagation();
         doApply();
       });
 
-      urlInput.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Enter') { ev.preventDefault(); doApply(); }
-        if (ev.key === 'Escape') { ev.preventDefault(); dismissLinkDropdown(); }
-      });
-      textInput.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Enter') { ev.preventDefault(); doApply(); }
-        if (ev.key === 'Escape') { ev.preventDefault(); dismissLinkDropdown(); }
+      _attachDialogKeyboard(dropdown, {
+        category: 'form',
+        isDirty: function () { return dirty; },
+        onConfirm: function () { doApply(); },
+        onDismiss: function () { dismissLinkDropdown(); }
       });
 
       var ddHost = _focusOverlay || document.body;
@@ -2773,7 +2793,21 @@
         selector: '.md-link-settings-input',
         onResize: function () { _repositionLinkDropdown(dropdown); }
       });
-      requestAnimationFrame(function () { urlInput.focus(); urlInput.select(); });
+      requestAnimationFrame(function () {
+        urlInput.focus(); urlInput.select();
+        if (!existingAnchor && urlInput.value === 'https://') {
+          try {
+            navigator.clipboard.readText().then(function (text) {
+              text = (text || '').trim();
+              if (/^https?:\/\//.test(text)) {
+                urlInput.value = text;
+                urlInput.select();
+                dirty = true;
+              }
+            }).catch(function () {});
+          } catch (e) {}
+        }
+      });
 
       var chainIcon = (_focusOverlay || document).querySelector('.md-link-chain-indicator');
       var closeHandler = function (ev) {
@@ -3294,9 +3328,32 @@
       dismissImageInsertDropdown();
     }
 
+    urlInput.tabIndex = 1;
+    altInput.tabIndex = 2;
+    sizeSlider.tabIndex = 3;
+    applyBtn.tabIndex = 4;
+
+    var dirty = false;
+    function markDirty() { dirty = true; }
+    urlInput.addEventListener('input', markDirty);
+    altInput.addEventListener('input', markDirty);
+    sizeSlider.addEventListener('input', markDirty);
+
+    function _deriveAltFromUrl() {
+      if (altInput.value.trim()) return;
+      var url = (urlInput.value || '').trim();
+      if (!url) return;
+      var fn = url.split('/').pop().split('?')[0];
+      var dot = fn.lastIndexOf('.');
+      if (dot > 0) fn = fn.substring(0, dot);
+      var derived = fn.replace(/[-_]/g, ' ').trim();
+      if (derived) altInput.value = derived;
+    }
+
     applyBtn.addEventListener('mousedown', function (ev) {
       ev.preventDefault();
       ev.stopPropagation();
+      _deriveAltFromUrl();
       doInsert();
     });
     urlInput.addEventListener('keydown', function (ev) {
@@ -3329,12 +3386,14 @@
           return;
         }
       }
-      if (ev.key === 'Enter') { ev.preventDefault(); doInsert(); }
-      if (ev.key === 'Escape') { ev.preventDefault(); dismissImageInsertDropdown(); }
     });
-    altInput.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Enter') { ev.preventDefault(); doInsert(); }
-      if (ev.key === 'Escape') { ev.preventDefault(); dismissImageInsertDropdown(); }
+
+    _attachDialogKeyboard(dropdown, {
+      category: 'form',
+      isDirty: function () { return dirty; },
+      enterGuard: function () { return !acIsVisible(); },
+      onConfirm: function () { _deriveAltFromUrl(); doInsert(); },
+      onDismiss: function () { dismissImageInsertDropdown(); }
     });
 
     document.body.appendChild(dropdown);
@@ -3588,8 +3647,27 @@
       dropdown.style.left = left + 'px';
     }
 
-    dropdown.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape') { ev.preventDefault(); dismissImageGearDropdown(); }
+    altInput.tabIndex = 1;
+    cb.tabIndex = 2;
+    inlineCb.tabIndex = 3;
+    restoreOrigBtn.tabIndex = 4;
+
+    if (!altInput.value.trim() && img.src) {
+      var srcPath = img.getAttribute('data-orig-src') || img.src;
+      var fn = srcPath.split('/').pop().split('?')[0];
+      var dot = fn.lastIndexOf('.');
+      if (dot > 0) fn = fn.substring(0, dot);
+      var derived = fn.replace(/[-_]/g, ' ').trim();
+      if (derived) {
+        altInput.value = derived;
+        img.setAttribute('alt', derived);
+      }
+    }
+
+    _attachDialogKeyboard(dropdown, {
+      category: 'settings',
+      onDismiss: function () { dismissImageGearDropdown(); },
+      autoFocus: function () { altInput.focus(); altInput.select(); }
     });
 
     document.body.appendChild(dropdown);
@@ -7732,6 +7810,8 @@
   var _focusModeGuardActive = false;
   var _focusModePollerTimer = null;
   var _focusModeRebuildPromptOpen = false;
+  var _admonitionDropdownDismiss = null;
+  var _reviewPopupDismiss = null;
   var _userActionInProgress = false;
   var _focusModeBuildEpoch = null;
   var _fmgOrigXHROpen = null;
@@ -7793,11 +7873,7 @@
   var _navKeyboardActiveItem = null;
   var _navFocusedLi = null;
   var _navActiveHoverLi = null;
-  var _navArrowKeyHandler = null;
   var _navKeyboardHandler = null;
-  var _navCmdSHandler = null;
-  var _navEditEscHandler = null;
-  var _navContentEditingGuard = null;
   var _navSidebarEl = null;
   var _navScrollWrap = null;
   
@@ -8697,8 +8773,6 @@
     var navDirty = _navEditMode;
     var hasPendingChanges = docDirty || navDirty;
 
-    var cmdSHandler = null;
-
     if (!hasPendingChanges) {
       _showNavDialog(
         'An external change triggered a site rebuild.',
@@ -8714,16 +8788,6 @@
         }
       });
     } else {
-      cmdSHandler = function (e) {
-        if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          var primary = document.querySelector('.live-wysiwyg-nav-dialog .live-wysiwyg-nav-dialog-primary');
-          if (primary) primary.click();
-        }
-      };
-      document.addEventListener('keydown', cmdSHandler, true);
-
       _showNavDialog(
         'An external change triggered a site rebuild. You have unsaved changes.',
         [
@@ -8731,7 +8795,6 @@
           { text: 'Save changes and Refresh', value: 'save', className: 'live-wysiwyg-nav-dialog-primary' }
         ]
       ).then(function (result) {
-        if (cmdSHandler) document.removeEventListener('keydown', cmdSHandler, true);
         _focusModeRebuildPromptOpen = false;
         if (result === 'save') {
           if (_navEditMode) {
@@ -9220,9 +9283,11 @@
       var dangerValue = null;
       var primaryBtn = null;
       var dangerBtn = null;
+      var tabIdx = 1;
       buttons.forEach(function (btn) {
         var b = document.createElement('button');
         b.textContent = btn.text;
+        b.tabIndex = tabIdx++;
         if (btn.className) b.className += ' ' + btn.className;
         if (btn.className && btn.className.indexOf('live-wysiwyg-nav-dialog-primary') >= 0) {
           primaryValue = btn.value; primaryBtn = b;
@@ -9236,13 +9301,14 @@
       content.appendChild(actions);
       overlay.appendChild(content);
       var confirmValue = primaryValue || dangerValue || (buttons.length ? buttons[0].value : null);
-      overlay.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); return; }
-        if (e.key === 'Enter' && confirmValue != null) { e.preventDefault(); e.stopPropagation(); finish(confirmValue); }
+      var focusBtn = primaryBtn || dangerBtn || actions.firstChild;
+      _attachDialogKeyboard(overlay, {
+        category: 'confirmation',
+        onDismiss: function () { finish(null); },
+        onConfirm: confirmValue != null ? function () { finish(confirmValue); } : null,
+        autoFocus: focusBtn
       });
       document.body.appendChild(overlay);
-      var focusBtn = primaryBtn || dangerBtn || actions.firstChild;
-      if (focusBtn) focusBtn.focus();
     });
   }
 
@@ -9269,9 +9335,11 @@
       var dangerValue = null;
       var primaryBtn = null;
       var dangerBtn = null;
+      var tabIdx = 1;
       buttons.forEach(function (btn) {
         var b = document.createElement('button');
         b.textContent = btn.text;
+        b.tabIndex = tabIdx++;
         if (btn.className) b.className += ' ' + btn.className;
         if (btn.className && btn.className.indexOf('live-wysiwyg-nav-dialog-primary') >= 0) {
           primaryValue = btn.value; primaryBtn = b;
@@ -9285,13 +9353,14 @@
       content.appendChild(actions);
       overlay.appendChild(content);
       var confirmValue = primaryValue || dangerValue || (buttons.length ? buttons[0].value : null);
-      overlay.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); return; }
-        if (e.key === 'Enter' && confirmValue != null) { e.preventDefault(); e.stopPropagation(); finish(confirmValue); }
+      var focusBtn = primaryBtn || dangerBtn || actions.firstChild;
+      _attachDialogKeyboard(overlay, {
+        category: 'confirmation',
+        onDismiss: function () { finish(null); },
+        onConfirm: confirmValue != null ? function () { finish(confirmValue); } : null,
+        autoFocus: focusBtn
       });
       document.body.appendChild(overlay);
-      var focusBtn = primaryBtn || dangerBtn || actions.firstChild;
-      if (focusBtn) focusBtn.focus();
     });
   }
 
@@ -10723,15 +10792,74 @@
     return measure;
   }
 
+  /**
+   * Attach unified keyboard handling to a dialog/popup/dropdown container.
+   * Mirrors the DRY pattern of _attachContainerExpandBehavior: one function,
+   * called from every dialog, with opts controlling category-specific behavior.
+   *
+   * @param {HTMLElement} container  - The dialog overlay, dropdown, popup, or panel element
+   * @param {Object}      opts
+   * @param {string}      opts.category    - 'form' | 'confirmation' | 'settings' | 'informational'
+   * @param {Function}    opts.onDismiss   - Called on ESC, or Enter-when-clean (form), or Enter (settings)
+   * @param {Function}   [opts.onConfirm]  - Called on Enter-when-dirty (form) or Enter (confirmation/informational)
+   * @param {boolean}    [opts.trackDirty] - Auto-attach input/change listeners for dirty tracking
+   * @param {Function}   [opts.isDirty]    - Custom dirty predicate; overrides auto-tracking when provided
+   * @param {Function}   [opts.enterGuard] - If provided and returns false, Enter is not intercepted
+   * @param {HTMLElement|Function} [opts.autoFocus] - Element to focus (or function to call) via requestAnimationFrame
+   * @returns {Object}   { markDirty: Function } - API for programmatic dirty marking (smart defaults)
+   */
+  function _attachDialogKeyboard(container, opts) {
+    var dirty = false;
+    if (opts.trackDirty) {
+      container.addEventListener('input', function () { dirty = true; });
+      container.addEventListener('change', function () { dirty = true; });
+    }
+
+    container.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') {
+        ev.preventDefault(); ev.stopPropagation();
+        opts.onDismiss();
+        return;
+      }
+      if (ev.key === 'Enter') {
+        if (opts.enterGuard && !opts.enterGuard()) return;
+        var focused = document.activeElement;
+        if (focused && focused.tagName === 'BUTTON' && container.contains(focused)) return;
+        ev.preventDefault(); ev.stopPropagation();
+        var cat = opts.category;
+        if (cat === 'form') {
+          var isDirty = opts.isDirty ? opts.isDirty() : dirty;
+          if (isDirty && opts.onConfirm) { opts.onConfirm(); } else { opts.onDismiss(); }
+        } else if (cat === 'confirmation') {
+          if (opts.onConfirm) opts.onConfirm();
+        } else if (cat === 'settings') {
+          opts.onDismiss();
+        } else if (cat === 'informational') {
+          if (opts.onConfirm) { opts.onConfirm(); } else { opts.onDismiss(); }
+        }
+      }
+    });
+
+    if (opts.autoFocus) {
+      var af = opts.autoFocus;
+      requestAnimationFrame(function () {
+        if (typeof af === 'function') af(); else if (af.focus) af.focus();
+      });
+    }
+
+    return { markDirty: function () { dirty = true; } };
+  }
+
   function _promptNewFolder(item) {
+    var isAsset = item && item.type === 'asset';
     var dialogOverlay = document.createElement('div');
     dialogOverlay.className = 'live-wysiwyg-nav-dialog';
     var content = document.createElement('div');
     content.className = 'live-wysiwyg-nav-dialog-content';
-    content.innerHTML = '<p>Create a new folder for this page:</p>' +
+    content.innerHTML = '<p>Create a new folder for this ' + (isAsset ? 'file' : 'page') + ':</p>' +
       '<div class="live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline"><span>Folder name</span>' +
       '<input type="text" class="live-wysiwyg-nav-folder-name" placeholder="new-section"></div>' +
-      '<div class="live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline"><span>Display name</span>' +
+      '<div class="live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline live-wysiwyg-nav-title-row"><span>Display name</span>' +
       '<input type="text" class="live-wysiwyg-nav-folder-title" placeholder="New Section"></div>' +
       '<div class="live-wysiwyg-nav-settings-row"><label>' +
       '<input type="checkbox" class="live-wysiwyg-nav-skip-index"> Only create folder</label></div>';
@@ -10752,27 +10880,67 @@
     var nameInput = content.querySelector('.live-wysiwyg-nav-folder-name');
     var titleInput = content.querySelector('.live-wysiwyg-nav-folder-title');
     var skipIndexCheckbox = content.querySelector('.live-wysiwyg-nav-skip-index');
+
+    nameInput.tabIndex = 1;
+    titleInput.tabIndex = 2;
+    skipIndexCheckbox.tabIndex = 3;
+    createBtn.tabIndex = 4;
+    cancelBtn.tabIndex = 5;
+
+    var titleRow = content.querySelector('.live-wysiwyg-nav-title-row');
+
+    var dirty = false;
+    function markDirty() { dirty = true; }
+
+    function syncTitleRowVisibility() {
+      if (skipIndexCheckbox.checked) {
+        titleRow.style.display = 'none';
+      } else {
+        titleRow.style.display = '';
+      }
+    }
+
+    var defaultName = '';
+    var defaultTitle = '';
+    if (isAsset) {
+      skipIndexCheckbox.checked = true;
+      var srcPath = item.src_path || '';
+      var fname = srcPath.split('/').pop() || '';
+      var dot = fname.lastIndexOf('.');
+      var base = dot > 0 ? fname.substring(0, dot) : fname;
+      defaultName = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      defaultTitle = base.charAt(0).toUpperCase() + base.slice(1);
+    } else if (item && item.title) {
+      defaultName = item.title.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      defaultTitle = item.title;
+    }
+    if (defaultName) { nameInput.value = defaultName; dirty = true; }
+    if (defaultTitle) { titleInput.value = defaultTitle; dirty = true; }
+    syncTitleRowVisibility();
+
     nameInput.addEventListener('input', function () {
       nameInput.value = nameInput.value.replace(/[^a-z0-9-]/g, '');
+      markDirty();
     });
-    nameInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); titleInput.focus(); titleInput.select(); }
+    titleInput.addEventListener('input', markDirty);
+    skipIndexCheckbox.addEventListener('change', function () {
+      syncTitleRowVisibility();
+      markDirty();
     });
-    titleInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); createBtn.click(); }
-    });
-    dialogOverlay.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') {
-        e.preventDefault(); e.stopPropagation();
-        if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay);
-      }
+
+    _attachDialogKeyboard(dialogOverlay, {
+      category: 'form',
+      isDirty: function () { return dirty; },
+      onConfirm: function () { createBtn.click(); },
+      onDismiss: function () { if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay); },
+      autoFocus: function () { nameInput.focus(); nameInput.select(); }
     });
 
     cancelBtn.addEventListener('click', function () { dialogOverlay.parentNode.removeChild(dialogOverlay); });
     createBtn.addEventListener('click', function () {
       var folderName = nameInput.value.trim();
-      var folderTitle = titleInput.value.trim() || folderName;
       var skipIndex = skipIndexCheckbox && skipIndexCheckbox.checked;
+      var folderTitle = skipIndex ? folderName : (titleInput.value.trim() || folderName);
       if (!folderName) { nameInput.focus(); return; }
       dialogOverlay.parentNode.removeChild(dialogOverlay);
 
@@ -11025,50 +11193,6 @@
     var currentSrcPath = _getCurrentSrcPath();
     if (currentSrcPath && !_navFocusTarget) _navFocusTarget = currentSrcPath;
 
-    _navCmdSHandler = function (e) {
-      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-        if (document.querySelector('.live-wysiwyg-nav-dialog')) return;
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        _confirmNavSave();
-      }
-    };
-    _navEditEscHandler = function (e) {
-      if (e.key === 'Escape') {
-        if (document.querySelector('.live-wysiwyg-nav-dialog')) return;
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        _confirmNavDiscard();
-      }
-    };
-    _navContentEditingGuard = function (e) {
-      if (!_navEditMode) return;
-      if (document.querySelector('.live-wysiwyg-nav-dialog')) return;
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault(); e.stopImmediatePropagation(); _navUndo(); return;
-      }
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
-        e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
-      }
-    };
-    _navArrowKeyHandler = function (e) {
-      if (!_navEditMode || !_navKeyboardActiveItem) return;
-      var dir = null;
-      if (e.key === 'ArrowUp') dir = 'up';
-      else if (e.key === 'ArrowDown') dir = 'down';
-      else if (e.key === 'ArrowLeft') dir = 'left';
-      else if (e.key === 'ArrowRight') dir = 'right';
-      if (dir) {
-        e.preventDefault();
-        _handleArrowClick(_navKeyboardActiveItem, _navKeyboardActiveItem.type || 'page', dir, e.shiftKey);
-      }
-    };
-    document.addEventListener('keydown', _navArrowKeyHandler, true);
-
-    document.addEventListener('keydown', _navCmdSHandler, true);
-    document.addEventListener('keydown', _navEditEscHandler, true);
-    document.addEventListener('keydown', _navContentEditingGuard, true);
-
     _rebuildNavMenuForEditMode();
   }
 
@@ -11077,11 +11201,6 @@
   function _exitNavEditMode(restoreCursor) {
     if (!_navEditMode) return;
     _navEditMode = false;
-
-    if (_navArrowKeyHandler) { document.removeEventListener('keydown', _navArrowKeyHandler, true); _navArrowKeyHandler = null; }
-    if (_navCmdSHandler) { document.removeEventListener('keydown', _navCmdSHandler, true); _navCmdSHandler = null; }
-    if (_navEditEscHandler) { document.removeEventListener('keydown', _navEditEscHandler, true); _navEditEscHandler = null; }
-    if (_navContentEditingGuard) { document.removeEventListener('keydown', _navContentEditingGuard, true); _navContentEditingGuard = null; }
 
     if (_navEditActionsEl && _navEditActionsEl.parentNode) {
       _navEditActionsEl.parentNode.removeChild(_navEditActionsEl);
@@ -11246,6 +11365,8 @@
       popup.appendChild(empty);
     }
 
+    popup.tabIndex = -1;
+
     var btnRect = anchorBtn.getBoundingClientRect();
     popup.style.left = btnRect.left + 'px';
     popup.style.bottom = (window.innerHeight - btnRect.top + 6) + 'px';
@@ -11253,11 +11374,12 @@
     document.body.appendChild(popup);
     requestAnimationFrame(function () {
       popup.classList.add('live-wysiwyg-nav-review-popup-open');
+      popup.focus();
     });
 
     var cleanupListeners = function () {
       document.removeEventListener('click', dismiss, true);
-      document.removeEventListener('keydown', dismissEsc, true);
+      _reviewPopupDismiss = null;
     };
     var dismiss = function (e) {
       if (!popup.parentNode) { cleanupListeners(); return; }
@@ -11265,15 +11387,14 @@
       _dismissReviewPopup(popup);
       cleanupListeners();
     };
-    var dismissEsc = function (e) {
-      if (e.key === 'Escape' && popup.parentNode) {
+    _reviewPopupDismiss = function () {
+      if (popup.parentNode) {
         _dismissReviewPopup(popup);
         cleanupListeners();
       }
     };
     setTimeout(function () {
       document.addEventListener('click', dismiss, true);
-      document.addEventListener('keydown', dismissEsc, true);
     }, 0);
   }
 
@@ -14114,9 +14235,6 @@
           var normalized = renameFolderInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
           folderRenameRef.btn.disabled = !normalized || normalized === folderBaseName;
         });
-        renameFolderInput.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter') { e.preventDefault(); doFolderRename(); }
-        });
         addButtonRow([
           { text: 'Rename Folder', disabled: true, ref: folderRenameRef, shrink: true, syncRef: _renameRef, onClick: doFolderRename },
           { text: 'Delete', style: 'background:#d9534f', onClick: function () {
@@ -14193,9 +14311,6 @@
             var normalized = val.toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
             fileRenameRef.btn.disabled = !normalized || normalized === fileDisplayName;
           }
-        });
-        fileRenameInput.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter') { e.preventDefault(); doFileRename(); }
         });
         addButtonRow([
           { text: 'Rename File', disabled: true, ref: fileRenameRef, shrink: true, syncRef: _renameRef, onClick: doFileRename },
@@ -14324,6 +14439,30 @@
     }
 
     dropdown._gearBtn = gearBtn;
+
+    var hasApplyBtn = Array.prototype.some.call(
+      dropdown.querySelectorAll('.live-wysiwyg-nav-settings-normalize-btn'),
+      function (b) { return b.textContent === 'Apply'; }
+    );
+
+    function _dismissGearDropdown() {
+      if (dropdown.parentNode) dropdown.parentNode.removeChild(dropdown);
+      document.removeEventListener('click', closeHandler, true);
+    }
+
+    var firstInput = dropdown.querySelector('input[type="text"], input[type="number"], select');
+    _attachDialogKeyboard(dropdown, {
+      category: 'form',
+      trackDirty: true,
+      isDirty: hasApplyBtn ? null : function () { return false; },
+      onConfirm: function () {
+        _applySettingsGearChanges(dropdown, item, itemType);
+        _dismissGearDropdown();
+      },
+      onDismiss: function () { _dismissGearDropdown(); },
+      autoFocus: firstInput ? function () { firstInput.focus(); firstInput.select(); } : null
+    });
+
     dropdown.style.position = 'fixed';
     dropdown.style.visibility = 'hidden';
     document.body.appendChild(dropdown);
@@ -14335,8 +14474,7 @@
 
     var closeHandler = function (e) {
       if (!dropdown.contains(e.target) && e.target !== gearBtn) {
-        if (dropdown.parentNode) dropdown.parentNode.removeChild(dropdown);
-        document.removeEventListener('click', closeHandler, true);
+        _dismissGearDropdown();
       }
     };
     setTimeout(function () { document.addEventListener('click', closeHandler, true); }, 0);
@@ -14669,10 +14807,21 @@
     }
     popup.style.visibility = '';
 
+    function _dismissPopup() {
+      if (popup.parentNode) popup.parentNode.removeChild(popup);
+      document.removeEventListener('click', closeHandler, true);
+    }
+    var firstActionBtn = popup.querySelector('button');
+    _attachDialogKeyboard(popup, {
+      category: 'informational',
+      onDismiss: function () { _dismissPopup(); },
+      onConfirm: firstActionBtn ? function () { _dismissPopup(); firstActionBtn.click(); } : null,
+      autoFocus: firstActionBtn
+    });
+
     var closeHandler = function (e) {
       if (!popup.contains(e.target) && e.target !== anchorEl) {
-        if (popup.parentNode) popup.parentNode.removeChild(popup);
-        document.removeEventListener('click', closeHandler, true);
+        _dismissPopup();
       }
     };
     setTimeout(function () { document.addEventListener('click', closeHandler, true); }, 0);
@@ -15651,10 +15800,20 @@
     }
     popup.style.visibility = '';
 
+    function _dismissCautionPopup() {
+      if (popup.parentNode) popup.parentNode.removeChild(popup);
+      document.removeEventListener('mousedown', closeHandler, true);
+    }
+    var resolveBtn = cautionBtnRow.querySelector('button');
+    _attachDialogKeyboard(popup, {
+      category: 'informational',
+      onDismiss: function () { _dismissCautionPopup(); },
+      autoFocus: resolveBtn
+    });
+
     var closeHandler = function (e) {
       if (!popup.contains(e.target) && e.target !== anchorEl) {
-        if (popup.parentNode) popup.parentNode.removeChild(popup);
-        document.removeEventListener('mousedown', closeHandler, true);
+        _dismissCautionPopup();
       }
     };
     setTimeout(function () {
@@ -16108,6 +16267,7 @@
       var applyBtn = document.createElement('button');
       applyBtn.className = 'live-wysiwyg-nav-dialog-primary';
       applyBtn.textContent = 'Apply';
+      applyBtn.tabIndex = 1;
       applyBtn.addEventListener('click', function () {
         finishWizard(_applyDeadLinkExclusions(deadByPage, excludeSet));
       });
@@ -16115,20 +16275,22 @@
 
       var includeAllBtn = document.createElement('button');
       includeAllBtn.textContent = 'Include All';
+      includeAllBtn.tabIndex = 2;
       includeAllBtn.addEventListener('click', function () {
         finishWizard(deadByPage);
       });
       actions.appendChild(includeAllBtn);
 
-      overlay.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finishWizard(null); return; }
-        if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); applyBtn.click(); }
+      _attachDialogKeyboard(overlay, {
+        category: 'confirmation',
+        onDismiss: function () { finishWizard(null); },
+        onConfirm: function () { applyBtn.click(); },
+        autoFocus: applyBtn
       });
 
       content.appendChild(actions);
       overlay.appendChild(content);
       document.body.appendChild(overlay);
-      applyBtn.focus();
     });
   }
 
@@ -16267,6 +16429,12 @@
       actions.appendChild(resolveAllBtn);
     }
     panel.appendChild(actions);
+
+    _attachDialogKeyboard(panel, {
+      category: 'informational',
+      onDismiss: function () { _hideDeadLinkPanel(); },
+      autoFocus: closeBtn
+    });
 
     var tocRect = tocEl.getBoundingClientRect();
     panel.style.top = tocRect.top + 'px';
@@ -16440,10 +16608,20 @@
       dropdown.style.left = Math.max(4, window.innerWidth - ddRect.width - 8) + 'px';
     }
 
+    function _dismissSettingsDd() {
+      if (dropdown.parentNode) dropdown.parentNode.removeChild(dropdown);
+      document.removeEventListener('click', closeHandler, true);
+    }
+    var firstCb = dropdown.querySelector('.live-wysiwyg-focus-settings-cb');
+    _attachDialogKeyboard(dropdown, {
+      category: 'settings',
+      onDismiss: function () { _dismissSettingsDd(); },
+      autoFocus: firstCb
+    });
+
     var closeHandler = function (e) {
       if (!dropdown.contains(e.target) && e.target !== gearBtn) {
-        if (dropdown.parentNode) dropdown.parentNode.removeChild(dropdown);
-        document.removeEventListener('click', closeHandler, true);
+        _dismissSettingsDd();
       }
     };
     setTimeout(function () { document.addEventListener('click', closeHandler, true); }, 0);
@@ -16511,6 +16689,13 @@
     });
     submenu.appendChild(findDeadLinksBtn);
 
+    var firstItem = submenu.querySelector('button');
+    _attachDialogKeyboard(submenu, {
+      category: 'settings',
+      onDismiss: function () { _closeSubmenu(); document.removeEventListener('click', closeHandler, true); },
+      autoFocus: firstItem
+    });
+
     var rect = contentBtn.getBoundingClientRect();
     submenu.style.position = 'fixed';
     submenu.style.top = (rect.bottom + 2) + 'px';
@@ -16557,20 +16742,27 @@
 
     var filenameInput = content.querySelector('.live-wysiwyg-rename-filename');
     var titleInput = content.querySelector('.live-wysiwyg-rename-title');
+
+    filenameInput.tabIndex = 1;
+    titleInput.tabIndex = 2;
+    confirmBtn.tabIndex = 3;
+    cancelBtn.tabIndex = 4;
+
+    var dirty = false;
+    function markDirty() { dirty = true; }
+
     filenameInput.addEventListener('input', function () {
       filenameInput.value = filenameInput.value.replace(/[^a-z0-9-]/g, '');
+      markDirty();
     });
-    filenameInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); titleInput.focus(); titleInput.select(); }
-    });
-    titleInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); confirmBtn.click(); }
-    });
-    dialogOverlay.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') {
-        e.preventDefault(); e.stopPropagation();
-        if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay);
-      }
+    titleInput.addEventListener('input', markDirty);
+
+    _attachDialogKeyboard(dialogOverlay, {
+      category: 'form',
+      isDirty: function () { return dirty; },
+      onConfirm: function () { confirmBtn.click(); },
+      onDismiss: function () { if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay); },
+      autoFocus: function () { filenameInput.focus(); filenameInput.select(); }
     });
 
     cancelBtn.addEventListener('click', function () { dialogOverlay.parentNode.removeChild(dialogOverlay); });
@@ -16635,26 +16827,49 @@
     var newTitleInput = content.querySelector('.live-wysiwyg-new-title');
     var newWeightInput = content.querySelector('.live-wysiwyg-new-weight');
     var newContentInput = content.querySelector('.live-wysiwyg-new-content');
+
+    filenameInput.tabIndex = 1;
+    newTitleInput.tabIndex = 2;
+    newWeightInput.tabIndex = 3;
+    newContentInput.tabIndex = 4;
+    confirmBtn.tabIndex = 5;
+    cancelBtn.tabIndex = 6;
+
+    var dirty = false;
+    function markDirty() { dirty = true; }
+
+    var navItems = typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : [];
+    var parentSection = currentDir ? _findSectionByDir(navItems, currentDir) : null;
+    var siblingChildren = parentSection && parentSection.children ? parentSection.children : (currentDir ? [] : navItems);
+    var maxWeight = -Infinity;
+    for (var wi = 0; wi < siblingChildren.length; wi++) {
+      var sw = _getItemWeight(siblingChildren[wi]);
+      if (sw != null && sw > maxWeight) maxWeight = sw;
+    }
+    if (maxWeight > -Infinity) {
+      newWeightInput.value = maxWeight + 100;
+      dirty = true;
+    } else {
+      var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
+      var defW = nwCfg.frontmatter_defaults && nwCfg.frontmatter_defaults.weight !== undefined ? nwCfg.frontmatter_defaults.weight : 100;
+      newWeightInput.value = defW;
+      dirty = true;
+    }
+
     filenameInput.addEventListener('input', function () {
       filenameInput.value = filenameInput.value.replace(/[^a-z0-9-]/g, '');
+      markDirty();
     });
-    filenameInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); newTitleInput.focus(); newTitleInput.select(); }
-    });
-    newTitleInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); newWeightInput.focus(); newWeightInput.select(); }
-    });
-    newWeightInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); newContentInput.focus(); newContentInput.select(); }
-    });
-    newContentInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); confirmBtn.click(); }
-    });
-    dialogOverlay.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') {
-        e.preventDefault(); e.stopPropagation();
-        if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay);
-      }
+    newTitleInput.addEventListener('input', markDirty);
+    newWeightInput.addEventListener('input', markDirty);
+    newContentInput.addEventListener('input', markDirty);
+
+    _attachDialogKeyboard(dialogOverlay, {
+      category: 'form',
+      isDirty: function () { return dirty; },
+      onConfirm: function () { confirmBtn.click(); },
+      onDismiss: function () { if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay); },
+      autoFocus: filenameInput
     });
 
     cancelBtn.addEventListener('click', function () { dialogOverlay.parentNode.removeChild(dialogOverlay); });
@@ -18976,20 +19191,153 @@
   }
   captureReadModeSelectionOnChange();
 
-  document.addEventListener('keydown', function (e) {
-    if (e.key !== '.') return;
-    if (!isInReadMode()) return;
-    var tag = (document.activeElement || document.body).tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-    if (document.activeElement && document.activeElement.isContentEditable) return;
-    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-    storeSelectionIfReadMode(window.getSelection());
-    hideSelectionEditPopup();
-    clickEditTriggerOrDefer();
-  }, true);
+  // ───── Global Keyboard Router (Tier 2) ─────
+  // Single document-level capture-phase keydown handler replacing ~10 separate
+  // registrations. State flags replace dynamic addEventListener/removeEventListener.
+  // See DESIGN-centralized-keyboard.md.
+  (function _attachGlobalKeydownRouter() {
+    if (document.__liveWysiwygGlobalKeydownRouterAttached) return;
+    document.__liveWysiwygGlobalKeydownRouterAttached = true;
+
+    function _handleDocSave(e) {
+      if (!wysiwygEditor) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (isFocusModeActive) {
+        _doFocusModeSave();
+        return;
+      }
+      var ea = wysiwygEditor.editableArea;
+      var ma = wysiwygEditor.markdownArea;
+      var docDirty = wysiwygEditor._isDocDirty && wysiwygEditor._isDocDirty();
+      if (docDirty) {
+        if (wysiwygEditor._finalizeUpdate) {
+          if (wysiwygEditor.currentMode === 'wysiwyg' && ea) {
+            wysiwygEditor._finalizeUpdate(ea.innerHTML);
+          } else if (wysiwygEditor.currentMode === 'markdown' && ma) {
+            wysiwygEditor._finalizeUpdate(ma.value);
+          }
+        }
+        var saveBtn = document.querySelector('.live-edit-save-button');
+        if (saveBtn && !saveBtn.classList.contains('live-edit-hidden')) {
+          saveBtn.click();
+        }
+        return;
+      }
+      if (_navEditMode) {
+        _confirmNavSave();
+      }
+    }
+
+    function _handleToggleMode(e) {
+      if (!wysiwygEditor) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (isFocusModeActive) {
+        var toggle = document.querySelector('.live-wysiwyg-focus-mode-toggle');
+        if (toggle) {
+          var btns = toggle.querySelectorAll('button');
+          for (var i = 0; i < btns.length; i++) {
+            if (!btns[i].classList.contains('active')) { btns[i].click(); return; }
+          }
+        }
+        return;
+      }
+      var newMode = wysiwygEditor.currentMode === 'wysiwyg' ? 'markdown' : 'wysiwyg';
+      wysiwygEditor.switchToMode(newMode);
+      if (newMode === 'wysiwyg') {
+        requestAnimationFrame(function () {
+          scrollToCenterCursor(wysiwygEditor.editableArea, false);
+        });
+      } else if (wysiwygEditor.markdownArea) {
+        requestAnimationFrame(function () {
+          scrollToCenterCursor(wysiwygEditor.markdownArea, true, wysiwygEditor.markdownArea.selectionStart, wysiwygEditor.markdownEditorContainer);
+        });
+      }
+    }
+
+    function _handlePeriodEdit(e) {
+      if (!isInReadMode()) return;
+      var tag = (document.activeElement || document.body).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (document.activeElement && document.activeElement.isContentEditable) return;
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      storeSelectionIfReadMode(window.getSelection());
+      hideSelectionEditPopup();
+      clickEditTriggerOrDefer();
+    }
+
+    document.addEventListener('keydown', function _globalKeydownRouter(e) {
+      var dialogOpen = !!document.querySelector('.live-wysiwyg-nav-dialog');
+
+      if (e.key === 'Escape') {
+        if (dialogOpen) return;
+        if (_navEditMode) {
+          e.preventDefault(); e.stopImmediatePropagation();
+          _confirmNavDiscard();
+          return;
+        }
+        if (_admonitionDropdownDismiss) {
+          _admonitionDropdownDismiss();
+          return;
+        }
+        if (_reviewPopupDismiss) {
+          _reviewPopupDismiss();
+          return;
+        }
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        if (_focusModeRebuildPromptOpen) {
+          e.preventDefault(); e.stopImmediatePropagation();
+          var primary = document.querySelector('.live-wysiwyg-nav-dialog .live-wysiwyg-nav-dialog-primary');
+          if (primary) primary.click();
+          return;
+        }
+        if (dialogOpen) return;
+        if (_navEditMode) {
+          e.preventDefault(); e.stopImmediatePropagation();
+          _confirmNavSave();
+          return;
+        }
+        _handleDocSave(e);
+        return;
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.key === '.') {
+        _handleToggleMode(e);
+        return;
+      }
+
+      if (_navEditMode && !dialogOpen) {
+        if (e.key.indexOf('Arrow') === 0 && _navKeyboardActiveItem) {
+          var dir = null;
+          if (e.key === 'ArrowUp') dir = 'up';
+          else if (e.key === 'ArrowDown') dir = 'down';
+          else if (e.key === 'ArrowLeft') dir = 'left';
+          else if (e.key === 'ArrowRight') dir = 'right';
+          if (dir) {
+            e.preventDefault();
+            _handleArrowClick(_navKeyboardActiveItem, _navKeyboardActiveItem.type || 'page', dir, e.shiftKey);
+          }
+          return;
+        }
+        if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+          e.preventDefault(); e.stopImmediatePropagation(); _navUndo(); return;
+        }
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+          e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
+        }
+      }
+
+      if (e.key === '.') {
+        _handlePeriodEdit(e);
+      }
+    }, true);
+  })();
 
   function getControlsElement(textarea) {
     var controls = textarea ? textarea.closest('.live-edit-controls') : null;
@@ -19543,11 +19891,12 @@
       }
     })();
 
+    var _ekh = {};
+
     (function () {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygChecklistBackspaceAttached) {
-        ea.dataset.liveWysiwygChecklistBackspaceAttached = '1';
-        ea.addEventListener('keydown', function (e) {
+      if (!ea) return;
+      _ekh.checklistBackspace = function (e) {
           if (e.key !== 'Backspace') return;
           var sel = window.getSelection();
           if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
@@ -19616,8 +19965,7 @@
           if (wysiwygEditor._finalizeUpdate) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);
           }
-        }, true);
-      }
+      };
     })();
 
     (function () {
@@ -19658,17 +20006,16 @@
         ea.addEventListener('focus', function () {
           setTimeout(normalizeChecklistCursor, 0);
         });
-        ea.addEventListener('keydown', function (e) {
+        _ekh.checklistCursorNorm = function (e) {
           if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') setTimeout(normalizeChecklistCursor, 0);
-        });
+        };
       }
     })();
 
     (function () {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygChecklistArrowAttached) {
-        ea.dataset.liveWysiwygChecklistArrowAttached = '1';
-        ea.addEventListener('keydown', function (e) {
+      if (!ea) return;
+      _ekh.checklistArrow = function (e) {
           if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
           if (wysiwygEditor.currentMode !== 'wysiwyg') return;
           var sel = window.getSelection();
@@ -19781,8 +20128,7 @@
               }
             }
           }
-        }, true);
-      }
+      };
     })();
 
     (function () {
@@ -19881,14 +20227,14 @@
         function clearPending() { pendingBacktick = null; }
 
         ea.addEventListener('blur', clearPending);
-        ea.addEventListener('keydown', function (e) {
+        _ekh.inlineCodeClear = function (e) {
           if (e.key === 'Escape' || e.key === 'Enter' ||
               e.key.indexOf('Arrow') === 0 ||
               e.key === 'Home' || e.key === 'End' ||
               e.key === 'PageUp' || e.key === 'PageDown') {
             clearPending();
           }
-        });
+        };
 
         function doConvert(anchorNode, openingIdx, closingIdx, sel, isDouble) {
           var text = anchorNode.textContent;
@@ -20278,7 +20624,7 @@
           }
         }, true);
 
-        ea.addEventListener("keydown", function (e) {
+        _ekh.emojiKey = function (e) {
           if ((e.ctrlKey || e.metaKey) && e.key === " ") {
             e.preventDefault();
             if (wysiwygEditor.currentMode !== "wysiwyg") return;
@@ -20419,7 +20765,7 @@
               if (key && onSelectCb) onSelectCb(key);
             }
           }
-        }, true);
+        };
       }
 
       var ea = wysiwygEditor.editableArea;
@@ -21332,7 +21678,7 @@
 
       // ── keydown: intercept space for block conversions, backspace for revert ──
 
-      ea.addEventListener('keydown', function (e) {
+      _ekh.mdAuto = function (e) {
         if (wysiwygEditor.currentMode !== 'wysiwyg') return;
         var sel = window.getSelection();
 
@@ -21365,7 +21711,7 @@
           e.preventDefault();
           if (wysiwygEditor._finalizeUpdate) wysiwygEditor._finalizeUpdate(ea.innerHTML);
         }
-      }, true);
+      };
 
       // ── Main input listener ──
 
@@ -21582,9 +21928,8 @@
 
     (function () {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygCodeBlockBackspaceAttached) {
-        ea.dataset.liveWysiwygCodeBlockBackspaceAttached = '1';
-        ea.addEventListener('keydown', function (e) {
+      if (!ea) return;
+      _ekh.codeBlockBackspace = function (e) {
           if (e.key !== 'Backspace' && e.key !== 'Delete') return;
           var sel = window.getSelection();
           if (!sel || !sel.rangeCount) return;
@@ -21707,15 +22052,13 @@
             return;
           }
 
-        });
-      }
+      };
     })();
 
     (function () {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygAdmonitionBackspaceAttached) {
-        ea.dataset.liveWysiwygAdmonitionBackspaceAttached = '1';
-        ea.addEventListener('keydown', function (e) {
+      if (!ea) return;
+      _ekh.admonitionBackspace = function (e) {
           if (e.key !== 'Backspace') return;
           var sel = window.getSelection();
           if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
@@ -21796,14 +22139,12 @@
               wysiwygEditor._finalizeUpdate(ea.innerHTML);
             }
           }
-        });
-      }
+      };
     })();
 
     (function reverseBubbleHandler() {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygReverseBubbleAttached) {
-        ea.dataset.liveWysiwygReverseBubbleAttached = '1';
+      if (!ea) return;
         var stripMarkers = /[\u200B\u200C\u200D\uFEFF]/g;
 
         function isSiblingInvisible(ps) {
@@ -21922,7 +22263,7 @@
           }
         }
 
-        ea.addEventListener('keydown', function (e) {
+        _ekh.reverseBubble = function (e) {
           if (e.key !== 'Enter' || e.shiftKey) return;
           if (wysiwygEditor.currentMode !== 'wysiwyg') return;
           var sel = window.getSelection();
@@ -22138,14 +22479,12 @@
           if (wysiwygEditor._finalizeUpdate) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);
           }
-        }, true);
-      }
+        };
     })();
 
     (function () {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygListEnterExitAttached) {
-        ea.dataset.liveWysiwygListEnterExitAttached = '1';
+      if (!ea) return;
         var listConsecutiveEnters = 0;
         var lastEnterList = null;
         var stripMarkersList = /[\u200B\u200C\u200D\uFEFF]/g;
@@ -22153,7 +22492,7 @@
           var t = (li.textContent || '').replace(stripMarkersList, '').replace(/[\s ]/g, '');
           return t.length === 0;
         }
-        ea.addEventListener('keydown', function (e) {
+        _ekh.listEnterExit = function (e) {
           if (wysiwygEditor.currentMode !== 'wysiwyg' || e.key !== 'Enter' || e.shiftKey) return;
           var sel = window.getSelection();
           if (!sel || !sel.isCollapsed || !sel.rangeCount) {
@@ -22343,17 +22682,15 @@
           if (wysiwygEditor._finalizeUpdate) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);
           }
-        }, true);
-      }
+        };
     })();
 
     (function () {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygAdmonitionEnterExitAttached) {
-        ea.dataset.liveWysiwygAdmonitionEnterExitAttached = '1';
+      if (!ea) return;
         var adConsecutiveEnters = 0;
         var lastEnterAd = null;
-        ea.addEventListener('keydown', function (e) {
+        _ekh.admonitionEnterExit = function (e) {
           if (wysiwygEditor.currentMode !== 'wysiwyg' || e.key !== 'Enter') return;
           var sel = window.getSelection();
           if (!sel || !sel.isCollapsed || !sel.rangeCount) {
@@ -22572,17 +22909,15 @@
           if (wysiwygEditor._finalizeUpdate) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);
           }
-        }, true);
-      }
+        };
     })();
 
     (function () {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygBlockquoteEnterExitAttached) {
-        ea.dataset.liveWysiwygBlockquoteEnterExitAttached = '1';
+      if (!ea) return;
         var bqConsecutiveEnters = 0;
         var lastEnterBq = null;
-        ea.addEventListener('keydown', function (e) {
+        _ekh.blockquoteEnterExit = function (e) {
           if (wysiwygEditor.currentMode !== 'wysiwyg' || e.key !== 'Enter' || e.shiftKey) return;
           var sel = window.getSelection();
           if (!sel || !sel.isCollapsed || !sel.rangeCount) {
@@ -22750,15 +23085,13 @@
           if (wysiwygEditor._finalizeUpdate) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);
           }
-        }, true);
-      }
+        };
     })();
 
     (function () {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygHeadingEnterAttached) {
-        ea.dataset.liveWysiwygHeadingEnterAttached = '1';
-        ea.addEventListener('keydown', function (e) {
+      if (!ea) return;
+      _ekh.headingEnter = function (e) {
           if (e.key !== 'Enter' || e.shiftKey) return;
           if (wysiwygEditor.currentMode !== 'wysiwyg') return;
           var sel = window.getSelection();
@@ -22802,15 +23135,13 @@
           if (wysiwygEditor._finalizeUpdate) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);
           }
-        }, true);
-      }
+      };
     })();
 
     (function () {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygHiddenTitleAdmonitionEnterAttached) {
-        ea.dataset.liveWysiwygHiddenTitleAdmonitionEnterAttached = '1';
-        ea.addEventListener('keydown', function (e) {
+      if (!ea) return;
+      _ekh.hiddenTitleAdmonitionEnter = function (e) {
           if (e.key !== 'Enter' || e.shiftKey) return;
           if (wysiwygEditor.currentMode !== 'wysiwyg') return;
           var sel = window.getSelection();
@@ -22871,19 +23202,17 @@
           if (wysiwygEditor._finalizeUpdate) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);
           }
-        }, true);
-      }
+      };
     })();
 
     (function () {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygCodeBlockEnterExitAttached) {
-        ea.dataset.liveWysiwygCodeBlockEnterExitAttached = '1';
+      if (!ea) return;
         var stripMarkers = /[\u200B\u200C\u200D\uFEFF]/g;
         var consecutiveEnters = 0;
         var lastEnterPre = null;
 
-        ea.addEventListener('keydown', function (e) {
+        _ekh.codeBlockEnterExit = function (e) {
           if (wysiwygEditor.currentMode !== 'wysiwyg') return;
 
           var sel = window.getSelection();
@@ -23346,8 +23675,7 @@
           if (wysiwygEditor._finalizeUpdate) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);
           }
-        }, true);
-      }
+        };
     })();
 
     function _isCodeUINode(n) {
@@ -23433,8 +23761,7 @@
 
     (function () {
       var ea = wysiwygEditor.editableArea;
-      if (ea && !ea.dataset.liveWysiwygProgressiveSelectAllAttached) {
-        ea.dataset.liveWysiwygProgressiveSelectAllAttached = '1';
+      if (!ea) return;
 
         var isCodeUINode = _isCodeUINode;
         var buildTargetRange = _buildTargetRange;
@@ -23465,7 +23792,7 @@
           return range;
         }
 
-        ea.addEventListener('keydown', function (e) {
+        _ekh.progressiveSelectAll = function (e) {
           if (!(e.key === 'a' && (e.metaKey || e.ctrlKey))) return;
           if (wysiwygEditor.currentMode !== 'wysiwyg') return;
           var sel = window.getSelection();
@@ -23599,8 +23926,49 @@
               return;
             }
           }
-        });
-      }
+        };
+    })();
+
+    // ───── Editor Keyboard Router (Tier 3) ─────
+    // Single capture-phase keydown handler replacing 16 individual handlers.
+    // Priority is determined by call order. See DESIGN-centralized-keyboard.md.
+    (function _setupEditorKeyboard() {
+      var ea = wysiwygEditor.editableArea;
+      if (!ea || ea.dataset.liveWysiwygKeyboardRouterAttached) return;
+      ea.dataset.liveWysiwygKeyboardRouterAttached = '1';
+
+      ea.addEventListener('keydown', function _editorKeydownRouter(e) {
+        if (_navEditMode) return;
+        if (_ekh.inlineCodeClear) _ekh.inlineCodeClear(e);
+        if (_ekh.checklistCursorNorm) _ekh.checklistCursorNorm(e);
+
+        if (_ekh.emojiKey) { _ekh.emojiKey(e); if (e.defaultPrevented) return; }
+
+        var key = e.key;
+
+        if (key === 'Enter') {
+          if (_ekh.reverseBubble) { _ekh.reverseBubble(e); if (e.defaultPrevented) return; }
+          if (_ekh.listEnterExit) { _ekh.listEnterExit(e); if (e.defaultPrevented) return; }
+          if (_ekh.admonitionEnterExit) { _ekh.admonitionEnterExit(e); if (e.defaultPrevented) return; }
+          if (_ekh.blockquoteEnterExit) { _ekh.blockquoteEnterExit(e); if (e.defaultPrevented) return; }
+          if (_ekh.headingEnter) { _ekh.headingEnter(e); if (e.defaultPrevented) return; }
+          if (_ekh.hiddenTitleAdmonitionEnter) { _ekh.hiddenTitleAdmonitionEnter(e); if (e.defaultPrevented) return; }
+          if (_ekh.codeBlockEnterExit) { _ekh.codeBlockEnterExit(e); if (e.defaultPrevented) return; }
+        } else if (key === 'Backspace') {
+          if (_ekh.checklistBackspace) { _ekh.checklistBackspace(e); if (e.defaultPrevented) return; }
+          if (_ekh.mdAuto) { _ekh.mdAuto(e); if (e.defaultPrevented) return; }
+          if (_ekh.codeBlockBackspace) { _ekh.codeBlockBackspace(e); if (e.defaultPrevented) return; }
+          if (_ekh.admonitionBackspace) { _ekh.admonitionBackspace(e); if (e.defaultPrevented) return; }
+        } else if (key === 'Delete') {
+          if (_ekh.mdAuto) _ekh.mdAuto(e);
+        } else if (key === ' ') {
+          if (_ekh.mdAuto) _ekh.mdAuto(e);
+        } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
+          if (_ekh.checklistArrow) _ekh.checklistArrow(e);
+        } else if (key === 'a' && (e.metaKey || e.ctrlKey)) {
+          if (_ekh.progressiveSelectAll) _ekh.progressiveSelectAll(e);
+        }
+      }, true);
     })();
 
     (function blockCutPasteHandler() {
@@ -24323,73 +24691,6 @@
         }
         return result;
       };
-    })();
-
-    (function attachCtrlSSave() {
-      if (document.__liveWysiwygCtrlSAttached) return;
-      document.__liveWysiwygCtrlSAttached = true;
-      document.addEventListener('keydown', function (e) {
-        if (!((e.metaKey || e.ctrlKey) && e.key === 's')) return;
-        if (!wysiwygEditor) return;
-        e.preventDefault();
-        e.stopPropagation();
-        if (isFocusModeActive) {
-          _doFocusModeSave();
-          return;
-        }
-        var ea = wysiwygEditor.editableArea;
-        var ma = wysiwygEditor.markdownArea;
-        var docDirty = wysiwygEditor._isDocDirty && wysiwygEditor._isDocDirty();
-        if (docDirty) {
-          if (wysiwygEditor._finalizeUpdate) {
-            if (wysiwygEditor.currentMode === 'wysiwyg' && ea) {
-              wysiwygEditor._finalizeUpdate(ea.innerHTML);
-            } else if (wysiwygEditor.currentMode === 'markdown' && ma) {
-              wysiwygEditor._finalizeUpdate(ma.value);
-            }
-          }
-          var saveBtn = document.querySelector('.live-edit-save-button');
-          if (saveBtn && !saveBtn.classList.contains('live-edit-hidden')) {
-            saveBtn.click();
-          }
-          return;
-        }
-        if (_navEditMode) {
-          _confirmNavSave();
-        }
-      });
-    })();
-
-    (function attachCtrlDotToggle() {
-      if (document.__liveWysiwygCtrlDotAttached) return;
-      document.__liveWysiwygCtrlDotAttached = true;
-      document.addEventListener('keydown', function (e) {
-        if (!((e.metaKey || e.ctrlKey) && e.key === '.')) return;
-        if (!wysiwygEditor) return;
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        if (isFocusModeActive) {
-          var toggle = document.querySelector('.live-wysiwyg-focus-mode-toggle');
-          if (toggle) {
-            var btns = toggle.querySelectorAll('button');
-            for (var i = 0; i < btns.length; i++) {
-              if (!btns[i].classList.contains('active')) { btns[i].click(); return; }
-            }
-          }
-          return;
-        }
-        var newMode = wysiwygEditor.currentMode === 'wysiwyg' ? 'markdown' : 'wysiwyg';
-        wysiwygEditor.switchToMode(newMode);
-        if (newMode === 'wysiwyg') {
-          requestAnimationFrame(function () {
-            scrollToCenterCursor(wysiwygEditor.editableArea, false);
-          });
-        } else if (wysiwygEditor.markdownArea) {
-          requestAnimationFrame(function () {
-            scrollToCenterCursor(wysiwygEditor.markdownArea, true, wysiwygEditor.markdownArea.selectionStart, wysiwygEditor.markdownEditorContainer);
-          });
-        }
-      });
     })();
 
     (function attachFocusModeButton() {

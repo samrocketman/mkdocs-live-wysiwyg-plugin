@@ -91,7 +91,9 @@ flowchart LR
 
 For more detail see the following design documents.
 
+- [DESIGN-centralized-keyboard.md](DESIGN-centralized-keyboard.md) -- Three-tier centralized keyboard handling architecture (dialog, global, editor).
 - [DESIGN-declarative-save-planner.md](DESIGN-declarative-save-planner.md) -- Two-phase save architecture that separates desired end state from execution.
 - [DESIGN-nav-migration.md](DESIGN-nav-migration.md) -- Migrating from mkdocs.yml nav key to mkdocs-nav-weight frontmatter-based ordering.
 - [DESIGN-nav-weight-normalization.md](DESIGN-nav-weight-normalization.md) -- Nav weight normalization: rules, entry points, and the shared single-level algorithm.
+- [DESIGN-popup-dialog-ux.md](DESIGN-popup-dialog-ux.md) -- Unified keyboard interaction model for all popups, dropdowns, and dialogs.
 - [DESIGN-snapshot-nav-architecture.md](DESIGN-snapshot-nav-architecture.md) -- Centralized snapshot-driven architecture for the focus mode navigation menu.

@@ -19684,6 +19684,9 @@
               else _upstreamCancelBtn.classList.add('live-edit-hidden');
             }
           }
+          if (isFocusModeActive && _focusOverlay && _focusOverlay._updateSaveDiscard) {
+            _focusOverlay._updateSaveDiscard();
+          }
         },
       });
     } catch (e) {

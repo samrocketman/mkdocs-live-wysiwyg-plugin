@@ -7871,7 +7871,6 @@
 
   var _navHiddenPagesPrecomputed = false;
   var _navKeyboardActiveItem = null;
-  var _navFocusedLi = null;
   var _navActiveHoverLi = null;
   var _navKeyboardHandler = null;
   var _navSidebarEl = null;
@@ -9266,7 +9265,7 @@
   // ======================================================================
   // NAV MENU - Confirmation dialog
   // ======================================================================
-  function _showNavDialog(message, buttons) {
+  function _showNavDialog(message, buttons, extraEls) {
     return new Promise(function (resolve) {
       var resolved = false;
       function finish(val) { if (resolved) return; resolved = true; overlay.parentNode.removeChild(overlay); resolve(val); }
@@ -9277,6 +9276,11 @@
       var p = document.createElement('p');
       p.textContent = message;
       content.appendChild(p);
+      if (extraEls) {
+        for (var ei = 0; ei < extraEls.length; ei++) {
+          content.appendChild(extraEls[ei]);
+        }
+      }
       var actions = document.createElement('div');
       actions.className = 'live-wysiwyg-nav-dialog-actions';
       var primaryValue = null;
@@ -9488,6 +9492,12 @@
     scrollWrap.appendChild(nav);
     sidebarEl.appendChild(scrollWrap);
     _navScrollWrap = scrollWrap;
+
+    if (_hasAnyNavSelected()) {
+      sidebarEl.classList.add('live-wysiwyg-nav-group-active');
+    } else {
+      sidebarEl.classList.remove('live-wysiwyg-nav-group-active');
+    }
 
     requestAnimationFrame(function () { _alignAllNavControls(); });
 
@@ -9850,6 +9860,8 @@
 
       if (item._renamed) li.classList.add('live-wysiwyg-nav-item--renamed');
       if (item._new) li.classList.add('live-wysiwyg-nav-item--new');
+      if (item._focused) li.classList.add('live-wysiwyg-nav-item--focused');
+      if (item._selected) li.classList.add('live-wysiwyg-nav-item--selected');
       if (isHiddenPage) {
         li.classList.add('live-wysiwyg-nav-hidden-page');
         var showHidden = _getSetting('live_wysiwyg_show_hidden') === '1';
@@ -9921,7 +9933,30 @@
           }
         }
         (function (navItem) {
-          sectionLabel.addEventListener('click', function () {
+          sectionLabel.addEventListener('click', function (e) {
+            if (e.metaKey || e.ctrlKey) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!_navEditMode) _enterNavEditMode();
+              _toggleNavGroupItem(navItem, true);
+              return;
+            }
+            if (_navEditMode && _hasAnyNavSelected()) {
+              e.preventDefault();
+              e.stopPropagation();
+              _clearAllNavSelected();
+              _setNavItemFocused(navItem);
+              _commitNavSnapshot();
+              return;
+            }
+            if (_navEditMode) {
+              e.preventDefault();
+              e.stopPropagation();
+              navItem._expanded = !navItem._expanded;
+              _setNavItemFocused(navItem);
+              _commitNavSnapshot();
+              return;
+            }
             var childNavEl = this.parentNode.querySelector(':scope > .md-nav');
             if (!childNavEl) return;
             var expanded = childNavEl.getAttribute('aria-expanded') !== 'false';
@@ -10106,21 +10141,39 @@
         li.appendChild(a);
         li.setAttribute('data-nav-src-path', item.src_path || '');
 
-        a.addEventListener('click', function (e) {
-          e.preventDefault();
-          var targetPath = this.getAttribute('data-src-path');
-          if (_navEditMode) {
-            var curPath = _getCurrentSrcPath();
-            var curPageGone = curPath && !_findNavItemByPath(curPath);
-            if (curPageGone) {
-              _navigateToPage(this.href, this.textContent, targetPath);
+        (function (navItem, aEl) {
+          aEl.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (e.metaKey || e.ctrlKey) {
+              e.stopPropagation();
+              if (!_navEditMode) _enterNavEditMode();
+              _toggleNavGroupItem(navItem, false);
               return;
             }
-            _setNavFocusTarget(targetPath);
-            return;
-          }
-          _navigateToPage(this.href, this.textContent, targetPath);
-        });
+            if (_navEditMode && _hasAnyNavSelected()) {
+              e.stopPropagation();
+              _clearAllNavSelected();
+              _setNavItemFocused(navItem);
+              _commitNavSnapshot();
+              return;
+            }
+            var targetPath = aEl.getAttribute('data-src-path');
+            if (_navEditMode) {
+              e.stopPropagation();
+              var curPath = _getCurrentSrcPath();
+              var curPageGone = curPath && !_findNavItemByPath(curPath);
+              if (curPageGone) {
+                _navigateToPage(aEl.href, aEl.textContent, targetPath);
+                return;
+              }
+              _setNavFocusTarget(targetPath);
+              _setNavItemFocused(navItem);
+              _commitNavSnapshot();
+              return;
+            }
+            _navigateToPage(aEl.href, aEl.textContent, targetPath);
+          });
+        })(item, a);
       } else if (item.type === 'asset') {
         li.classList.add('live-wysiwyg-nav-asset-item');
         var showHiddenForAsset = _getSetting('live_wysiwyg_show_hidden') === '1';
@@ -10143,10 +10196,34 @@
         var assetSpan = document.createElement('span');
         assetSpan.className = 'md-nav__link live-wysiwyg-nav-asset-link';
         assetSpan.setAttribute('data-src-path', item.src_path || '');
-        (function (aLi, aLink) {
+        (function (aLi, aLink, navItem) {
           aLink.addEventListener('mouseenter', function () { _showNavItemControls(aLi); });
           aLink.addEventListener('mouseleave', function () { _scheduleNavItemHide(aLi); });
-        })(li, assetSpan);
+          aLink.addEventListener('click', function (e) {
+            if (e.metaKey || e.ctrlKey) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!_navEditMode) _enterNavEditMode();
+              _toggleNavGroupItem(navItem, false);
+              return;
+            }
+            if (_navEditMode && _hasAnyNavSelected()) {
+              e.preventDefault();
+              e.stopPropagation();
+              _clearAllNavSelected();
+              _setNavItemFocused(navItem);
+              _commitNavSnapshot();
+              return;
+            }
+            if (_navEditMode) {
+              e.preventDefault();
+              e.stopPropagation();
+              _setNavItemFocused(navItem);
+              _commitNavSnapshot();
+              return;
+            }
+          });
+        })(li, assetSpan, item);
 
         var assetIcon = document.createElement('span');
         assetIcon.className = 'live-wysiwyg-nav-asset-icon';
@@ -10345,23 +10422,505 @@
     }
   }
 
-  function _setNavFocus(li) {
-    if (_navFocusedLi && _navFocusedLi !== li) {
-      _navFocusedLi.classList.remove('live-wysiwyg-nav-item--focused');
-    }
-    _navFocusedLi = li;
-    if (li) li.classList.add('live-wysiwyg-nav-item--focused');
+  // ======================================================================
+  // NAV MENU - navData state helpers (no direct DOM manipulation)
+  // All visual state lives on navData items; the renderer reads it.
+  // ======================================================================
+
+  function _setNavItemFocused(item) {
+    _walkNavData(function (it) { delete it._focused; });
+    if (item) item._focused = true;
+    _navKeyboardActiveItem = item || null;
   }
 
-  function _clearNavFocus() {
-    if (_navFocusedLi) {
-      _navFocusedLi.classList.remove('live-wysiwyg-nav-item--focused');
-    }
-    _navFocusedLi = null;
+  function _clearNavItemFocused() {
+    _walkNavData(function (it) { delete it._focused; });
     _navKeyboardActiveItem = null;
   }
 
+  function _clearAllNavSelected() {
+    _walkNavData(function (it) { delete it._selected; delete it._groupMode; });
+  }
+
+  function _hasAnyNavSelected() {
+    var found = false;
+    _walkNavData(function (it) { if (it._selected) found = true; });
+    return found;
+  }
+
+  function _clearNavFocus() {
+    _clearNavItemFocused();
+  }
+
+  function _clearNavGroup() {
+    _clearAllNavSelected();
+    _clearNavItemFocused();
+  }
+
+  function _isItemSelectedInNavData(item) {
+    if (item._selected) return true;
+    var nd = typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : [];
+    var found = false;
+    (function walk(items) {
+      for (var i = 0; i < items.length; i++) {
+        if (found) return;
+        if (items[i]._selected && items[i]._groupMode === 'section' && items[i].children) {
+          for (var j = 0; j < items[i].children.length; j++) {
+            if (items[i].children[j]._uid === item._uid) { found = true; return; }
+          }
+        }
+        if (items[i].children) walk(items[i].children);
+      }
+    })(nd);
+    return found;
+  }
+
+  function _checkAutoPromotion(item) {
+    var parent = _findParentSection(item._uid);
+    if (!parent || !parent.children) return;
+    var nonIndexChildren = [];
+    for (var i = 0; i < parent.children.length; i++) {
+      var ch = parent.children[i];
+      if (ch.isIndex) continue;
+      nonIndexChildren.push(ch);
+    }
+    if (nonIndexChildren.length === 0) return;
+    var allSelected = true;
+    for (var j = 0; j < nonIndexChildren.length; j++) {
+      if (!_isItemSelectedInNavData(nonIndexChildren[j])) { allSelected = false; break; }
+    }
+    if (!allSelected) return;
+    for (var ci2 = 0; ci2 < nonIndexChildren.length; ci2++) {
+      delete nonIndexChildren[ci2]._selected;
+      delete nonIndexChildren[ci2]._groupMode;
+    }
+    parent._selected = true;
+    parent._groupMode = 'section';
+    parent._expanded = false;
+  }
+
+  function _toggleNavGroupItem(item, isSection) {
+    if (!_navEditMode) return;
+
+    if (isSection && item.type === 'section') {
+      if (item._selected && item._groupMode === 'section') {
+        delete item._selected;
+        delete item._groupMode;
+        if (!_hasAnyNavSelected()) {
+          _clearNavGroup();
+          _setNavItemFocused(item);
+          _commitNavSnapshot();
+          return;
+        }
+      } else {
+        item._selected = true;
+        item._groupMode = 'section';
+        item._expanded = false;
+      }
+    } else {
+      if (item._selected) {
+        delete item._selected;
+        delete item._groupMode;
+        if (!_hasAnyNavSelected()) {
+          _clearNavGroup();
+          _setNavItemFocused(item);
+          _commitNavSnapshot();
+          return;
+        }
+      } else {
+        var parentSection = null;
+        var nd = typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : [];
+        (function findParentSec(items) {
+          for (var i = 0; i < items.length; i++) {
+            if (parentSection) return;
+            if (items[i]._selected && items[i]._groupMode === 'section' && items[i].children) {
+              for (var j = 0; j < items[i].children.length; j++) {
+                if (items[i].children[j]._uid === item._uid) {
+                  parentSection = items[i]; return;
+                }
+              }
+            }
+            if (items[i].children) findParentSec(items[i].children);
+          }
+        })(nd);
+        if (parentSection) {
+          delete parentSection._selected;
+          delete parentSection._groupMode;
+          if (parentSection.children) {
+            for (var ri = 0; ri < parentSection.children.length; ri++) {
+              var remainChild = parentSection.children[ri];
+              if (remainChild._uid === item._uid) continue;
+              if (remainChild.isIndex) continue;
+              remainChild._selected = true;
+              remainChild._groupMode = 'individual';
+            }
+          }
+        } else {
+          item._selected = true;
+          item._groupMode = 'individual';
+          _checkAutoPromotion(item);
+        }
+      }
+    }
+
+    _setNavItemFocused(item);
+    _commitNavSnapshot();
+  }
+
+  function _getNavItemDepth(uid, items, depth) {
+    items = items || (typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : []);
+    depth = depth || 0;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i]._uid === uid) return depth;
+      if (items[i].children) {
+        var found = _getNavItemDepth(uid, items[i].children, depth + 1);
+        if (found >= 0) return found;
+      }
+    }
+    return -1;
+  }
+
+  function _promoteGroupFocal() {
+    var selectedItems = [];
+    _walkNavData(function (it) { if (it._selected) selectedItems.push(it); });
+    if (selectedItems.length === 0) return null;
+    var minDepth = Infinity;
+    var bestItem = null;
+    for (var i = 0; i < selectedItems.length; i++) {
+      var d = _getNavItemDepth(selectedItems[i]._uid);
+      if (d < 0) continue;
+      if (d < minDepth || (d === minDepth && !bestItem)) {
+        minDepth = d;
+        bestItem = selectedItems[i];
+      }
+    }
+    if (bestItem) {
+      _navKeyboardActiveItem = bestItem;
+    }
+    return bestItem;
+  }
+
+  function _collectGroupEffectiveItems() {
+    var result = [];
+    var seen = {};
+    _walkNavData(function (it) {
+      if (!it._selected) return;
+      if (seen[it._uid]) return;
+      seen[it._uid] = true;
+      result.push(it);
+    });
+    return result;
+  }
+
+  function _computeRelativeParentChains(effectiveItems, focalDepth) {
+    var result = [];
+    for (var i = 0; i < effectiveItems.length; i++) {
+      var item = effectiveItems[i];
+      var d = _getNavItemDepth(item._uid);
+      if (d < 0) d = focalDepth;
+      if (d <= focalDepth) {
+        result.push({ item: item, parentChain: [] });
+      } else {
+        var chain = [];
+        var cur = item;
+        for (var level = d; level > focalDepth; level--) {
+          var p = _findParentSection(cur._uid);
+          if (p) {
+            chain.unshift(p);
+            cur = p;
+          } else {
+            break;
+          }
+        }
+        result.push({ item: item, parentChain: chain });
+      }
+    }
+    return result;
+  }
+
+  function _createIndexlessSectionSilent(folderName, parentDir) {
+    var folderTitle = folderName.replace(/-/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+    var indexPath = (parentDir ? parentDir + '/' : '') + folderName + '/index.md';
+    var syntheticSection = {
+      type: 'section',
+      title: folderTitle,
+      src_path: indexPath,
+      children: [],
+      _new: true,
+      _uid: _generateUid(),
+      _expanded: true
+    };
+    _navBatchQueue.push({
+      type: 'create-folder',
+      item: null,
+      folderName: folderName,
+      folderTitle: folderTitle,
+      skipIndex: true,
+      syntheticSection: syntheticSection
+    });
+    return syntheticSection;
+  }
+
+  function _findSectionByFolderName(siblings, folderName) {
+    for (var i = 0; i < siblings.length; i++) {
+      if (siblings[i].type !== 'section') continue;
+      var dir = _getSectionFolderDir(siblings[i]);
+      var name = dir ? dir.split('/').pop() : '';
+      if (!name && siblings[i].title) {
+        name = siblings[i].title.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      }
+      if (name === folderName) return siblings[i];
+    }
+    return null;
+  }
+
+  function _doGroupLateralMove(direction, focal, effectiveItems) {
+    var isLeft = direction.indexOf('left') !== -1;
+    var focalDepth = _getNavItemDepth(focal._uid);
+    if (focalDepth < 0) return;
+
+    var chains = _computeRelativeParentChains(effectiveItems, focalDepth);
+
+    var others = [];
+    for (var i = 0; i < effectiveItems.length; i++) {
+      if (effectiveItems[i] !== focal) others.push(effectiveItems[i]);
+    }
+    for (var k = others.length - 1; k >= 0; k--) {
+      var eLoc = _findNavItemInTree(others[k]._uid);
+      if (eLoc) eLoc.parent.splice(eLoc.index, 1);
+    }
+
+    var oldParent = _findParentSection(focal._uid);
+
+    if (isLeft) {
+      _moveNavItemLeft(focal);
+    } else {
+      _moveNavItemRight(focal, false);
+    }
+
+    var focalLoc = _findNavItemInTree(focal._uid);
+    if (!focalLoc) return;
+
+    var destParent = _findParentSection(focal._uid);
+    var destDir = destParent ? _getSectionFolderDir(destParent) : '';
+
+    var uniqueChains = [];
+    var chainKeys = {};
+    for (var ci = 0; ci < chains.length; ci++) {
+      var entry = chains[ci];
+      if (entry.parentChain.length === 0) continue;
+      var key = '';
+      for (var pi = 0; pi < entry.parentChain.length; pi++) {
+        var sec = entry.parentChain[pi];
+        var secDir = _getSectionFolderDir(sec);
+        var secName = secDir ? secDir.split('/').pop() : '';
+        if (!secName && sec.title) {
+          secName = sec.title.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        }
+        key += (key ? '/' : '') + secName;
+      }
+      if (!chainKeys[key]) {
+        chainKeys[key] = { chain: entry.parentChain, key: key };
+        uniqueChains.push(chainKeys[key]);
+      }
+    }
+    uniqueChains.sort(function (a, b) {
+      return a.key.split('/').length - b.key.split('/').length;
+    });
+
+    var resolvedSections = {};
+    var createdSections = {};
+    for (var ui = 0; ui < uniqueChains.length; ui++) {
+      var chainInfo = uniqueChains[ui];
+      var parts = chainInfo.key.split('/');
+      var currentParentArr = focalLoc.parent;
+      var currentParentDir = destDir;
+      var builtKey = '';
+      for (var pi = 0; pi < parts.length; pi++) {
+        var folderName = parts[pi];
+        builtKey += (builtKey ? '/' : '') + folderName;
+        if (resolvedSections[builtKey]) {
+          var resolved = resolvedSections[builtKey];
+          resolved.section.children = resolved.section.children || [];
+          currentParentArr = resolved.section.children;
+          currentParentDir = _getSectionFolderDir(resolved.section) || currentParentDir + '/' + folderName;
+          continue;
+        }
+        var existing = _findSectionByFolderName(currentParentArr, folderName);
+        if (existing) {
+          existing.children = existing.children || [];
+          resolvedSections[builtKey] = { section: existing, isNew: false };
+          currentParentArr = existing.children;
+          currentParentDir = _getSectionFolderDir(existing) || currentParentDir + '/' + folderName;
+        } else {
+          var newSec = _createIndexlessSectionSilent(folderName, currentParentDir);
+          currentParentArr.push(newSec);
+          resolvedSections[builtKey] = { section: newSec, isNew: true };
+          createdSections[builtKey] = newSec;
+          currentParentArr = newSec.children;
+          currentParentDir = _getSectionFolderDir(newSec) || currentParentDir + '/' + folderName;
+        }
+      }
+    }
+
+    var insertIdx = focalLoc.index + 1;
+    for (var oi = 0; oi < others.length; oi++) {
+      var otherItem = others[oi];
+      var otherChain = null;
+      for (var ci2 = 0; ci2 < chains.length; ci2++) {
+        if (chains[ci2].item === otherItem) { otherChain = chains[ci2]; break; }
+      }
+      if (!otherChain || otherChain.parentChain.length === 0) {
+        focalLoc.parent.splice(insertIdx, 0, otherItem);
+        insertIdx++;
+      } else {
+        var targetKey = '';
+        for (var pi2 = 0; pi2 < otherChain.parentChain.length; pi2++) {
+          var sec2 = otherChain.parentChain[pi2];
+          var secDir2 = _getSectionFolderDir(sec2);
+          var secName2 = secDir2 ? secDir2.split('/').pop() : '';
+          if (!secName2 && sec2.title) {
+            secName2 = sec2.title.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+          }
+          targetKey += (targetKey ? '/' : '') + secName2;
+        }
+        var targetResolved = resolvedSections[targetKey];
+        if (targetResolved) {
+          targetResolved.section.children.push(otherItem);
+        } else {
+          focalLoc.parent.splice(insertIdx, 0, otherItem);
+          insertIdx++;
+        }
+      }
+    }
+
+    _clearAllNavSelected();
+    for (var sk in createdSections) {
+      if (createdSections.hasOwnProperty(sk)) {
+        var createdSec = createdSections[sk];
+        createdSec._selected = true;
+        createdSec._groupMode = 'section';
+      }
+    }
+    for (var ri = 0; ri < chains.length; ri++) {
+      var rEntry = chains[ri];
+      if (rEntry.parentChain.length === 0) {
+        rEntry.item._selected = true;
+        rEntry.item._groupMode = rEntry.item._groupMode || 'individual';
+      } else {
+        var rKey = '';
+        for (var rp = 0; rp < rEntry.parentChain.length; rp++) {
+          var rs = rEntry.parentChain[rp];
+          var rsDir = _getSectionFolderDir(rs);
+          var rsName = rsDir ? rsDir.split('/').pop() : '';
+          if (!rsName && rs.title) {
+            rsName = rs.title.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+          }
+          rKey += (rKey ? '/' : '') + rsName;
+        }
+        if (createdSections[rKey]) continue;
+        var topKey = '';
+        var topSec2 = rEntry.parentChain[0];
+        var topDir2 = _getSectionFolderDir(topSec2);
+        topKey = topDir2 ? topDir2.split('/').pop() : '';
+        if (!topKey && topSec2.title) {
+          topKey = topSec2.title.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        }
+        if (createdSections[topKey]) continue;
+        rEntry.item._selected = true;
+        rEntry.item._groupMode = 'individual';
+      }
+    }
+
+    var newParent = _findParentSection(focal._uid);
+    if (newParent !== oldParent) {
+      var sec3 = newParent;
+      while (sec3) {
+        sec3._expanded = true;
+        sec3 = sec3._uid ? _findParentSection(sec3._uid) : null;
+      }
+      if (oldParent) oldParent._expanded = false;
+    }
+  }
+
+  function _doGroupArrowMove(direction, shiftKey) {
+    var focal = _promoteGroupFocal();
+    if (!focal) return;
+
+    var isLeft = direction.indexOf('left') !== -1;
+    var isRight = direction.indexOf('right') !== -1;
+    var isUp = direction.indexOf('up') !== -1;
+    var isDown = direction.indexOf('down') !== -1;
+
+    if (isRight && shiftKey) {
+      var allGroupItems = _collectGroupEffectiveItems();
+      if (allGroupItems.length === 0) allGroupItems = [focal];
+      _promptNewFolder(focal, allGroupItems);
+      return;
+    }
+
+    var effectiveItems = _collectGroupEffectiveItems();
+    if (effectiveItems.length === 0) return;
+
+    if (isLeft || isRight) {
+      _doGroupLateralMove(direction, focal, effectiveItems);
+    } else {
+      var others = [];
+      for (var i = 0; i < effectiveItems.length; i++) {
+        if (effectiveItems[i] !== focal) others.push(effectiveItems[i]);
+      }
+
+      for (var k = others.length - 1; k >= 0; k--) {
+        var eLoc = _findNavItemInTree(others[k]._uid);
+        if (eLoc) eLoc.parent.splice(eLoc.index, 1);
+      }
+
+      var oldParent = _findParentSection(focal._uid);
+
+      if (isUp) {
+        _moveNavItemUp(focal, shiftKey);
+      } else if (isDown) {
+        _moveNavItemDown(focal, shiftKey);
+      }
+
+      var focalLoc = _findNavItemInTree(focal._uid);
+      if (focalLoc) {
+        var insertIdx = focalLoc.index + 1;
+        for (var m = 0; m < others.length; m++) {
+          focalLoc.parent.splice(insertIdx, 0, others[m]);
+          insertIdx++;
+        }
+      }
+
+      var newParent = _findParentSection(focal._uid);
+      if (newParent !== oldParent) {
+        var sec = newParent;
+        while (sec) {
+          sec._expanded = true;
+          sec = sec._uid ? _findParentSection(sec._uid) : null;
+        }
+        if (oldParent) oldParent._expanded = false;
+      }
+    }
+
+    _setNavItemFocused(focal);
+
+    if (!_navBadges.some(function (b) { return b.text === 'Reorder files'; })) {
+      _addNavBadge({
+        className: 'live-wysiwyg-nav-normalize-badge',
+        text: 'Reorder files'
+      });
+    }
+    _commitNavSnapshot();
+  }
+
   function _handleArrowClick(item, itemType, direction, shiftKey) {
+    if (_hasAnyNavSelected()) {
+      if (!_navEditMode) _enterNavEditMode();
+      _doGroupArrowMove(direction, shiftKey);
+      return;
+    }
+
     var isLeft = direction.indexOf('left') !== -1;
     var isRight = direction.indexOf('right') !== -1;
     var isUp = direction.indexOf('up') !== -1;
@@ -10377,6 +10936,8 @@
 
     function _doArrowMove() {
     _navKeyboardActiveItem = item;
+
+    var oldParent = _findParentSection(item._uid);
 
     if (isUp) {
       if (isSimpleVertical) {
@@ -10394,6 +10955,17 @@
       _moveNavItemLeft(item);
     } else if (isRight) {
       _moveNavItemRight(item, shiftKey);
+      if (shiftKey) return;
+    }
+
+    var newParent = _findParentSection(item._uid);
+    if (newParent !== oldParent) {
+      var sec = newParent;
+      while (sec) {
+        sec._expanded = true;
+        sec = sec._uid ? _findParentSection(sec._uid) : null;
+      }
+      if (oldParent) oldParent._expanded = false;
     }
 
     var moveDir = isUp ? 'up' : isDown ? 'down' : isLeft ? 'up' : 'down';
@@ -10418,6 +10990,8 @@
       }
     }
 
+    _setNavItemFocused(item);
+
     if (!_navBadges.some(function (b) { return b.text === 'Reorder files'; })) {
       _addNavBadge({
         className: 'live-wysiwyg-nav-normalize-badge',
@@ -10425,8 +10999,6 @@
       });
     }
     _commitNavSnapshot();
-    var focusLi = _findNavLi(item);
-    if (focusLi) _setNavFocus(focusLi);
     }
 
     if (!_navEditMode) _enterNavEditMode();
@@ -10850,7 +11422,7 @@
     return { markDirty: function () { dirty = true; } };
   }
 
-  function _promptNewFolder(item) {
+  function _promptNewFolder(item, extraItems) {
     var isAsset = item && item.type === 'asset';
     var dialogOverlay = document.createElement('div');
     dialogOverlay.className = 'live-wysiwyg-nav-dialog';
@@ -10947,17 +11519,25 @@
       var parentDir = item && item.src_path ? _getDir(item.src_path) : '';
       var indexPath = (parentDir ? parentDir + '/' : '') + folderName + '/index.md';
 
+      var allItems = [item];
+      if (extraItems && extraItems.length) {
+        for (var xi = 0; xi < extraItems.length; xi++) {
+          if (extraItems[xi] !== item) allItems.push(extraItems[xi]);
+        }
+      }
+
       var syntheticSection = {
         type: 'section',
         title: folderTitle,
         src_path: indexPath,
-        children: [item],
+        children: allItems,
         _new: true,
         _uid: _generateUid()
       };
       if (!skipIndex) {
         syntheticSection.index_meta = { weight: _getItemWeight(item) || 100, headless: false, retitled: true, empty: true };
       }
+      syntheticSection._expanded = true;
 
       if (!skipIndex && _batchClaimedPaths) _batchClaimedPaths.add(indexPath);
       _navBatchQueue.push({
@@ -10970,28 +11550,30 @@
       });
       var navItems = typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : [];
       var itemSrcPath = _getItemSrcPath(item);
-      function _removeFromNavArr(arr) {
-        for (var ri = arr.length - 1; ri >= 0; ri--) {
-          if (arr[ri] === item || (_getItemSrcPath(arr[ri]) === itemSrcPath && arr[ri].type === item.type)) {
-            arr.splice(ri, 1, syntheticSection);
-            return true;
-          }
-          if (arr[ri].type === 'section' && arr[ri].children) {
-            for (var rj = arr[ri].children.length - 1; rj >= 0; rj--) {
-              if (arr[ri].children[rj] === item || (_getItemSrcPath(arr[ri].children[rj]) === itemSrcPath && arr[ri].children[rj].type === item.type)) {
-                arr[ri].children.splice(rj, 1, syntheticSection);
-                return true;
-              }
-            }
-            if (_removeFromNavArr(arr[ri].children)) return true;
-          }
-        }
-        return false;
+
+      for (var ei = allItems.length - 1; ei >= 0; ei--) {
+        if (allItems[ei] === item) continue;
+        var eLoc = _findNavItemInTree(allItems[ei]._uid);
+        if (eLoc) eLoc.parent.splice(eLoc.index, 1);
       }
-      _removeFromNavArr(navItems);
+
+      var itemLoc = _findNavItemInTree(item._uid);
+      if (itemLoc) {
+        itemLoc.parent.splice(itemLoc.index, 1, syntheticSection);
+      } else {
+        navItems.push(syntheticSection);
+      }
 
       _setItemWeight(item, 100);
       _syncCurrentPageWeight(itemSrcPath, 100);
+      _setNavItemFocused(item);
+
+      if (!_navBadges.some(function (b) { return b.text === 'Review changes'; })) {
+        _addNavBadge({
+          className: 'live-wysiwyg-nav-normalize-badge',
+          text: 'Review changes'
+        });
+      }
       _commitNavSnapshot();
     });
   }
@@ -11219,6 +11801,7 @@
     _navTopWarnings = [];
     _navTopInfo = [];
     _clearNavFocus();
+    _clearNavGroup();
 
     if (restoreCursor && _navSnapshots.length > 0) {
       var initial = _navSnapshots[0];
@@ -11587,7 +12170,17 @@
     _navEditActionsEl = null;
     if (_navSidebarEl) {
       _buildNavMenu(_navSidebarEl);
-      if (_navScrollWrap) _navScrollWrap.scrollTop = scrollTop;
+      var focusedLi = _navSidebarEl.querySelector('.live-wysiwyg-nav-item--focused');
+      if (focusedLi && _navScrollWrap) {
+        requestAnimationFrame(function () {
+          var wrapRect = _navScrollWrap.getBoundingClientRect();
+          var liRect = focusedLi.getBoundingClientRect();
+          var offsetInWrap = liRect.top - wrapRect.top + _navScrollWrap.scrollTop;
+          _navScrollWrap.scrollTop = offsetInWrap - (wrapRect.height / 2) + (liRect.height / 2);
+        });
+      } else if (_navScrollWrap) {
+        _navScrollWrap.scrollTop = scrollTop;
+      }
       if (_navSnapshots.length >= 2) {
         _addNavEditActions(_navSidebarEl);
         _updateUndoRedoBtns();
@@ -11807,13 +12400,50 @@
     return null;
   }
 
-  function _countUniqueAffectedDocs(rawOps) {
-    var paths = {};
-    rawOps.forEach(function (op) {
-      var p = op.src_path || (op.item && _getItemSrcPath(op.item)) || op.path || op.oldPath;
-      if (p) paths[p] = true;
-    });
-    return Object.keys(paths).length;
+  function _countAffectedDocsFromSnapshots() {
+    if (_navSnapshots.length < 2 || _navSnapshotIndex < 1) return 0;
+    var origFlat = _flattenNavTree(_navSnapshots[0].navData, null, '');
+    var currFlat = _flattenNavTree(_navSnapshots[_navSnapshotIndex].navData, null, '');
+    var count = 0;
+    var uid;
+    var _dirCache = {};
+    function _rDir(suid) {
+      if (_dirCache.hasOwnProperty(suid)) return _dirCache[suid];
+      var cE = currFlat[suid];
+      if (!cE || !cE.folderDir) { _dirCache[suid] = null; return null; }
+      var base = cE.folderDir.split('/').pop();
+      var pDir = '';
+      if (cE.parentUid && currFlat[cE.parentUid] && currFlat[cE.parentUid].folderDir) {
+        pDir = _rDir(cE.parentUid) || '';
+      }
+      var d = pDir ? pDir + '/' + base : base;
+      _dirCache[suid] = d;
+      return d;
+    }
+    for (uid in origFlat) {
+      if (!origFlat.hasOwnProperty(uid)) continue;
+      var oE = origFlat[uid];
+      if (oE.folderDir) continue;
+      if (!oE.srcPath) continue;
+      if (!currFlat[uid]) { count++; continue; }
+      var desiredPath = _computeDesiredItemPath(uid, currFlat, _rDir);
+      if (desiredPath !== oE.srcPath) { count++; continue; }
+      if (oE.itemType !== 'asset') {
+        var cFm = currFlat[uid].item._fm || {};
+        var oFm = oE.item._fm || {};
+        var fmChanged = false;
+        for (var k in cFm) { if (cFm.hasOwnProperty(k) && cFm[k] !== oFm[k]) { fmChanged = true; break; } }
+        if (!fmChanged) { for (var k2 in oFm) { if (oFm.hasOwnProperty(k2) && !(k2 in cFm)) { fmChanged = true; break; } } }
+        if (fmChanged) count++;
+      }
+    }
+    for (uid in currFlat) {
+      if (!currFlat.hasOwnProperty(uid)) continue;
+      if (origFlat[uid]) continue;
+      if (currFlat[uid].folderDir) continue;
+      if (currFlat[uid].srcPath) count++;
+    }
+    return count;
   }
 
   // ======================================================================
@@ -11856,18 +12486,28 @@
   }
 
   function _proceedWithNavSave(runDeadLinkScanFolder) {
-    var count = 0;
-    if (_navSnapshots.length >= 2 && _navSnapshotIndex >= 0) {
-      var desState = _computeSavePlan(_navSnapshots[0], _navSnapshots[_navSnapshotIndex]);
-      var planPreview = _planDiskOperations(desState);
-      count = planPreview.batch1.length + planPreview.batch2.length;
+    var count = _countAffectedDocsFromSnapshots();
+    var badgeEls = [];
+    if (_navBadges.length) {
+      var badgeWrap = document.createElement('div');
+      badgeWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin:8px 0;';
+      for (var bi = 0; bi < _navBadges.length; bi++) {
+        var bd = _navBadges[bi];
+        var badge = document.createElement('span');
+        badge.className = bd.className;
+        badge.textContent = bd.text;
+        if (bd.style) badge.style.cssText = bd.style;
+        badgeWrap.appendChild(badge);
+      }
+      badgeEls.push(badgeWrap);
     }
     _showNavDialog(
       'This will modify ' + count + ' document' + (count !== 1 ? 's' : '') + '. Continue?',
       [
         { text: 'Cancel', value: 'cancel' },
         { text: 'Save', value: 'save', className: 'live-wysiwyg-nav-dialog-primary' }
-      ]
+      ],
+      badgeEls
     ).then(function (result) {
       if (result === 'save') {
         _navPostSaveDeadLinkFolder = runDeadLinkScanFolder;
@@ -11899,11 +12539,22 @@
   // NAV MENU - Diff-based save plan
   // ======================================================================
 
+  function _computeDesiredItemPath(uid, currFlat, resolveDesiredDir) {
+    var entry = currFlat[uid];
+    if (!entry || !entry.srcPath) return null;
+    var fileName = entry.srcPath.split('/').pop();
+    var parentDir = '';
+    if (entry.parentUid && currFlat[entry.parentUid] && currFlat[entry.parentUid].folderDir) {
+      parentDir = resolveDesiredDir(entry.parentUid) || '';
+    }
+    return parentDir ? parentDir + '/' + fileName : fileName;
+  }
+
   function _computeSavePlan(originalSnap, currentSnap) {
     var origFlat = _flattenNavTree(originalSnap.navData, null, '');
     var currFlat = _flattenNavTree(currentSnap.navData, null, '');
 
-    var pages = [];
+    var items = [];
     var sections = [];
     var uid;
 
@@ -11936,36 +12587,48 @@
         continue;
       }
 
-      if (!origEntry.srcPath) {
-        continue;
-      }
+      if (!origEntry.srcPath) continue;
 
-      if (origEntry.itemType === 'asset') continue;
+      var isAsset = origEntry.itemType === 'asset';
 
       if (!currFlat[uid]) {
-        pages.push({
+        items.push({
           uid: uid, diskPath: origEntry.srcPath, desiredPath: null,
-          desiredFm: null, origFm: origEntry.item._fm || {},
+          itemType: isAsset ? 'asset' : 'page',
+          desiredFm: null, origFm: isAsset ? null : (origEntry.item._fm || {}),
           setContent: null, createContent: null,
           isNew: false, isDeleted: true,
-          isIndex: origEntry.srcPath.endsWith('index.md'),
+          isIndex: !isAsset && origEntry.srcPath.endsWith('index.md'),
           newFrontmatter: false
         });
       } else {
         var currE = currFlat[uid];
-        var cFm = currE.item._fm || {};
-        var oFm = origEntry.item._fm || {};
-        var isNewFm = oFm.weight === undefined && oFm.headless === undefined &&
-          oFm.retitled === undefined && oFm.empty === undefined;
-        pages.push({
-          uid: uid, diskPath: origEntry.srcPath, desiredPath: currE.srcPath,
-          desiredFm: cFm, origFm: oFm,
-          setContent: typeof currE.item.setContent === 'string' ? currE.item.setContent : null,
-          createContent: null,
-          isNew: false, isDeleted: false,
-          isIndex: currE.srcPath.endsWith('index.md'),
-          newFrontmatter: isNewFm
-        });
+        var desiredPath = _computeDesiredItemPath(uid, currFlat, _resolveDesiredDir);
+        if (isAsset) {
+          items.push({
+            uid: uid, diskPath: origEntry.srcPath, desiredPath: desiredPath,
+            itemType: 'asset',
+            desiredFm: null, origFm: null,
+            setContent: null, createContent: null,
+            isNew: false, isDeleted: false,
+            isIndex: false, newFrontmatter: false
+          });
+        } else {
+          var cFm = currE.item._fm || {};
+          var oFm = origEntry.item._fm || {};
+          var isNewFm = oFm.weight === undefined && oFm.headless === undefined &&
+            oFm.retitled === undefined && oFm.empty === undefined;
+          items.push({
+            uid: uid, diskPath: origEntry.srcPath, desiredPath: desiredPath,
+            itemType: 'page',
+            desiredFm: cFm, origFm: oFm,
+            setContent: typeof currE.item.setContent === 'string' ? currE.item.setContent : null,
+            createContent: null,
+            isNew: false, isDeleted: false,
+            isIndex: desiredPath ? desiredPath.endsWith('index.md') : false,
+            newFrontmatter: isNewFm
+          });
+        }
       }
     }
 
@@ -11979,7 +12642,18 @@
         continue;
       }
       if (!newE.srcPath) continue;
-      if (newE.itemType === 'asset') continue;
+
+      if (newE.itemType === 'asset') {
+        items.push({
+          uid: uid, diskPath: null, desiredPath: newE.srcPath,
+          itemType: 'asset',
+          desiredFm: null, origFm: null,
+          setContent: null, createContent: null,
+          isNew: true, isDeleted: false,
+          isIndex: false, newFrontmatter: false
+        });
+        continue;
+      }
 
       var createContent = null;
       for (var qi = 0; qi < currentSnap.batchQueue.length; qi++) {
@@ -11996,8 +12670,9 @@
         createContent = '';
       }
 
-      pages.push({
+      items.push({
         uid: uid, diskPath: null, desiredPath: newE.srcPath,
+        itemType: 'page',
         desiredFm: newE.item._fm || {}, origFm: {},
         setContent: typeof newE.item.setContent === 'string' ? newE.item.setContent : null,
         createContent: createContent,
@@ -12043,69 +12718,13 @@
       }
     }
 
-    var assetMoves = [];
-    var assetDeletes = [];
-    var origAssetUids = [];
-    var currAssetUids = [];
-    for (uid in origFlat) {
-      if (!origFlat.hasOwnProperty(uid)) continue;
-      if (origFlat[uid].itemType === 'asset') origAssetUids.push(uid + '=' + origFlat[uid].srcPath);
-    }
-    for (uid in currFlat) {
-      if (!currFlat.hasOwnProperty(uid)) continue;
-      if (currFlat[uid].itemType === 'asset') currAssetUids.push(uid + '=' + currFlat[uid].srcPath);
-    }
-    var _sectionDirRenameMap = {};
-    for (var _sri = 0; _sri < sections.length; _sri++) {
-      if (sections[_sri].diskDir && sections[_sri].desiredDir && sections[_sri].diskDir !== sections[_sri].desiredDir) {
-        _sectionDirRenameMap[sections[_sri].diskDir] = sections[_sri].desiredDir;
-      }
-    }
-
-    for (uid in origFlat) {
-      if (!origFlat.hasOwnProperty(uid)) continue;
-      var origAsset = origFlat[uid];
-      if (origAsset.itemType !== 'asset' || !origAsset.srcPath) continue;
-      if (!currFlat[uid]) {
-        assetDeletes.push({ path: origAsset.srcPath });
-        continue;
-      }
-      var currAsset = currFlat[uid];
-      var effectiveNewPath = currAsset.srcPath;
-      var assetDir = _getDir(origAsset.srcPath);
-      if (_sectionDirRenameMap[assetDir]) {
-        var assetFileName = origAsset.srcPath.split('/').pop();
-        effectiveNewPath = _sectionDirRenameMap[assetDir] + '/' + assetFileName;
-      }
-      if (effectiveNewPath && effectiveNewPath !== origAsset.srcPath) {
-        assetMoves.push({ oldPath: origAsset.srcPath, newPath: effectiveNewPath });
-      }
-    }
-
-    var currentAssetPaths = [];
-    for (uid in currFlat) {
-      if (!currFlat.hasOwnProperty(uid)) continue;
-      if (currFlat[uid].itemType === 'asset' && currFlat[uid].srcPath) {
-        var _capDir = _getDir(currFlat[uid].srcPath);
-        if (_sectionDirRenameMap[_capDir]) {
-          currentAssetPaths.push(_sectionDirRenameMap[_capDir] + '/' + currFlat[uid].srcPath.split('/').pop());
-        } else {
-          currentAssetPaths.push(currFlat[uid].srcPath);
-        }
-      }
-    }
-
-    var result = {
-      pages: pages,
+    return {
+      items: items,
       sections: sections,
-      assetMoves: assetMoves,
-      assetDeletes: assetDeletes,
-      currentAssetPaths: currentAssetPaths,
       convertOps: convertOps,
       createFolderOps: createFolderOps,
       mkdocsYmlOps: mkdocsYmlOps
     };
-    return result;
   }
 
   // ======================================================================
@@ -12119,14 +12738,14 @@
     var batch2CreateFiles = [];
     var batch2ContentMigration = [];
     var i, p;
+    var items = desiredState.items || [];
 
     // --- Folder rename detection from page + asset moves ---
     var dirMoves = {};
     var filesByDiskDir = {};
-    var assetMoves = desiredState.assetMoves || [];
 
-    for (i = 0; i < desiredState.pages.length; i++) {
-      p = desiredState.pages[i];
+    for (i = 0; i < items.length; i++) {
+      p = items[i];
       if (p.isNew || p.isDeleted || !p.diskPath || !p.desiredPath) continue;
       var diskDir = _getDir(p.diskPath);
       if (!filesByDiskDir[diskDir]) filesByDiskDir[diskDir] = [];
@@ -12141,20 +12760,6 @@
         }
       }
     }
-    for (i = 0; i < assetMoves.length; i++) {
-      var amEntry = { uid: '__asset_' + i, diskPath: assetMoves[i].oldPath, desiredPath: assetMoves[i].newPath, isDeleted: false };
-      var amDiskDir = _getDir(amEntry.diskPath);
-      if (!filesByDiskDir[amDiskDir]) filesByDiskDir[amDiskDir] = [];
-      filesByDiskDir[amDiskDir].push(amEntry);
-      if (amEntry.diskPath !== amEntry.desiredPath) {
-        var amDestDir = _getDir(amEntry.desiredPath);
-        if (amDiskDir !== amDestDir) {
-          if (!dirMoves[amDiskDir]) dirMoves[amDiskDir] = {};
-          if (!dirMoves[amDiskDir][amDestDir]) dirMoves[amDiskDir][amDestDir] = [];
-          dirMoves[amDiskDir][amDestDir].push(amEntry);
-        }
-      }
-    }
 
     var folderRenames = [];
     var coveredByFolderRename = {};
@@ -12165,21 +12770,21 @@
       if (destDirs.length !== 1) continue;
 
       var onlyDestDir = destDirs[0];
-      var movedPages = dirMoves[srcDir][onlyDestDir];
-      var allPagesInDir = filesByDiskDir[srcDir] || [];
+      var movedFiles = dirMoves[srcDir][onlyDestDir];
+      var allFilesInDir = filesByDiskDir[srcDir] || [];
 
       var allAccountedFor = true;
-      for (var ai = 0; ai < allPagesInDir.length; ai++) {
-        var ap = allPagesInDir[ai];
+      for (var ai = 0; ai < allFilesInDir.length; ai++) {
+        var ap = allFilesInDir[ai];
         if (ap.isDeleted) continue;
         if (ap.diskPath === ap.desiredPath) { allAccountedFor = false; break; }
         if (_getDir(ap.desiredPath) !== onlyDestDir) { allAccountedFor = false; break; }
       }
-      if (!allAccountedFor || movedPages.length === 0) continue;
+      if (!allAccountedFor || movedFiles.length === 0) continue;
 
       var relativePathsMatch = true;
-      for (var ri = 0; ri < movedPages.length; ri++) {
-        var rp = movedPages[ri];
+      for (var ri = 0; ri < movedFiles.length; ri++) {
+        var rp = movedFiles[ri];
         if (rp.diskPath.substring(srcDir.length) !== rp.desiredPath.substring(onlyDestDir.length)) {
           relativePathsMatch = false;
           break;
@@ -12188,8 +12793,8 @@
       if (!relativePathsMatch) continue;
 
       folderRenames.push({ oldFolder: srcDir, newFolder: onlyDestDir });
-      for (var ci = 0; ci < movedPages.length; ci++) {
-        coveredByFolderRename[movedPages[ci].uid] = true;
+      for (var ci = 0; ci < movedFiles.length; ci++) {
+        coveredByFolderRename[movedFiles[ci].uid] = true;
       }
     }
 
@@ -12201,8 +12806,8 @@
     for (var fri = 0; fri < folderRenames.length; fri++) {
       var frPfx = folderRenames[fri].oldFolder + '/';
       var frNewPfx = folderRenames[fri].newFolder + '/';
-      for (var pi = 0; pi < desiredState.pages.length; pi++) {
-        var fp = desiredState.pages[pi];
+      for (var pi = 0; pi < items.length; pi++) {
+        var fp = items[pi];
         if (!fp.diskPath || fp.isNew) continue;
         var resolvedPath = precomputedRenames[fp.diskPath] || fp.diskPath;
         if (resolvedPath.indexOf(frPfx) === 0) {
@@ -12213,37 +12818,20 @@
     }
 
     // --- Folder deletes ---
-    var currentAssetPaths = desiredState.currentAssetPaths || [];
     for (i = 0; i < desiredState.sections.length; i++) {
       var sec = desiredState.sections[i];
       if (!sec.isDeleted || !sec.diskDir) continue;
       var secPrefix = sec.diskDir + '/';
       var hasLivingChildren = false;
-      var livingChildReason = '';
-      for (var mi = 0; mi < desiredState.pages.length; mi++) {
-        var mp = desiredState.pages[mi];
-        if (mp.diskPath && !mp.isNew && mp.diskPath.indexOf(secPrefix) === 0 && !mp.isDeleted) {
+      for (var mi = 0; mi < items.length; mi++) {
+        var mp = items[mi];
+        if (!mp.isDeleted && mp.diskPath && !mp.isNew && mp.diskPath.indexOf(secPrefix) === 0) {
           hasLivingChildren = true;
-          livingChildReason = 'page ' + mp.diskPath + ' -> ' + mp.desiredPath;
           break;
         }
-      }
-      if (!hasLivingChildren) {
-        for (var ai = 0; ai < assetMoves.length; ai++) {
-          if (assetMoves[ai].oldPath.indexOf(secPrefix) === 0) {
-            hasLivingChildren = true;
-            livingChildReason = 'assetMove ' + assetMoves[ai].oldPath + ' -> ' + assetMoves[ai].newPath;
-            break;
-          }
-        }
-      }
-      if (!hasLivingChildren) {
-        for (var cai = 0; cai < currentAssetPaths.length; cai++) {
-          if (currentAssetPaths[cai].indexOf(secPrefix) === 0) {
-            hasLivingChildren = true;
-            livingChildReason = 'asset still in dir: ' + currentAssetPaths[cai];
-            break;
-          }
+        if (!mp.isDeleted && mp.desiredPath && mp.desiredPath.indexOf(secPrefix) === 0) {
+          hasLivingChildren = true;
+          break;
         }
       }
       if (!hasLivingChildren) {
@@ -12252,36 +12840,30 @@
     }
 
     // --- Batch 1 (continued): Asset (binary) file moves ---
-    for (i = 0; i < assetMoves.length; i++) {
-      var am = assetMoves[i];
-      var assetCoveredByFolder = false;
-      for (var fri2 = 0; fri2 < folderRenames.length; fri2++) {
-        var frOld = folderRenames[fri2].oldFolder + '/';
-        var frNew = folderRenames[fri2].newFolder + '/';
-        if (am.oldPath.indexOf(frOld) === 0) {
-          var expectedNew = frNew + am.oldPath.substring(frOld.length);
-          if (expectedNew === am.newPath) { assetCoveredByFolder = true; break; }
-        }
-      }
-      if (!assetCoveredByFolder) {
-        batch1.push({ type: 'move-file', oldPath: am.oldPath, newPath: am.newPath });
-      }
+    for (i = 0; i < items.length; i++) {
+      p = items[i];
+      if (p.itemType !== 'asset') continue;
+      if (p.isNew || p.isDeleted || !p.diskPath || !p.desiredPath) continue;
+      if (p.diskPath === p.desiredPath) continue;
+      if (coveredByFolderRename[p.uid]) continue;
+      batch1.push({ type: 'move-file', oldPath: p.diskPath, newPath: p.desiredPath });
     }
 
-    // --- Batch 2: File operations ---
-    for (i = 0; i < desiredState.pages.length; i++) {
-      p = desiredState.pages[i];
-      if (p.isDeleted && p.diskPath) {
+    // --- Batch 2: Deletes ---
+    for (i = 0; i < items.length; i++) {
+      p = items[i];
+      if (!p.isDeleted || !p.diskPath) continue;
+      if (p.itemType === 'asset') {
+        batch2DeleteFiles.push({ type: 'delete-file', path: p.diskPath });
+      } else {
         batch2DeleteFiles.push({ type: 'delete-page', path: p.diskPath, item: { src_path: p.diskPath } });
       }
     }
-    var assetDeletes = desiredState.assetDeletes || [];
-    for (i = 0; i < assetDeletes.length; i++) {
-      batch2DeleteFiles.push({ type: 'delete-file', path: assetDeletes[i].path });
-    }
 
-    for (i = 0; i < desiredState.pages.length; i++) {
-      p = desiredState.pages[i];
+    // --- Batch 2: Page moves ---
+    for (i = 0; i < items.length; i++) {
+      p = items[i];
+      if (p.itemType !== 'page') continue;
       if (p.isNew || p.isDeleted || !p.diskPath || !p.desiredPath) continue;
       if (p.diskPath === p.desiredPath) continue;
       if (coveredByFolderRename[p.uid]) continue;
@@ -12291,8 +12873,10 @@
     var convertOps = desiredState.convertOps || [];
     var createFolderOps = desiredState.createFolderOps || [];
 
-    for (i = 0; i < desiredState.pages.length; i++) {
-      p = desiredState.pages[i];
+    // --- Batch 2: Creates (pages only) ---
+    for (i = 0; i < items.length; i++) {
+      p = items[i];
+      if (p.itemType !== 'page') continue;
       if (!p.isNew || !p.desiredPath || p.createContent === null) continue;
       batch2CreateFiles.push({
         type: 'create-page', path: p.desiredPath, content: p.createContent,
@@ -12300,9 +12884,10 @@
       });
     }
 
-    // --- Batch 2: Content migration (unconditional frontmatter write) ---
-    for (i = 0; i < desiredState.pages.length; i++) {
-      p = desiredState.pages[i];
+    // --- Batch 2: Content migration (pages only) ---
+    for (i = 0; i < items.length; i++) {
+      p = items[i];
+      if (p.itemType !== 'page') continue;
       if (p.isDeleted || !p.desiredPath) continue;
 
       var dFm = p.desiredFm || {};
@@ -12320,22 +12905,20 @@
       }
     }
 
+    // --- Link rewrite aggregation ---
     var allRenames = {};
     for (var prk in precomputedRenames) {
       if (precomputedRenames.hasOwnProperty(prk)) allRenames[prk] = precomputedRenames[prk];
     }
-    for (i = 0; i < desiredState.pages.length; i++) {
-      p = desiredState.pages[i];
+    for (i = 0; i < items.length; i++) {
+      p = items[i];
       if (p.diskPath && p.desiredPath && p.diskPath !== p.desiredPath && !p.isNew) {
         allRenames[p.diskPath] = p.desiredPath;
       }
     }
-    for (i = 0; i < assetMoves.length; i++) {
-      allRenames[assetMoves[i].oldPath] = assetMoves[i].newPath;
-    }
     var deletedPaths = {};
-    for (i = 0; i < desiredState.pages.length; i++) {
-      p = desiredState.pages[i];
+    for (i = 0; i < items.length; i++) {
+      p = items[i];
       if (p.isDeleted && p.diskPath) deletedPaths[p.diskPath] = true;
     }
     if (Object.keys(allRenames).length || Object.keys(deletedPaths).length) {
@@ -17575,6 +18158,8 @@
       '.md-nav__item.live-wysiwyg-nav-hover>.live-wysiwyg-nav-controls-wrapper{display:flex;}' +
       // Focused item: always show its controls (direct child only)
       '.md-nav__item.live-wysiwyg-nav-item--focused>.live-wysiwyg-nav-controls-wrapper{display:flex!important;}' +
+      // Selected items in group mode: show controls wrapper for layout consistency
+      '.live-wysiwyg-nav-group-active .md-nav__item.live-wysiwyg-nav-item--selected>.live-wysiwyg-nav-controls-wrapper{display:flex!important;}' +
 
       // --- Nav edit mode visual states ---
       '.live-wysiwyg-nav-item--renamed,.live-wysiwyg-nav-item--new{background:rgba(92,184,92,.15);}' +
@@ -17587,6 +18172,19 @@
       '}' +
       '.live-wysiwyg-nav-item--focused{' +
         'outline:2.5px solid var(--md-accent-fg-color,#007bff);outline-offset:-2px;border-radius:2px;z-index:1;position:relative;' +
+      '}' +
+      '.live-wysiwyg-nav-item--selected{' +
+        'outline:2px solid var(--md-accent-fg-color,#007bff);outline-offset:-2px;border-radius:2px;position:relative;' +
+      '}' +
+      '.live-wysiwyg-nav-item--selected.live-wysiwyg-nav-item--focused{' +
+        'outline-width:2.5px;z-index:1;' +
+      '}' +
+      '.live-wysiwyg-nav-group-active .live-wysiwyg-nav-item--selected .live-wysiwyg-nav-target-dot,' +
+      '.live-wysiwyg-nav-group-active .live-wysiwyg-nav-item--selected .live-wysiwyg-nav-settings-gear{' +
+        'display:none!important;' +
+      '}' +
+      '.live-wysiwyg-nav-group-active .live-wysiwyg-nav-item--selected:not(.live-wysiwyg-nav-item--focused) .live-wysiwyg-nav-arrow{' +
+        'visibility:hidden;' +
       '}' +
 
       // --- Nav edit save/discard/undo/redo buttons ---
@@ -19276,6 +19874,12 @@
       if (e.key === 'Escape') {
         if (dialogOpen) return;
         if (_navEditMode) {
+          if (_hasAnyNavSelected() || _navKeyboardActiveItem) {
+            e.preventDefault(); e.stopImmediatePropagation();
+            _clearNavGroup();
+            _commitNavSnapshot();
+            return;
+          }
           e.preventDefault(); e.stopImmediatePropagation();
           _confirmNavDiscard();
           return;
@@ -19323,6 +19927,11 @@
             e.preventDefault();
             _handleArrowClick(_navKeyboardActiveItem, _navKeyboardActiveItem.type || 'page', dir, e.shiftKey);
           }
+          return;
+        }
+        if (e.key === 'Enter' && _navKeyboardActiveItem) {
+          e.preventDefault(); e.stopImmediatePropagation();
+          _confirmNavSave();
           return;
         }
         if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {

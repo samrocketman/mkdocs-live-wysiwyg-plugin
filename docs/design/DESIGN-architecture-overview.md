@@ -96,4 +96,5 @@ For more detail see the following design documents.
 - [DESIGN-nav-migration.md](DESIGN-nav-migration.md) -- Migrating from mkdocs.yml nav key to mkdocs-nav-weight frontmatter-based ordering.
 - [DESIGN-nav-weight-normalization.md](DESIGN-nav-weight-normalization.md) -- Nav weight normalization: rules, entry points, and the shared single-level algorithm.
 - [DESIGN-popup-dialog-ux.md](DESIGN-popup-dialog-ux.md) -- Unified keyboard interaction model for all popups, dropdowns, and dialogs.
+- [DESIGN-file-management.md](DESIGN-file-management.md) -- File management: single-item and multi-select group movement, unified save pipeline.
 - [DESIGN-snapshot-nav-architecture.md](DESIGN-snapshot-nav-architecture.md) -- Centralized snapshot-driven architecture for the focus mode navigation menu.

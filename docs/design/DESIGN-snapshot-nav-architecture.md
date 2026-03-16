@@ -81,7 +81,8 @@ Each snapshot captures the full editor state:
 1. Apply `_navSnapshots[_navSnapshotIndex]` data to globals via `_applySnapshotToGlobals`
 2. Reset `_navEditActionsEl`
 3. `_buildNavMenu(_navSidebarEl)` — full DOM rebuild from navData
-4. If `_navSnapshots.length >= 2`: show Save/Discard/Undo/Redo bar, update button states
+4. Scroll-to-focused: if a `<li>` with `.live-wysiwyg-nav-item--focused` exists, scroll it to center in a `requestAnimationFrame`; otherwise restore previous scroll position
+5. If `_navSnapshots.length >= 2`: show Save/Discard/Undo/Redo bar, update button states
 
 **Undo/Redo:**
 - `_navUndo()`: decrement `_navSnapshotIndex` (min 0), call `_renderNavFromSnapshot()`
@@ -103,7 +104,7 @@ Each snapshot captures the full editor state:
 - `_deadLinks` → `{internal: [...], external: [...]}`, each link object copied
 - All other properties → direct assignment (primitives, strings, booleans)
 
-This includes `_indexContent` (string, copied by value) and `setContent` (string, copied by value).
+This includes `_indexContent` (string, copied by value), `setContent` (string, copied by value), and visual state properties `_focused`, `_selected`, `_groupMode` (all primitives, copied by value).
 
 ### Discard / Exit
 
@@ -312,6 +313,9 @@ Both actions create a snapshot, so they can be undone.
 | `_warnings` | `_addCautionPage`, dead link scan | Array of `{reason, renames}` — caution reasons |
 | `_deadLinks` | `_addDeadLinksForPage` | `{internal: [...], external: [...]}` — dead link details |
 | `_deleted` | Delete handlers | Item marked for deletion; excluded from nav render and diff |
+| `_focused` | `_setNavItemFocused` | Renderer applies `.live-wysiwyg-nav-item--focused`; controls are force-shown; `_renderNavFromSnapshot` scrolls the focused item to center |
+| `_selected` | `_toggleNavGroupItem`, `_clearAllNavSelected` | Renderer applies `.live-wysiwyg-nav-item--selected` |
+| `_groupMode` | `_toggleNavGroupItem` | `'section'` or `'individual'` — determines group selection behavior; used alongside `_selected` |
 
 ## Nav Item Movement
 
@@ -322,14 +326,24 @@ All arrow-key and shortcut-driven move operations follow a data-only pipeline:
 1. **Locate item in navData** via `_findNavItemInTree(item._uid)`, which returns `{ parent, index }` — the item's sibling array and position within it.
 2. **Mutate navData** — splice the item out of its current position and into the target position (or into a different parent array for cross-section moves).
 3. **Auto-normalize sibling weights** — if any sibling in the destination level lacks a weight, `_autoNormalizeSiblingWeights(siblings)` assigns sequential weights to all siblings before snapshotting.
-4. **Commit snapshot** via `_commitNavSnapshot()`, which deep-clones the modified navData and triggers `_renderNavFromSnapshot()` to rebuild the DOM.
-5. **Post-move focus** — after the DOM rebuild, `_findNavLi(item)` locates the rendered `<li>` by `data-nav-uid` for visual focus (outline, scroll into view). This is the only DOM lookup in the move flow and it is purely cosmetic — if it fails, the data operation has already succeeded.
+4. **Set `_focused` on moved item** — `_setNavItemFocused(item)` clears `_focused` from all other items and sets it on the moved item.
+5. **Commit snapshot** via `_commitNavSnapshot()`, which deep-clones the modified navData and triggers `_renderNavFromSnapshot()` to rebuild the DOM.
+6. **Renderer handles visual focus** — `_buildNavItems` reads `item._focused` and applies the `--focused` CSS class. `_renderNavFromSnapshot` finds the focused `<li>` after the rebuild and scrolls it to center in a `requestAnimationFrame`.
 
 Move functions (`_moveNavItemUp`, `_moveNavItemDown`, `_moveNavItemLeft`, `_moveNavItemRight`, `_promptNewFolder`) accept only the navData `item` object. They do not accept or use DOM elements.
 
 ### Why Not DOM
 
 Early versions of the move system used `_findNavLi(item)` inside `_handleArrowClick` to find the DOM `<li>` before executing the move, and passed `li` to every move function. This caused silent failures for sections (folders) whose DOM elements could not be found — sections without index pages had no `src_path` to query by, and even sections with index pages sometimes failed DOM lookup via `data-nav-index-path` or `data-nav-src-path`. Since all move logic actually operates on the navData tree (via `_findNavItemInTree`), the DOM lookup was unnecessary and was removed. The `data-nav-uid` attribute was introduced to make post-move focus reliable for all item types.
+
+### Focus and Selection as Snapshot State
+
+Focus (`_focused`) and group selection (`_selected`, `_groupMode`) are properties on navData items, not external state variables or DOM classes. They participate in the snapshot system:
+
+- **Deep clone preserves them** — `_deepCloneNavData` copies all own properties via the generic `copy[k] = item[k]` fallback. No special-case clone logic is needed.
+- **Undo/redo restores them** — reverting to a previous snapshot restores the focus and selection state from that point in time.
+- **The renderer reads them** — `_buildNavItems` applies `--focused` and `--selected` CSS classes based on these properties. `_buildNavMenu` applies `live-wysiwyg-nav-group-active` on the sidebar when any item has `_selected = true`.
+- **Scroll-to-center is part of rendering** — `_renderNavFromSnapshot` finds the `--focused` `<li>` after `_buildNavMenu` completes and scrolls it to center. When no focused item exists, the previous scroll position is preserved.
 
 ## Binary (Asset) File Handling
 

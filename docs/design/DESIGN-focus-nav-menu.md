@@ -34,7 +34,7 @@ Core systems:
 
 9. **Content Dirty Tracking** (`_pristineContent`, `_resetPristineContent`, `_loadContent`): Tracks whether the user has made edits by comparing current content against the baseline. The upstream save/cancel buttons are only shown when actual changes exist, preventing false "unsaved changes" warnings caused by WYSIWYG/markdown rendering differences.
 
-10. **Focused Item Interaction** (`_setNavFocus`, `_clearNavFocus`, `_navFocusedLi`): After a move operation completes (data mutation + snapshot commit + DOM rebuild), `_findNavLi(item)` locates the rendered `<li>` by `data-nav-uid` and applies visual focus — a visible outline and persistent controls. This is the only DOM lookup in the move flow and is purely cosmetic. Hovering a different item temporarily shows that item's controls (suppressing the focused item's). Moving the mouse off the nav menu restores the focused item's controls. This allows rapid repeated arrow clicks for positioning.
+10. **Focused Item Interaction** (`_setNavItemFocused`, `_clearNavItemFocused`, `item._focused`): Focus is a property on navData items (`item._focused = true`), not a separate DOM reference. After a move operation, `_setNavItemFocused(item)` marks the moved item in navData, then `_commitNavSnapshot()` triggers `_renderNavFromSnapshot()`. The renderer (`_buildNavItems`) reads `item._focused` and applies `.live-wysiwyg-nav-item--focused` (visible outline, persistent controls). `_renderNavFromSnapshot` scrolls the focused `<li>` to center in a `requestAnimationFrame`. Hovering a different item temporarily shows that item's controls (suppressing the focused item's). Moving the mouse off the nav menu restores the focused item's controls. This allows rapid repeated arrow clicks for positioning.
 
 ## Navigation Flow
 
@@ -180,7 +180,7 @@ Every operation pushes to undo stack, clears redo stack. Undo pops and computes 
 
 ### Arrow Navigation
 
-All arrow moves operate exclusively on the navData tree. Move functions accept only the navData `item` object — no DOM elements. `_findNavItemInTree(item._uid)` locates the item's position (parent array + index) for splice operations. After the navData mutation and snapshot commit, `_renderNavFromSnapshot()` rebuilds the DOM, and `_findNavLi(item)` (via `data-nav-uid`) sets visual focus on the moved item. The DOM lookup is post-operation and purely cosmetic.
+All arrow moves operate exclusively on the navData tree. Move functions accept only the navData `item` object — no DOM elements. `_findNavItemInTree(item._uid)` locates the item's position (parent array + index) for splice operations. After the navData mutation, `_setNavItemFocused(item)` marks the moved item in navData, then `_commitNavSnapshot()` triggers `_renderNavFromSnapshot()` which rebuilds the DOM with the `--focused` class applied by `_buildNavItems` and scrolls the focused item to center.
 
 - **Up/Down**: Reorder within folder. Sections (folders) are treated as same-level peers — a page moves one position at a time past sections, not over them. The moved page gets a midpoint weight between its new adjacent siblings (which may be section index.md weights via `_getItemWeight`).
 - **Left**: Move to parent folder (no-op and hidden at root)

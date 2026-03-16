@@ -1,0 +1,73 @@
+---
+description: Nav sidebar rendering must go through the nav renderer exclusively; all visual state lives in navData
+alwaysApply: true
+---
+
+# Nav Rendering Authority
+
+`_buildNavMenu` → `_buildNavItems` is the **sole authority** for creating and updating the focus-mode navigation sidebar DOM. Every visual property of a nav item — CSS classes, expanded/collapsed state, selection outlines, controls visibility — must be derived from `liveWysiwygNavData` at render time. No other function may add, remove, or modify DOM elements or attributes inside the nav sidebar to represent persistent state.
+
+## Data Flow
+
+```
+navData mutation → _commitNavSnapshot() → _renderNavFromSnapshot() → _buildNavMenu() → _buildNavItems()
+```
+
+1. **Mutate `liveWysiwygNavData`** — set properties on items (e.g. `item._expanded`, `item._selected`, `item._focused`).
+2. **Call `_commitNavSnapshot()`** — creates an undo point and triggers a full rebuild. Every navData mutation that changes visual state must commit a snapshot. Group selection toggles, focus changes, and expand/collapse all create undo points.
+3. **The renderer reads navData** and produces the DOM. All CSS classes, `aria-expanded`, `md-nav__item--active`, `--selected`, `--focused`, controls visibility, and `live-wysiwyg-nav-group-active` are determined by `_buildNavItems` and `_buildNavMenu` reading item properties.
+4. **`_renderNavFromSnapshot` handles scroll.** After the rebuild, it finds the `--focused` `<li>` in the new DOM and scrolls it to center. If no focused item exists, the previous `scrollTop` is restored.
+
+## What Must Live on `navData` Items
+
+Any state that affects how a nav item is visually rendered:
+
+| Property | Set by | Read by renderer |
+|---|---|---|
+| `_expanded` | Toggle click, arrow move, group select | Controls `aria-expanded` and `md-nav__item--active` |
+| `_selected` | `_toggleNavGroupItem`, `_clearAllNavSelected` | Applies `live-wysiwyg-nav-item--selected` CSS class |
+| `_groupMode` | `_toggleNavGroupItem` | Distinguishes `'section'` vs `'individual'` selection |
+| `_focused` | `_setNavItemFocused` | Applies `live-wysiwyg-nav-item--focused` CSS class; controls arrow rendering |
+| `_renamed` | Rename operations | Applies `live-wysiwyg-nav-item--renamed` |
+| `_new` | Page creation | Applies `live-wysiwyg-nav-item--new` |
+| `_deleted` | Delete operations | Skips rendering entirely |
+| `_warnings` | Caution system | Renders caution icons |
+| `_deadLinks` | Dead link finder | Renders caution icons |
+
+## Snapshot Persistence
+
+`_deepCloneNavData` copies **all** own properties of each item via `for (var k in item)`. Any property set on a navData item (including `_selected`, `_groupMode`, `_focused`) automatically survives snapshot clone, undo, and redo. No special-case clone logic is needed — the generic `copy[k] = item[k]` fallback handles them.
+
+## NavData Mutation Helpers
+
+These helpers mutate navData items only — they never touch the DOM:
+
+- **`_setNavItemFocused(item)`** — walks all navData clearing `_focused`, then sets `item._focused = true`. Only one item may be focused at a time.
+- **`_clearNavItemFocused()`** — walks all navData clearing `_focused`.
+- **`_clearAllNavSelected()`** — walks all navData clearing `_selected` and `_groupMode`.
+- **`_clearNavGroup()`** — calls both `_clearAllNavSelected()` and `_clearNavItemFocused()`.
+- **`_toggleNavGroupItem(item, isSection)`** — sets/clears `_selected`/`_groupMode` on navData items, handles auto-promotion, sets `_focused` on the toggled item, then calls `_commitNavSnapshot()`.
+
+All callers must follow: **mutate navData → `_commitNavSnapshot()`**. No intermediate DOM manipulation.
+
+## Rules
+
+1. **Never use `classList.add/remove` on nav `<li>` elements to represent state.** If a visual class must appear, add a property to the navData item and have `_buildNavItems` apply it. Direct DOM class manipulation for transient hover effects (mouseenter/mouseleave show/hide of controls) is acceptable because hover state is inherently transient and not part of the data model.
+
+2. **Never use `querySelector` + `setAttribute` to change nav DOM attributes.** Do not set `aria-expanded` directly on a `<nav>` element. Set `item._expanded` on the navData item and commit a snapshot.
+
+3. **Group selection state lives on navData items.** `_toggleNavGroupItem` sets `item._selected = true` and `item._groupMode = 'section'|'individual'` on navData items. `_clearAllNavSelected` walks navData clearing these properties. Neither function touches the DOM.
+
+4. **Focus state lives on navData items.** The focused item is identified by `item._focused = true`. `_buildNavItems` applies the `--focused` class. `_renderNavFromSnapshot` scrolls the focused `<li>` to center after the rebuild.
+
+5. **Every visual state change commits a snapshot.** Selection toggles, focus changes, expand/collapse during group mode — all call `_commitNavSnapshot()`. This ensures undo/redo covers all visual state transitions.
+
+6. **Arrow controls render relative to the focused item.** `_buildNavItems` reads `item._focused` to determine which item gets visible arrow controls. The focused item always shows its controls wrapper via the `--focused` CSS selector.
+
+7. **`_renderNavFromSnapshot` replaces navData.** When undo/redo restores a snapshot, `_applySnapshotToGlobals` deep-clones the snapshot's navData into the global. Selection and focus state from that snapshot are restored. Code must not assume navData item references survive a snapshot restore — always re-find items by `_uid` after a snapshot apply.
+
+8. **Global container classes derive from navData.** `live-wysiwyg-nav-group-active` on `_navSidebarEl` is applied by `_buildNavMenu` based on whether any item in navData has `_selected = true`.
+
+9. **Scroll-to-center is part of rendering.** `_renderNavFromSnapshot` finds the `--focused` `<li>` via `querySelector` after `_buildNavMenu` completes and scrolls it to the center of `_navScrollWrap` in a `requestAnimationFrame`. When no focused item exists, the previous scroll position is preserved.
+
+10. **Cmd/Ctrl+Click enters nav edit mode.** If `_navEditMode` is false when the user Cmd/Ctrl+Clicks, the click handler calls `_enterNavEditMode()` before `_toggleNavGroupItem()`. This allows group selection to start without requiring prior arrow-key interaction.

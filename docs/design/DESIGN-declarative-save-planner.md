@@ -33,32 +33,25 @@ Both are flattened via `_flattenNavTree` into UID-keyed maps. Each entry contain
 
 ```
 {
-  pages: [
+  items: [
     {
       uid: <stable UID>,
       diskPath: <current on-disk path or null if new>,
       desiredPath: <target path or null if deleted>,
-      desiredFm: <target _fm object>,
-      origFm: <original _fm object>,
+      itemType: <'page' or 'asset'>,
+      desiredFm: <target _fm object or null for assets>,
+      origFm: <original _fm object or null for assets>,
       setContent: <full raw content for split content pages or null>,
       createContent: <content for brand-new pages or null>,
       isNew: <boolean>,
       isDeleted: <boolean>,
-      isIndex: <boolean>,
-      newFrontmatter: <true when origFm had no nav-weight fields>
+      isIndex: <boolean (false for assets)>,
+      newFrontmatter: <true when origFm had no nav-weight fields (false for assets)>
     },
     ...
   ],
   sections: [
     { uid, diskDir, desiredDir, isNew, isDeleted },
-    ...
-  ],
-  assetMoves: [             // binary file moves from nav edits
-    { oldPath, newPath },
-    ...
-  ],
-  assetDeletes: [           // binary files deleted from nav
-    { path },
     ...
   ],
   convertOps: [...],       // pass-through: convert-folder-to-page, regenerate-index
@@ -67,15 +60,17 @@ Both are flattened via `_flattenNavTree` into UID-keyed maps. Each entry contain
 }
 ```
 
-### Page Classification
+### Item Classification
+
+The `items[]` array contains both pages and assets (`itemType` field distinguishes them). Desired paths are computed by `_computeDesiredItemPath`, which derives the target disk path from the item's position in the current nav tree rather than from `item.src_path` (which never changes during movement).
 
 | Condition | Meaning |
 |-----------|---------|
-| `diskPath !== desiredPath`, both non-null | Page moved |
-| `desiredPath` is null | Page deleted |
-| `diskPath` is null | New page (`createContent` carries file content) |
-| `setContent` is non-null | Content split from index (body + existing frontmatter) |
-| `diskPath === desiredPath` | Page stays in place (may still have frontmatter changes) |
+| `diskPath !== desiredPath`, both non-null | Item moved (page or asset) |
+| `desiredPath` is null | Item deleted |
+| `diskPath` is null | New item (`createContent` carries file content for pages) |
+| `setContent` is non-null | Content split from index (body + existing frontmatter, pages only) |
+| `diskPath === desiredPath` | Item stays in place (pages may still have frontmatter changes) |
 
 ### `batchQueue` Resolution
 
@@ -137,7 +132,7 @@ This is the same shape the batch executor (`_runBatchOps`) expects. The executor
 
 This detects folder renames purely from file-level data (pages + assets). The snapshot never specifies renames — the planner discovers them. If some files from a directory move to different destinations (or some stay behind), the planner falls back to individual file moves.
 
-Asset moves are fed into the same `dirMoves` / `filesByDiskDir` analysis as pages. Each asset move is represented as a synthetic entry with `uid: '__asset_' + index`, `diskPath`, `desiredPath`, and `isDeleted: false`. The `coveredByFolderRename` set covers both page UIDs and asset UIDs. The separate asset moves loop later only emits `move-file` ops for assets NOT covered by a folder rename.
+Both pages and assets from the unified `items[]` array are included in the `dirMoves` / `filesByDiskDir` analysis using their actual UIDs. The `coveredByFolderRename` set covers both page UIDs and asset UIDs. A separate loop over `items` where `itemType === 'asset'` emits `move-file` ops for assets NOT covered by a folder rename.
 
 ### Precomputed Renames
 
@@ -148,12 +143,12 @@ For each folder rename, the planner computes a `precomputedRenames` map: `{ orig
 | Op Type | Source | Executor |
 |---------|--------|----------|
 | `rename-folder` | Detected from page + asset moves | `_executeRenameFolderOp` → `_apiPost('/rename-folder', ...)` |
-| `delete-folder` | Deleted sections with no surviving pages | `_executeDeleteFolderOp` → `_apiPost('/delete-folder', ...)` |
+| `delete-folder` | Deleted sections with no surviving items (pages or assets) | `_executeDeleteFolderOp` → `_apiPost('/delete-folder', ...)` |
 | `move-file` | Asset moves not covered by folder renames | `_executeMoveFileOp` → `_apiPost('/move-file', ...)` |
 
 Asset (binary) file moves are always handled by the API server, never the WebSocket. After moving, `_executeMoveFileOp` updates `_batchRenamedPaths` and `_updateLinkIndexForMove` so chained operations resolve correctly.
 
-Folder deletes include a safety check: before emitting a `delete-folder` op, the planner verifies that no asset moves originate from the folder. This prevents deleting directories that contain binary files being moved elsewhere.
+Folder deletes include a safety check: before emitting a `delete-folder` op, the planner iterates `items[]` to verify no non-deleted items (pages or assets) have `diskPath` or `desiredPath` under the folder prefix. This prevents deleting directories that contain files being moved elsewhere.
 
 After Batch 1, a `wait-for-rebuild` op triggers MkDocs to rebuild and the WebSocket to reconnect before Batch 2 begins.
 
@@ -164,12 +159,12 @@ Operations are ordered within Batch 2 as follows:
 | Sub-phase | Op Types | Source |
 |-----------|----------|--------|
 | 2a | `write-mkdocs-yml` | `mkdocsYmlOps` |
-| 2b | `delete-page`, `delete-file` | Pages with `isDeleted: true`; asset deletes |
+| 2b | `delete-page`, `delete-file` | Items with `isDeleted: true` (branched by `itemType`) |
 | 2c | `rename-page` | Moved pages NOT covered by folder renames |
 | 2d | `convert-folder-to-page`, `regenerate-index`, `create-folder` | `convertOps` and `createFolderOps` pass-through |
 | 2e | `create-page` | New pages with `createContent` |
 | 2f | `set-frontmatter` | Pages with changed frontmatter or `setContent` |
-| 2f | `rewrite-links` | Aggregated rename map + deleted paths |
+| 2f | `rewrite-links` | Aggregated rename map + deleted paths (pages + assets) |
 
 ### Frontmatter Diff Logic
 
@@ -183,10 +178,9 @@ For each non-deleted page, the planner compares `desiredFm` with `origFm`:
 
 The planner builds a combined rename map from:
 - Folder renames (via `precomputedRenames`)
-- Individual page moves (`diskPath → desiredPath`)
-- Asset (binary) file moves (`oldPath → newPath`)
+- All item moves where `diskPath !== desiredPath` (single loop over `items[]`, covering both pages and assets)
 
-Plus a `deletedPaths` set from deleted pages. If either map is non-empty, a single `rewrite-links` op is appended to Batch 2f.
+Plus a `deletedPaths` set from deleted items. If either map is non-empty, a single `rewrite-links` op is appended to Batch 2f.
 
 Asset moves are included in the rename map so that markdown content referencing binary files (e.g., `[Download PDF](../assets/guide.pdf)`, `![Diagram](images/arch.png)`) is automatically rewritten when the referenced file moves. The rewriter is extension-agnostic — any non-markdown file with a valid filename is handled.
 
@@ -237,9 +231,9 @@ When the index is absorbed, `existingByPath[indexPath]` returns the section item
 
 ## Binary (Asset) File Handling
 
-### Asset Moves and Deletes in the Desired State
+### Unified Items Array
 
-Binary file moves are collected as `assetMoves: [{ oldPath, newPath }]` and binary file deletions as `assetDeletes: [{ path }]` in the desired state output from `_computeSavePlan`. An asset present in the original snapshot but missing from the current snapshot (marked `_deleted`) produces an `assetDeletes` entry. An asset present in both but with a different `srcPath` produces an `assetMoves` entry.
+Asset moves and deletes are represented in the same `items[]` array as pages. An asset entry has `itemType: 'asset'` with `diskPath`, `desiredPath`, and `isDeleted` fields following the same semantics as page entries. The desired path is computed by `_computeDesiredItemPath` from the asset's position in the current nav tree, not from `item.src_path` (which remains unchanged during movement). Page-only fields (`desiredFm`, `origFm`, `setContent`, `createContent`, `newFrontmatter`) are `null`/`false` for assets.
 
 ### Execution via API Server
 
@@ -250,13 +244,13 @@ All binary file operations use the API server (`link_check_server.py`), never th
 
 ### Link Rewriting for Binary Files
 
-Asset moves are added to `allRenames` alongside page moves and `precomputedRenames` from folder renames. The `rewrite-links` op's `renameMap` therefore includes binary file paths. When `_executeRewriteLinksOp` runs, it checks every page's references in the link index against the rename map — binary file targets that moved are resolved and the referencing pages are rewritten.
+Asset moves are included in `allRenames` alongside page moves and `precomputedRenames` from folder renames. The `rewrite-links` op's `renameMap` therefore includes binary file paths. When `_executeRewriteLinksOp` runs, it checks every page's references in the link index against the rename map — binary file targets that moved are resolved and the referencing pages are rewritten.
 
 The rewriter (`_rewriteAllMovedLinksInPage`) and the link index builder (`_extract_refs`) are both extension-agnostic. Any local file reference in markdown (links, images, img tags, reference definitions) is captured and rewritten regardless of the target file's extension.
 
 ### Folder Rename Coverage
 
-Asset moves are fed into the same `dirMoves` / `filesByDiskDir` analysis as pages. Each asset is represented as a synthetic entry with `uid: '__asset_' + index`. If a folder rename covers an asset's move (same source dir, same dest dir, preserved relative path), the asset does not generate a separate `move-file` op — the folder rename handles it. The `coveredByFolderRename` check in the asset moves loop filters these out.
+Assets are included in the same `dirMoves` / `filesByDiskDir` analysis as pages (both are entries in the unified `items[]` array). If a folder rename covers an asset's move (same source dir, same dest dir, preserved relative path), the asset does not generate a separate `move-file` op — the folder rename handles it. The `coveredByFolderRename` check filters these out.
 
 ### Migration Asset Carry-Over
 

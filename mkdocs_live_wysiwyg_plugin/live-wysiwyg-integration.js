@@ -3405,7 +3405,22 @@
       selector: '.md-image-insert-input',
       onResize: positionDropdown
     });
-    requestAnimationFrame(function () { urlInput.focus(); });
+    requestAnimationFrame(function () {
+      urlInput.focus();
+      try {
+        navigator.clipboard.readText().then(function (text) {
+          text = (text || '').trim();
+          if (!text) return;
+          if (/^https?:\/\/.+/.test(text) || /\.(?:png|jpe?g|gif|svg|webp|bmp|ico|tiff?)$/i.test(text)) {
+            var rel = _tryConvertToRelativeImageUrl(text);
+            urlInput.value = (rel !== null) ? rel : text;
+            urlInput.select();
+            dirty = true;
+            acRender(urlInput.value.trim());
+          }
+        }).catch(function () {});
+      } catch (e) {}
+    });
 
     var closeHandler = function (ev) {
       if (dropdown.contains(ev.target) || ev.target === anchorBtn) return;
@@ -9438,41 +9453,41 @@
   }
 
   function _diffToMdOffset(diff, mdContent, isRedo) {
-    if (!diff || !diff.ops || diff.ops.length === 0 || !mdContent) return 0;
+    if (!diff || !diff.ops || diff.ops.length === 0 || !mdContent) return mdContent ? mdContent.length : 0;
     var lines = mdContent.split('\n');
+    var endLine = 0;
     if (isRedo) {
       var shift = 0;
-      var targetLine = 0;
       for (var i = 0; i < diff.ops.length; i++) {
         var op = diff.ops[i];
         if (op.type === 'replace') {
-          targetLine = op.line + shift + op.new.length;
+          endLine = op.line + shift + op.new.length - 1;
           shift += op.new.length - op.count;
         } else if (op.type === 'insert') {
-          targetLine = op.afterLine + shift + op.lines.length;
+          endLine = op.afterLine + shift + op.lines.length - 1;
           shift += op.lines.length;
         } else if (op.type === 'delete') {
-          targetLine = op.line + shift;
+          endLine = Math.max(0, op.line + shift - 1);
           shift -= op.count;
         }
       }
-      var offset = 0;
-      var endLine = Math.min(targetLine, lines.length);
-      for (var j = 0; j < endLine; j++) {
-        offset += lines[j].length + 1;
+    } else {
+      var lastOp = diff.ops[diff.ops.length - 1];
+      if (lastOp.type === 'replace') {
+        endLine = lastOp.line + lastOp.count - 1;
+      } else if (lastOp.type === 'insert') {
+        endLine = Math.max(0, lastOp.afterLine - 1);
+      } else if (lastOp.type === 'delete') {
+        endLine = lastOp.line + lastOp.count - 1;
       }
-      if (endLine > 0 && endLine <= lines.length) {
-        offset = Math.max(0, offset - 1);
-      }
-      return Math.min(offset, mdContent.length);
     }
-    var firstOp = diff.ops[0];
-    var startLine = firstOp.line !== undefined ? firstOp.line : (firstOp.afterLine || 0);
-    var offset2 = 0;
-    for (var k = 0; k < Math.min(startLine, lines.length); k++) {
-      offset2 += lines[k].length + 1;
+    endLine = Math.max(0, Math.min(endLine, lines.length - 1));
+    var offset = 0;
+    for (var j = 0; j < endLine; j++) {
+      offset += lines[j].length + 1;
     }
-    return Math.min(offset2, mdContent.length);
+    offset += lines[endLine].length;
+    return Math.min(offset, mdContent.length);
   }
 
   function _placeCursorAtMdOffset(mdOffset, mdContent) {
@@ -9517,6 +9532,11 @@
 
   function _restoreHistoryCursor(cursor, diff, mdContent, isRedo) {
     if (!wysiwygEditor) return;
+    if (diff && mdContent) {
+      var offset = _diffToMdOffset(diff, mdContent, isRedo);
+      _placeCursorAtMdOffset(offset, mdContent);
+      return;
+    }
     var sameMode = cursor && cursor.mode === wysiwygEditor.currentMode;
     if (sameMode && cursor.mode === 'markdown' && wysiwygEditor.markdownArea) {
       var ma = wysiwygEditor.markdownArea;
@@ -9532,16 +9552,9 @@
         if (restoreSelectionFromSemantic(wysiwygEditor.editableArea, cursor.semantic)) return;
       }
     }
-    if (diff && mdContent) {
-      var offset = _diffToMdOffset(diff, mdContent, isRedo);
-      _placeCursorAtMdOffset(offset, mdContent);
+    if (cursor && cursor.start !== undefined && mdContent) {
+      _placeCursorAtMdOffset(cursor.start, mdContent);
       return;
-    }
-    if (cursor) {
-      if (cursor.mode === 'markdown' && cursor.start !== undefined && mdContent) {
-        _placeCursorAtMdOffset(cursor.start, mdContent);
-        return;
-      }
     }
     if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
       wysiwygEditor.markdownArea.focus();

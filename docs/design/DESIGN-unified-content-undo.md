@@ -164,13 +164,15 @@ The WYSIWYG capture estimates a markdown character offset via `_estimateMdOffset
 
 On restore (`_restoreHistoryCursor(cursor, diff, mdContent, isRedo)`):
 
-1. **Same mode, markdown**: `setSelectionRange(start, end)` directly.
-2. **Same mode, WYSIWYG**: `restoreSelectionFromSemantic(editableArea, cursor.semantic)`.
-3. **Cross-mode with diff**: `_diffToMdOffset` computes a markdown character offset from the diff operations. For **redo** (`isRedo=true`), the offset points to the **end** of the last changed region (end of inserted/replaced lines). For **undo** (`isRedo=false`), the offset points to the **start** of the first changed region.
-4. **Cross-mode without diff**: falls back to the stored `cursor.start` offset.
+**Diff-based positioning is always preferred.** The cursor is placed at the **end** of the last changed line in the resulting content, so the user can immediately continue typing. This applies to both undo and redo, in both WYSIWYG and markdown modes.
+
+1. **Diff available**: `_diffToMdOffset` computes the end-of-change-region offset. For **redo**, it tracks cumulative line shifts across all diff ops to find the end of the last inserted/replaced region in the child content. For **undo**, it finds the end of the last restored region in the parent content (replace/delete → end of old lines; insert → line before insertion point).
+2. **Same mode, markdown** (fallback): `setSelectionRange(start, end)` using stored offsets.
+3. **Same mode, WYSIWYG** (fallback): `restoreSelectionFromSemantic(editableArea, cursor.semantic)`.
+4. **Stored offset** (fallback): uses `cursor.start` with `_placeCursorAtMdOffset`.
 5. **Last resort**: focuses the editor at position 0.
 
-`_placeCursorAtMdOffset` translates a markdown character offset to the appropriate cursor position for the current mode — directly for markdown (`setSelectionRange`), or by walking WYSIWYG block elements to find the corresponding block and placing the cursor at the end of that block.
+`_placeCursorAtMdOffset` translates a markdown character offset to the appropriate cursor position for the current mode — directly for markdown (`setSelectionRange`), or by walking WYSIWYG block elements to find the corresponding block and placing the cursor at the end of that block's text.
 
 ## Keyboard Integration
 

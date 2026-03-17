@@ -3,7 +3,7 @@ name: Virtualized Frontmatter Snapshots
 overview: Store complete YAML frontmatter per page in navData snapshots so all frontmatter manipulation is virtual. Fixes missing titles, lost headless flags, and wrong weights. Also fixes link rewrite relative path computation.
 todos:
   - id: inject-fm-map
-    content: "plugin.py: Build and inject liveWysiwygFrontmatterMap from page.meta for all pages. Update link_check_server.py to return full meta for hidden pages."
+    content: "plugin.py: Build and inject liveWysiwygFrontmatterMap from page.meta for all pages. Update api_server.py to return full meta for hidden pages."
     status: completed
   - id: attach-fm-navdata
     content: Create _attachFrontmatterToNavData to walk navData and set item._fm from the map. Update _deepCloneNavData to deep-clone _fm. Call during initial nav setup.
@@ -74,7 +74,7 @@ preamble_parts.append(
 
 MkDocs' `page.meta` is a dict from `yaml.safe_load` containing all frontmatter key-value pairs. This captures the complete frontmatter for every page in the nav at build time.
 
-**Also update [link_check_server.py](mkdocs-live-wysiwyg-plugin/mkdocs_live_wysiwyg_plugin/link_check_server.py)** (line 174-183): return the full parsed frontmatter dict for hidden pages (not just the 5 nav-weight fields), so hidden pages also get complete `_fm` when added to navData.
+**Also update [api_server.py](mkdocs-live-wysiwyg-plugin/mkdocs_live_wysiwyg_plugin/api_server.py)** (line 174-183): return the full parsed frontmatter dict for hidden pages (not just the 5 nav-weight fields), so hidden pages also get complete `_fm` when added to navData.
 
 ## 2. Client-side: Attach `_fm` to navData items on load
 
@@ -235,6 +235,6 @@ The migration deleted `docs/pipeline-steps/best-practices.md` entirely. This nee
 ## Files changed
 
 - [plugin.py](mkdocs-live-wysiwyg-plugin/mkdocs_live_wysiwyg_plugin/plugin.py) — inject `liveWysiwygFrontmatterMap`
-- [link_check_server.py](mkdocs-live-wysiwyg-plugin/mkdocs_live_wysiwyg_plugin/link_check_server.py) — return full meta for hidden pages
+- [api_server.py](mkdocs-live-wysiwyg-plugin/mkdocs_live_wysiwyg_plugin/api_server.py) — return full meta for hidden pages
 - [live-wysiwyg-integration.js](mkdocs-live-wysiwyg-plugin/mkdocs_live_wysiwyg_plugin/live-wysiwyg-integration.js) — all client-side changes
 

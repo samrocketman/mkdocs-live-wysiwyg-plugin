@@ -5,7 +5,7 @@ alwaysApply: true
 ---
 # API Server
 
-The API Server is the WYSIWYG plugin's own REST API server, implemented in `link_check_server.py` and started by `plugin.py`. It handles operations the upstream WebSocket cannot perform.
+The API Server is the WYSIWYG plugin's own REST API server, implemented in `api_server.py` and started by `plugin.py`. It handles operations the upstream WebSocket cannot perform.
 
 ## Rules
 

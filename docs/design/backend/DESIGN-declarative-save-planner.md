@@ -237,7 +237,7 @@ Asset moves and deletes are represented in the same `items[]` array as pages. An
 
 ### Execution via API Server
 
-All binary file operations use the API server (`link_check_server.py`), never the WebSocket:
+All binary file operations use the API server (`api_server.py`), never the WebSocket:
 
 - **`move-file`** — `_executeMoveFileOp` calls `_apiPost('/move-file', { old_path, new_path })`. The API server creates parent directories automatically (`mkdir(parents=True)`), moves the file, and returns the result. After moving, `_batchRenamedPaths[oldPath] = newPath` and `_updateLinkIndexForMove(oldPath, newPath)` are called so chained operations resolve correctly.
 - **`delete-file`** — `_executeDeleteFileOp` calls `_apiPost('/delete-file', { path })`. The API server verifies the file is within `docs_dir`, rejects `.md` files, and unlinks the file. After deletion, `_batchDeletedPaths[path] = true` is set so downstream operations skip the file.

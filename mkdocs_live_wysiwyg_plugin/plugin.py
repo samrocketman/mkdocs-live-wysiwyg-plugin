@@ -144,7 +144,7 @@ class LiveWysiwygPlugin(BasePlugin):
         if self._link_check_server is not None:
             return config
 
-        from .link_check_server import start_link_check_server
+        from .api_server import start_link_check_server
 
         dev_addr = config.get("dev_addr")
         host = dev_addr.host if dev_addr else "127.0.0.1"
@@ -335,7 +335,7 @@ class LiveWysiwygPlugin(BasePlugin):
                 self._nav_title_cache = {}
             self._nav_title_cache[src] = page.title
 
-        from .link_check_server import _extract_refs
+        from .api_server import _extract_refs
 
         self._link_index[src] = _extract_refs(markdown)
         return markdown

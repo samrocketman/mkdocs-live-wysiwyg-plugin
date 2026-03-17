@@ -445,7 +445,7 @@ This covers: asset-only folders, folders containing only headless pages, and par
 
 ### Move Operations
 
-Asset moves are collected as `assetMoves` in the desired state and executed via `_apiPost('/move-file', ...)` through the API server (`link_check_server.py`). Binary files never use the WebSocket for any operation. The API server's `/move-file` endpoint creates parent directories automatically and returns the result.
+Asset moves are collected as `assetMoves` in the desired state and executed via `_apiPost('/move-file', ...)` through the API server (`api_server.py`). Binary files never use the WebSocket for any operation. The API server's `/move-file` endpoint creates parent directories automatically and returns the result.
 
 ### Delete Operations
 

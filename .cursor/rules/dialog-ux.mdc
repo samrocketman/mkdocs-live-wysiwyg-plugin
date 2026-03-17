@@ -1,0 +1,43 @@
+---
+description: Unified dialog interaction model
+globs:
+alwaysApply: true
+---
+# Dialog UX
+
+The Dialog UX subsystem defines a unified keyboard interaction model for all popups, dropdowns, and modal dialogs. Enter and ESC work consistently across four categories: form, confirmation, settings, and informational.
+
+## Rules
+
+1. **Enter and ESC work from the dialog container.** The handler is on the container, not on individual elements. No element-specific Enter handlers that advance between fields.
+
+2. **Tab navigates between fields, Enter confirms or aborts.** Enter never advances to the next field.
+
+3. **Dirty tracking determines Enter behavior in form dialogs.** Enter + dirty = confirm, Enter + clean = abort.
+
+4. **Auto-focus is mandatory.** Every dialog must focus an element on open via requestAnimationFrame.
+
+5. **Tab order must be explicit via tabIndex.** All interactive elements have a logical tab order set explicitly.
+
+6. **Smart defaults are overridable and degrade gracefully.** Pre-filled values are suggestions. If context is unavailable, fall back to empty/placeholder without errors.
+
+7. **preventDefault and stopPropagation on Enter and ESC.** Both keys must be consumed by the dialog handler to prevent interference with document-level handlers.
+
+8. **Confirmation dialogs confirm on Enter by default.** Auto-focus lands on the primary button, so the first Enter confirms.
+
+9. **Settings dropdowns dismiss on both Enter and ESC.** Changes are already applied live.
+
+10. **Button focus overrides dialog-level Enter.** When a `<button>` inside the dialog has focus, Enter is not intercepted. Native browser behavior fires the button click.
+
+11. **All dialog keyboard handling implemented through `_attachDialogKeyboard(container, opts)`.** No inline keydown handlers on individual dialog elements.
+
+## Categories
+
+- **Form:** dirty-aware Enter (dirty=confirm, clean=abort), auto-focus first input
+- **Confirmation:** Enter confirms, auto-focus primary button
+- **Settings:** Enter and ESC dismiss, auto-focus first toggle
+- **Informational:** Enter clicks first action button if present, ESC dismisses
+
+## Design Document
+
+See `docs/design/ui/DESIGN-popup-dialog-ux.md`.

@@ -1,0 +1,28 @@
+---
+description: Snapshot diff — computes content differences via pre-edit vs active snapshots
+globs:
+alwaysApply: true
+---
+# Snapshot Diff
+
+The Snapshot Diff subsystem computes content differences via snapshots. It diffs snapshot 0 (pre-edit state) against the active snapshot (current state) and produces a declarative desired state for the save pipeline.
+
+## Rules
+
+1. **Diffs snapshot 0 vs active snapshot.** The original snapshot represents the pre-edit state on disk. The active snapshot represents the current in-memory state after all user edits.
+
+2. **Both snapshots are flattened via `_flattenNavTree` into UID-keyed maps.** Each entry preserves access to `_fm`, `setContent`, `_indexContent`, and all data flags, plus `srcPath`, `folderDir`, and metadata.
+
+3. **Output is a declarative desired state, not operations.** The diff describes where every page, section, and asset should end up, with what frontmatter and content. No rename, move, or delete operations appear.
+
+4. **UIDs enable cross-snapshot matching.** UIDs survive renames and moves. Items are matched by UID across snapshots, not by path.
+
+5. **Items with `_deleted: true` are excluded from flattening.** Deleted items do not appear in the flattened maps used for diff computation.
+
+6. **`newFrontmatter` flag is computed from the original snapshot's `_fm`.** When the original has no nav-weight fields (`weight`, `headless`, `retitled`, `empty`), the flag is true. The executor uses this for correct key ordering when adding frontmatter for the first time.
+
+7. **`setContent` carries full raw content for split content pages.** When a section index is split into a content page and thin index, the content page's body and frontmatter are carried in `setContent`, not read from disk.
+
+## Design Document
+
+See `docs/design/backend/DESIGN-declarative-save-planner.md`.

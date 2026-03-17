@@ -1,0 +1,34 @@
+---
+description: Runtime theme detection and CSS variable injection for editor theming
+globs:
+alwaysApply: true
+---
+# Theme Detection & CSS Variable Injection
+
+Runtime theme detection and CSS variable injection. The WYSIWYG plugin owns all editor theming and makes the editor theme-agnostic without requiring upstream changes.
+
+## Rules
+
+1. **`_detectThemeColors` runs once per page load.** The guard flag `_themeColorsDetected` ensures `:root` properties are set only once. The function may be called from multiple entry points (e.g. `replaceTextareaWithWysiwyg`, `enterFocusMode`) but the write is idempotent.
+
+2. **Material path: if `--md-primary-fg-color` exists on `:root`, only fill gaps and return.** When Material theme is detected, do not overwrite existing variables. Only add missing ones (e.g. `--md-footer-bg-color`, `--md-code-font-family`) and return an empty map.
+
+3. **Non-Material path: sample colors from navbar, body, and first anchor.** Use `getComputedStyle` from `document.body.children[0]` (navbar), `document.body`, and the first `<a>` element. Derive all `--md-*` variants via `_darken`, `_lighten`, and `_alpha`. Set everything on `document.documentElement.style`.
+
+4. **Every `var()` reference must include a fallback value.** Use `var(--md-primary-fg-color, #4051b5)` not `var(--md-primary-fg-color)`. Fallbacks ensure the editor is usable even if detection fails.
+
+5. **`!important` required on all theme override properties.** The upstream `live-edit.css` has equal or higher specificity. The injected style may load after the upstream CSS. Always use `!important` on every property in `live-wysiwyg-theme-overrides`.
+
+6. **Light/dark variant direction depends on `_isLight` (luminance > 0.4).** Background variants use `_darken` for light themes and `_lighten` for dark themes. Do not hardcode darken-only or lighten-only.
+
+7. **Theme overrides injected server-side via `plugin.py` and persist.** The `<style id="live-wysiwyg-theme-overrides">` block is emitted as the first asset in `on_page_content` so overrides apply from first paint. The style is not removed by `destroyWysiwyg` because the controls bar remains visible after the editor is disabled.
+
+8. **Focus mode gets double layer: `:root` variables + inline styles on overlay.** `_detectThemeColors` sets variables on `:root` and the returned map is applied as inline styles on `.live-wysiwyg-focus-overlay`. Both layers exist to handle potential inheritance edge cases.
+
+9. **Save/Cancel buttons keep static colors (green/red); general buttons use semi-transparent white.** The save and cancel buttons use hardcoded colors (#5cb85c, #d9534f). General `button.live-edit-button` elements use `rgba(255,255,255,0.12)` background with `--md-primary-bg-color` text.
+
+10. **Material theme is a hard requirement for nav menu.** `_isMaterialThemeDetected()` gates the entire nav subsystem. If a non-Material theme is detected, the nav menu is disabled: left sidebar remains blank, no arrows, no settings gears, no page management submenu, no batch editing, no migration.
+
+## Design Document
+
+See `docs/design/ui/DESIGN-theme-detection.md`

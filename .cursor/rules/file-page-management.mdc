@@ -1,0 +1,36 @@
+---
+description: CRUD operations on pages and sections — rename, new page, delete, move, weight normalization
+globs:
+alwaysApply: true
+---
+# File & Page Management
+
+CRUD operations on pages and sections: rename, new page, delete, move, weight normalization. All operations mutate navData in memory until save.
+
+## Rules
+
+1. **All operations mutate navData in memory — no direct disk writes until save.** Rename, new page, delete, and move operations update `liveWysiwygNavData` only. Disk writes occur when the user saves via the batch pipeline.
+
+2. **Operations are type-agnostic.** Pages, sections, and assets use the same movement functions. No special-case logic for different item types in move/weight logic.
+
+3. **Move functions accept only navData item objects, never DOM elements.** All move helpers (`_moveNavItem`, `_moveNavItemBefore`, `_moveNavItemAfter`, etc.) operate on navData item references. Never pass DOM nodes or selectors.
+
+4. **After movement: auto-expand/collapse parent sections, normalize sibling weights if needed, set focused item, commit snapshot.** Every move operation must update parent expansion state, run weight normalization when siblings exist, set `_focused` on the moved item, and call `_commitNavSnapshot()`.
+
+5. **Root index.md never gets a weight, always stays first, no arrow controls.** The root-level index page is excluded from weight assignment and movement controls. It remains at position 0.
+
+6. **Generated filenames are always lowercase.** Use only `a-z`, `0-9`, and `-`. No uppercase, spaces, or special characters in generated paths.
+
+7. **Case-insensitive filename conflict check with incrementor.** When generating a new filename, check for conflicts case-insensitively. Append `-1`, `-2`, etc. until a unique path is found.
+
+8. **Batch queue tracks claimed paths to prevent conflicts.** During batch execution, the queue maintains a set of paths claimed by pending ops. New page and rename ops must not conflict with claimed paths.
+
+9. **Folder index.md pages with `retitled: true` and `empty: true` participate in same-level weight distribution.** When normalizing weights, include these pages in sibling weight assignment. They are not excluded from the distribution.
+
+10. **Delete operations are popup-free.** Impact is surfaced via caution icons from the post-delete scan. No confirmation dialog before delete; the caution system informs the user of dead links and unreferenced assets.
+
+11. **Normalization assigns sequential weights (100, 200, 300...) to siblings; deepest levels first for recursive normalize.** When normalizing weights, traverse the tree depth-first so children are normalized before parents. Siblings receive sequential weights starting at 100.
+
+## Design Document
+
+See `docs/design/ui/DESIGN-file-management.md`, `docs/design/ui/DESIGN-nav-weight-normalization.md`

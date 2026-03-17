@@ -1,0 +1,18 @@
+---
+description: Toolbars subsystem — WYSIWYG toolbar drawer and controls
+globs: 
+alwaysApply: true
+---
+# Toolbars
+
+## Rules
+
+1. **The toolbar is one DOM element.** The WYSIWYG toolbar (`.md-toolbar`) is never duplicated. It is the same DOM element moved between containers.
+
+2. **Reparenting between normal and focus mode.** On enter focus mode, the toolbar is reparented to `.live-wysiwyg-focus-drawer-toolbar-wrap`. On exit, it is restored to its original parent as first child. Never clone or recreate the toolbar.
+
+3. **Mode toggle reflects reality.** The WYSIWYG/Markdown toggle in the drawer must reflect the current editor mode on focus mode entry and immediately after each mode switch.
+
+4. **Toolbar hidden in Markdown mode.** When Markdown mode is active, the toolbar wrap section is hidden (`display:none`). The mode toggle, save, discard, and settings controls remain visible.
+
+5. **New buttons automatically available in focus mode.** Because the toolbar is reparented rather than duplicated, any new buttons added to the toolbar are automatically available in focus mode without additional wiring.

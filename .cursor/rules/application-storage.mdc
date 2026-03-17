@@ -1,0 +1,34 @@
+---
+description: localStorage schema for user preferences and nav-operational data
+globs:
+alwaysApply: true
+---
+# Application Storage
+
+localStorage schema for user preferences and nav-operational data. Handles persistence of settings, caution pages, dead links, batch pipeline state, and post-save messages.
+
+## Rules
+
+1. **Never clear `liveWysiwygSettings`.** User preferences survive schema bumps and plugin updates. When migrating or bumping schema, merge or transform existing settings rather than wiping them.
+
+2. **Bump `_NAV_STORAGE_SCHEMA` when navData item types, pipeline op structure, or warning format changes.** Any structural change to stored nav-operational data requires a schema version increment. Old data is discarded when schema mismatches.
+
+3. **Every `JSON.parse` must be in try/catch with safe default.** Use empty object `{}`, empty array `[]`, or `NaN` as appropriate when parse fails. Never let a parse error propagate.
+
+4. **Every `localStorage.setItem` must be in try/catch.** Quota exhaustion and private browsing can throw. Catch and log; do not crash the application.
+
+5. **Structural validation before pipeline execution.** Before running the batch pipeline from stored state, validate the structure. Invalid structure clears the pipeline entirely rather than attempting partial execution.
+
+6. **Match-by-path is the tolerance mechanism for caution/dead-link entries.** When applying stored caution or dead-link data to current navData, match items by path. Unmatched paths are silently skipped. Do not fail or clear entire entries when some paths no longer exist.
+
+7. **Transient settings must self-clean after consumption.** Settings that are read once and then discarded (e.g. post-save messages, cursor restore cookies) must delete themselves from storage after use. Do not leave one-time data in localStorage indefinitely.
+
+8. **Pipeline resume must not crash.** Wrap `_resumePipeline` in a top-level try/catch. Any error during resume should log and clear the pipeline state rather than throwing.
+
+9. **Two categories: user preferences (`liveWysiwygSettings`) and nav-operational data.** User preferences include toggle states, focus mode remain-on-save, etc. Nav-operational data includes caution pages, dead links, pipeline state, and post-save messages. Never mix persistence strategies between categories.
+
+10. **Schema version check runs before any nav-operational data is read.** Before reading caution pages, dead links, pipeline, or post-save messages, verify `_NAV_STORAGE_SCHEMA` matches. Mismatch discards the stored data.
+
+## Design Document
+
+See `docs/design/backend/DESIGN-application-storage.md`

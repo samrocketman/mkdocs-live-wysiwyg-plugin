@@ -1,0 +1,81 @@
+# Toolbars — Design Document
+
+## Overview
+
+The WYSIWYG toolbar (`.md-toolbar`) is a single DOM element that is reparented between containers when switching between normal and focus mode. It is never duplicated. In focus mode, the toolbar lives inside a collapsible drawer with mode toggle, save/discard, settings, and optional Page Management controls.
+
+## Single DOM Element
+
+The toolbar is the same DOM element moved between containers. On enter focus mode it is reparented from its original parent to `.live-wysiwyg-focus-drawer-toolbar-wrap`. On exit it is restored to its original parent as first child. New toolbar buttons added to the toolbar are automatically available in focus mode because the toolbar is reparented, not cloned.
+
+## Collapsible Toolbar Drawer
+
+- **Default state**: Open (toolbar visible on first use; state persisted via `live_wysiwyg_focus_toolbar`)
+- **Toggle**: Hamburger icon button (`.live-wysiwyg-focus-drawer-toggle`) in the header left area
+- **Transition**: `max-height` with `0.25s ease-in-out` (0 when closed, 260px when open)
+- **State class**: `live-wysiwyg-focus-toolbar-open` on the overlay
+- **Contents**: Mode toggle, Page Management button (Material only), save button, discard button, settings gear, and the WYSIWYG toolbar
+- **Height tracking**: `_updateToolbarHeight` sets the `--_toolbar-h` CSS variable from the drawer's `scrollHeight`, which feeds into `--_panel-h` for panel height calculations
+
+## Drawer Controls
+
+| Control | Description |
+|---------|-------------|
+| Mode toggle | WYSIWYG \| Markdown; calls `switchToMode()`; keyboard shortcut Ctrl+. (Cmd+. on Mac) |
+| Page Management | Material theme only; opens page management submenu (create, rename, delete) |
+| Save | Delegates to `_doFocusModeSave()`; keyboard shortcut Ctrl+S (Cmd+S on Mac) |
+| Discard | Resets content to last saved state |
+| Settings | Gear button; opens dropdown with persistent checkboxes |
+
+## Mode Toggle
+
+- Reflects the current mode on focus mode entry
+- Updates immediately when clicked
+- Hides the toolbar wrap section in Markdown mode (`display:none`) since WYSIWYG buttons do not apply
+- Toggle, save, discard, and settings remain visible in Markdown mode
+- Keyboard shortcut: Ctrl+. (Cmd+. on Mac)
+- When Markdown mode is active, the overlay gains `focus-mode-markdown` for width-collapsing transitions on sidebars
+
+## Save and Discard
+
+### Save
+
+1. Calls `_doFocusSave()` which flushes pending content and triggers the upstream save
+2. If "Remain in Focus Mode on Save" is enabled (`live_wysiwyg_focus_remain`), refreshes content in place via WebSocket without a full page reload
+
+### Discard
+
+Resets content to the last saved state. Visibility of both Save and Discard is controlled by `_isDocDirty()` — they are shown or hidden together based on whether the document has unsaved changes.
+
+## Settings Dropdown
+
+The gear button (`.live-wysiwyg-focus-settings-btn`) opens a dropdown with persistent checkboxes:
+
+- **Auto-launch editor on page load** (`live_wysiwyg_autolaunch`)
+- **Focus Mode by default** (`live_wysiwyg_autofocus`)
+- **Remain in Focus Mode on Save** (`live_wysiwyg_focus_remain`, default enabled)
+
+## Page Management Button
+
+In the drawer controls, a "Page Management" button appears only when the Material theme is detected. It triggers the page management submenu for creating, renaming, and deleting pages.
+
+## Reparenting Lifecycle
+
+### Enter Focus Mode
+
+1. Save reference to toolbar's original parent
+2. Reparent `wysiwygEditor.toolbar` to drawer toolbar wrap
+3. Reparent `wysiwygEditor.editorWrapper` to focus content area
+
+### Exit Focus Mode
+
+1. Reparent `wysiwygEditor.toolbar` to original parent (as first child)
+2. Reparent `wysiwygEditor.editorWrapper` to `wysiwygContainer`
+
+## Invariants
+
+1. The toolbar is a single DOM element — never duplicated
+2. The toolbar is reparented between normal and focus mode containers
+3. New toolbar buttons are automatically available in focus mode
+4. In Markdown mode, the toolbar wrap section is hidden; drawer controls remain visible
+5. Mode toggle reflects the current editor mode on entry and after each switch

@@ -1,0 +1,38 @@
+---
+description: Content Scanning subsystem — dead link scanning, link rewriting, exclusion zones
+globs:
+alwaysApply: true
+---
+# Content Scanning
+
+The Content Scanning subsystem handles dead link scanning (internal and external), outbound and inbound link rewriting after file moves, the double rendering check, and exclusion zones. It is part of the Backend Subsystem and surfaces problems to the Cautions subsystem.
+
+## Rules
+
+1. **Exclusion zones must always be respected.** Fenced code blocks, inline code, and HTML comments are never modified by link rewriting or dead link scanning. Use `_findExclusionZones` and `_isInExclusionZone` before any content modification.
+
+2. **Link rewriting is case-sensitive.** Path matching uses exact comparison. Content and links are always case-sensitive for Linux deployment.
+
+3. **Anchor and query string preservation.** Split off `#section` and `?query` before path rewriting, update the path part, reassemble. Heading-only links (`#anchor`) are skipped.
+
+4. **Dead link scan uses virtual file layout from nav snapshot.** When `file_layout` is provided, the server checks link targets against the virtual layout instead of the real filesystem. `_buildFileLayoutFromNav(deletedDirs)` builds this from navData.
+
+5. **Post-delete impact scan uses filterTargets.** Only surface dead links whose resolved target matches a key in `filterTargets`. Pre-existing dead links to other targets are excluded.
+
+6. **Double rendering check failure preserves original content.** On failure, write the original unmodified content (no link rewrites). Add a caution icon to the affected page.
+
+7. **Content Scanning surfaces problems to the Cautions subsystem via reason strings.** Use `"Internal dead links found"` and `"External dead links found"` for dead link cautions.
+
+8. **Only Content Scanning may remove its own caution reasons.** Use `_stripDeadLinkCautionReasons` or `_removeCautionReason` to filter matching entries only. Never clear the entire caution entry or call `_setCautionPages([])` from feature-specific resolve.
+
+## Key Functions
+
+- `_rewriteLinksInContent`, `_rewriteInboundLinks`, `_rewriteAllMovedLinksInPage` — link rewriting
+- `_findExclusionZones`, `_isInExclusionZone` — exclusion zone detection
+- `_scanDeadLinks`, `_scanDeleteImpact` — dead link scanning
+- `_buildFileLayoutFromNav` — virtual file layout for server
+- `_doubleRenderCheck` — in-memory WYSIWYG↔Markdown round-trip
+
+## Design Document
+
+See `docs/design/backend/DESIGN-content-scanning.md`.

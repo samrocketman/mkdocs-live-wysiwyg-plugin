@@ -1,0 +1,42 @@
+---
+description: DAG-based undo/redo for document content
+globs:
+alwaysApply: true
+---
+# Content History
+
+The Content History subsystem provides DAG-based undo/redo for document content. All changes in both WYSIWYG and markdown modes are tracked as line-level markdown diffs. The system is independent of nav snapshot undo and survives nav edit mode transitions.
+
+## Rules
+
+1. **Always flush before mode switch.** Call `_flushHistoryCapture()` before `switchToMode` begins conversion.
+
+2. **Always flush before nav edit entry.** Call `_flushHistoryCapture()` at the top of `_enterNavEditMode`.
+
+3. **Never clear the DAG on nav edit exit.** The DAG persists in memory across DOM transitions. `_exitNavEditMode` must not touch `_historyNodes` or `_historyCurrentId`.
+
+4. **Never clear the DAG on save.** Only clear on page navigation (`_loadContent` with new document).
+
+5. **Cmd+Z in content editor always dispatches to content undo.** When content has focus, `Cmd+Z` must be routed to `_contentUndo()`. Browser native undo must never fire.
+
+6. **Skip capture on double-render corruption detection.** If `_doubleRenderCheck()` fails, skip the capture and log. Do not store a diff that could produce corrupted content on restore.
+
+7. **Diffs are line-level, not character-level.** The unit of change is a line. Word-boundary grouping is achieved by debounce timing, not character-level diffs.
+
+8. **Root node always stores full content.** `_historyRootMd` is the single source of truth for reconstructing any node's content by walking diffs from root.
+
+9. **`activeChildId` determines default redo path.** `Cmd+Shift+Z` always follows `activeChildId`.
+
+10. **Never discard redo branches.** Old children remain in the `children` array when new branches are created. Only pruning removes nodes, and it only removes leaves not on the current path.
+
+11. **Content undo is independent of nav snapshot undo.** Dispatch is determined by whether the active element has content focus. Content focus always wins.
+
+## Key Functions
+
+- `_flushHistoryCapture`, `_scheduleHistoryCapture` — capture timing
+- `_contentUndo`, `_contentRedo` — undo/redo dispatch
+- `_reconstructContentAtNode`, `_restoreHistoryCursor` — state restore
+
+## Design Document
+
+See `docs/design/ui/DESIGN-unified-content-undo.md`.

@@ -1,0 +1,28 @@
+---
+description: Write planner — converts desired state into minimal disk writes and executes them
+globs:
+alwaysApply: true
+---
+# Write Planner
+
+The Write Planner converts the declarative desired state into minimal disk writes and executes them. It detects folder renames, orders operations into two batches, and dispatches to the API Server or WebSocket Server.
+
+## Rules
+
+1. **Folder rename detection groups all moved files by sourceDir to destDir.** Both pages and assets are included. For each source directory, check that all non-deleted files go to the same destination, relative paths are preserved, and no files stay behind.
+
+2. **Sort folder renames deepest-first.** Child folders are processed before parent folders to avoid moving a parent before its children.
+
+3. **Batch 1: folder renames and asset moves.** These use API calls (`/rename-folder`, `/delete-folder`, `/move-file`). A `wait-for-rebuild` op triggers MkDocs rebuild and WebSocket reconnection before Batch 2.
+
+4. **Batch 2: file ops and content migration.** Ordered as: mkdocs.yml, delete-page/delete-file, rename-page, convert/create-folder, create-page, set-frontmatter, rewrite-links.
+
+5. **Precomputed renames are seeded into `_batchRenamedPaths` for chained resolution.** For each folder rename, the planner computes `originalPath → postFolderRenamePath` for every page under the folder. Batch 2 operations use `_resolveChainedRename` to resolve paths through multiple renames.
+
+6. **Frontmatter diff compares `desiredFm` with `origFm` key by key.** Check every key in `desiredFm` for value changes and every key in `origFm` for removal. If changed or `setContent` is present, generate a `set-frontmatter` op with both `fm` and `origFm` for key ordering.
+
+7. **`newFrontmatter` flag causes the executor to read actual file frontmatter for key ordering.** When nav-weight fields are added for the first time, the executor uses the file's existing frontmatter key order as the base for merging.
+
+## Design Document
+
+See `docs/design/backend/DESIGN-declarative-save-planner.md`.

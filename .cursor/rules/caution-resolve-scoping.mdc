@@ -21,3 +21,7 @@ Multiple features can add caution reasons to the same page (e.g. nav migration a
    - Nav migration: `"Link integrity may need attention"`
    - Dead link finder: `"Internal dead links found"`, `"External dead links found"`
    - Unreferenced asset finder: `"Unreferenced asset"`
+
+## Related
+
+Cautions interact with **Nav Renderer** (navData + snapshots) and **Application Storage** (localStorage persistence). See `docs/design/backend/DESIGN-cautions.md` for the full design document.

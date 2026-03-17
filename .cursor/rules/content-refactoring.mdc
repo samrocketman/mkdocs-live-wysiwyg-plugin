@@ -1,0 +1,28 @@
+---
+description: Content refactoring — all content migrations during save, link rewriting
+globs:
+alwaysApply: true
+---
+# Content Refactoring
+
+The Content Refactoring subsystem is responsible for all content migrations during save. It rewrites links after structural changes, handles frontmatter updates, and ensures exclusion zones are respected.
+
+## Rules
+
+1. **Link rewriting runs after all structural changes.** The `rewrite-links` op is in Batch 2f, after delete-page, rename-page, create-page, and set-frontmatter. All file moves and renames must complete before links are rewritten.
+
+2. **`renameMap` aggregates all renames.** It includes folder renames (from `precomputedRenames`), individual page moves, and asset moves. A single loop over `items[]` builds the combined map.
+
+3. **Asset moves are included in the rename map.** Binary file references in markdown (e.g., `[Download PDF](../assets/guide.pdf)`, `![Diagram](images/arch.png)`) are rewritten when the referenced file moves.
+
+4. **`deletedPaths` prevents rewriting links to deleted targets.** Links pointing to deleted pages or assets must not be rewritten to a non-existent path. The rewriter skips or flags such references.
+
+5. **`set-frontmatter` with `setContent` writes body from snapshot, not disk.** The body content comes from the snapshot's `setContent` field. The executor does not read the file body from disk when `setContent` is present.
+
+6. **`newFrontmatter` flag ensures correct key ordering when nav-weight fields are added for the first time.** The executor merges new keys into the existing frontmatter structure, preserving the file's original key order where possible.
+
+7. **Exclusion zones are always respected during content rewriting.** Fenced code blocks, inline code, and HTML comments are never modified. Use `_findExclusionZones` and `_isInExclusionZone` before any content modification.
+
+## Design Document
+
+See `docs/design/backend/DESIGN-declarative-save-planner.md`, `docs/design/backend/DESIGN-content-scanning.md`.

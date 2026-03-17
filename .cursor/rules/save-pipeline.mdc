@@ -1,0 +1,28 @@
+---
+description: Declarative save planner — two-phase desired state diff then disk operations
+globs:
+alwaysApply: true
+---
+# Save Pipeline
+
+The save pipeline is the declarative save planner. It uses a two-phase architecture: desired state diff then disk operations. It contains Snapshot Diff, Write Planner, and Content Refactoring as child subsystems.
+
+## Rules
+
+1. **Save is a two-step process.** Phase 1 computes the desired end state from snapshot differences. Phase 2 plans and executes minimal disk operations to achieve that state.
+
+2. **The snapshot diff never specifies rename, move, or delete operations.** It only describes the desired end state. No operation types appear in the desired state output.
+
+3. **The disk planner independently discovers optimizations.** Folder renames are detected from file-level move patterns, not prescribed by the snapshot diff.
+
+4. **All disk writes go through the API Server (REST) or WebSocket Server.** The upstream live-edit-plugin WebSocket handles markdown file operations. The WYSIWYG plugin's REST API handles folder operations and binary files.
+
+5. **Redirect suppression must be active during batch operations.** The WebSocket wrapper suppresses `redirect` messages when `_reloadGuardActive` or `_wsRedirectSuppressActive` is set. Batch saves must install the reload guard before execution.
+
+6. **Reload guard fully prevents page reloads during batch processing.** `_installReloadGuard()` blocks navigation until `_removeReloadGuard()` is called after the batch completes.
+
+7. **Batch path tracking prevents reading deleted or moved files.** `_batchDeletedPaths` and `_batchRenamedPaths` are updated as operations execute. Downstream operations must consult these maps before reading from disk.
+
+## Design Document
+
+See `docs/design/DESIGN-architecture-overview.md`, `docs/design/backend/DESIGN-declarative-save-planner.md`.

@@ -39,6 +39,29 @@ The WebSocket wrapper is the only reliable cross-browser mechanism to prevent th
 
 5. **`_removeReloadGuard` clears `_wsRedirectSuppressActive`.** This ensures the suppress flag doesn't persist after the operation completes.
 
+## Upstream WebSocket Server Limitations
+
+The `mkdocs-live-edit-plugin` WebSocket server provides: `new_file`, `delete_file`, `rename_file`, `get_contents`, `set_contents`.
+
+**Limitations:**
+- **No folder rename.** `rename_file` only renames within the same directory.
+- **No folder delete.** `delete_file` uses `Path.unlink()` — cannot delete directories.
+- **No standalone folder creation.** Directories are only created as a side effect of `new_file`.
+- **`rename_file` is unsafe for case changes.** `Path.rename()` is a no-op on case-insensitive filesystems.
+
+**Workarounds:**
+- File renames and moves: Always use delete-then-create (read → `delete_file` → `new_file` + `set_contents`).
+- Folder creation: Use `new_file` to create a file inside the desired folder.
+- Folder deletion: Delete all `.md` files recursively. Empty directory remains on disk but is harmless.
+- Convert folder to page: Move `index.md` to `folder.md` via delete-then-create. Empty folder stays.
+- Folder rename, folder delete, and binary file operations: Use the API Server subsystem instead.
+
+**Future expansion:** If the upstream WebSocket gains `rename_folder`, `delete_folder`, or `mkdir` actions, update:
+- `_executeDeletePageOp`: Use single `delete_folder` call.
+- "Convert Folder to Page": Use `delete_folder` to clean up empty directory.
+- Case-insensitive rename: Use fixed `rename_file` instead of delete-then-create.
+- Page moves: Use `move_file` instead of delete-then-create.
+
 ## Upstream Dependency
 
 This wrapper depends on the upstream `mkdocs-live-edit-plugin` using `ws.onmessage` (not `addEventListener`) and sending redirect messages as `{ action: 'redirect', new_url: string }`. Changes to the upstream protocol or message dispatch mechanism require updating this wrapper.

@@ -1,0 +1,32 @@
+---
+description: Modes of Operation — mode lifecycle and transition contracts
+alwaysApply: true
+---
+
+# Modes of Operation
+
+The editor has three current modes (Readonly, Unfocused, Focus) with planned future modes (Theme Mode, Mermaid Mode). All mode logic lives in `live-wysiwyg-integration.js`.
+
+## Mode Transition Triggers
+
+| Transition | Trigger |
+|---|---|
+| Readonly to Unfocused | Edit button (accesskey e) or period (`.`) shortcut |
+| Unfocused to Focus | Focus Mode toolbar button or browser fullscreen |
+| Focus to Unfocused | X button or Escape key |
+| Unfocused to Readonly | Cancel button |
+
+## Cursor Preservation Across Transitions
+
+Every mode transition that affects the editing surface must preserve cursor position and text selection. Do not add transitions that lose the cursor without explicit user intent (e.g., Cancel).
+
+- **Readonly to Unfocused**: `storeSelectionIfReadMode` captures; `readonly_to_edit_mode_text_selection` applies.
+- **Unfocused to Focus / Focus to Unfocused**: `_captureEditorSelection` before reparenting; `_restoreEditorSelection` after.
+
+## Future Modes
+
+Theme Mode and Mermaid Mode (documented in `DESIGN-modes-of-operation.md`) must follow the same lifecycle pattern:
+
+1. Explicit entry and exit triggers
+2. Cursor/state preservation where applicable
+3. Cleanup on exit (overlays, listeners, injected styles)

@@ -1,0 +1,24 @@
+---
+description: Unfocused Mode — inline editing on the readonly page
+alwaysApply: true
+---
+
+# Unfocused Mode
+
+Unfocused Mode is the inline editing state: the WYSIWYG editor is active but not fullscreen. The editor is rendered on the readonly page with the live-edit controls bar overlay. All logic lives in `live-wysiwyg-integration.js`.
+
+## Controls Bar
+
+The controls bar (`.live-edit-controls`) is provided by the upstream `mkdocs-live-edit-plugin`. It contains Edit, Save, Cancel, Rename, Delete, New buttons and the "Live Edit:" label. The WYSIWYG plugin does not modify the controls bar structure or padding.
+
+## Width Alignment
+
+Editing surfaces use negative horizontal margins (`-10px`) to extend through the controls bar padding and align with the readonly content width. The `<style id="live-wysiwyg-width-overrides">` block is injected in `replaceTextareaWithWysiwyg` and removed in the destroy path. Do not remove controls padding; use the negative-margin approach on editing surfaces only.
+
+## Toggle Button Injection
+
+`ensureToggleButton` injects the WYSIWYG/textarea toggle button into the controls bar. It is called from `observeForTextarea` and when the editor activates. The button is inserted before the label's next sibling (or as first child). `removeToggleButton` removes it on destroy.
+
+## Transition to Focus Mode
+
+The user enters Focus Mode via the Focus Mode toolbar button (expand icon) or browser fullscreen. `enterFocusMode` reparents the toolbar and editor wrapper into the focus overlay. Cursor and selection are captured before reparenting and restored after.

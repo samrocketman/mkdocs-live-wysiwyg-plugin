@@ -1,6 +1,6 @@
 # Focus Mode Invariants
 
-This rule protects the Focus Mode feature from regressions during future refactoring. See `mkdocs-live-wysiwyg-plugin/docs/design/DESIGN-focus-mode.md` for the full design.
+This rule protects the Focus Mode feature from regressions during future refactoring. See `mkdocs-live-wysiwyg-plugin/docs/design/ui/DESIGN-focus-mode.md` for the full design.
 
 ## Architecture
 

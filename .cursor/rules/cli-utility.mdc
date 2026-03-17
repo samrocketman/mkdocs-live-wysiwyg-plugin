@@ -1,0 +1,28 @@
+---
+description: CLI Utility subsystem — techdocs-preview.sh server lifecycle and configuration
+globs: techdocs-preview.sh
+alwaysApply: false
+---
+# CLI Utility
+
+`techdocs-preview.sh` is the CLI entry point that bootstraps the MkDocs development environment, generates the runtime `mkdocs.yml`, and manages the server lifecycle. It is a top-level subsystem alongside UI, Backend, and Development Workflow.
+
+## Rules
+
+1. **The original `mkdocs.yml` must always be restored on exit.** The `cleanup_on` trap restores `$TMPDIR/original-mkdocs.yml` to `mkdocs.yml`. Any new exit path must ensure the trap fires. Never remove or bypass the `trap 'cleanup_on $?' EXIT`.
+
+2. **Plugin ordering in generated config: `techdocs-core` before `live-edit` before `live-wysiwyg`.** The WYSIWYG plugin depends on the live-edit plugin. `techdocs-core` must configure the theme before the editor plugins initialize. Do not reorder the plugin list.
+
+3. **The `$TMPDIR/original-mkdocs.yml` path is the dual-write contract.** The WYSIWYG plugin's `plugin.py` detects this file and injects `liveWysiwygOriginalMkdocsYml` into the JS preamble. Renaming or moving this file breaks the dual `mkdocs.yml` write mechanism. See `dual-mkdocs-yml-write.mdc`.
+
+4. **Pinned dependency versions are intentional.** `WYSIWYG_VERSION` and all pip install versions at the top of the script are the tested combination. Version changes require testing the full stack.
+
+5. **`uv` is the preferred package manager.** The `pip()` shell function delegates to `uv pip` by default. `FORCE_PIP=1` falls back to system pip. All dependency operations should go through this wrapper.
+
+6. **Auto-generated docs use `full_path` frontmatter for restoration.** Each temporary doc file has `full_path: <original>` in its frontmatter. The cleanup step uses this to copy edited content back. Do not strip this frontmatter while the server is running.
+
+7. **Theme restoration hook is Material-only.** `restore_theme.py` is generated only when the effective theme is `material`. It counteracts `techdocs-core`'s `on_config` theme override. Non-Material themes skip the hook because `techdocs-core` is not included in their plugin chain.
+
+## Design Document
+
+See `docs/design/DESIGN-cli-utility.md`.

@@ -1,0 +1,14 @@
+---
+description: Browser Compatibility — centralized browser quirk handling
+globs: 
+alwaysApply: true
+---
+# Browser Compatibility
+
+## Rules
+
+1. **Document browser quirks centrally.** Browser-specific workarounds and known quirks must be documented in `docs/design/ui/DESIGN-browser-compatibility.md`. New browser-specific code should add an entry to that catalog.
+
+2. **New workarounds belong in this subsystem.** When adding a workaround for a browser quirk, update both the design document and this rule file if the quirk affects invariants or coding patterns.
+
+3. **Chrome location object restrictions.** Chrome (and most modern browsers) treat `window.location` as a security-critical object. Its native properties (`reload`, `assign`, `replace`, `href`) are non-configurable on the `Location` prototype. `Object.defineProperty(location, 'reload', { ... })` and similar attempts throw `TypeError`. Direct assignment like `location.reload = fn` is silently ignored. Never redefine `location` properties without try/catch. Never assume `location` overrides succeeded. Prefer `beforeunload` for reload prevention; `Object.defineProperty` on `location` is best-effort only.

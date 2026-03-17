@@ -1,0 +1,28 @@
+---
+description: WYSIWYG plugin REST API server — folder ops, binary files, link checking
+globs:
+alwaysApply: true
+---
+# API Server
+
+The API Server is the WYSIWYG plugin's own REST API server, implemented in `link_check_server.py` and started by `plugin.py`. It handles operations the upstream WebSocket cannot perform.
+
+## Rules
+
+1. **Handles operations the upstream WebSocket cannot.** Folder rename, folder delete, binary file move, binary file delete, and file listing are API-only. Markdown file operations use the WebSocket.
+
+2. **Binary files always use the API server, never the WebSocket.** `move-file` and `delete-file` endpoints handle non-markdown files only. Markdown files are rejected with 400.
+
+3. **API endpoints create parent directories automatically.** Both `/rename-folder` and `/move-file` use `mkdir(parents=True, exist_ok=True)` before moving or renaming.
+
+4. **`/delete-file` rejects `.md` files.** Markdown files must be deleted via the WebSocket `delete_file` action. The API returns 400 for markdown paths.
+
+5. **`/list-items` provides file listing for asset discovery.** Returns a recursive directory listing within docs_dir. Used to discover binary files for nav tree population.
+
+6. **`/check-links` evaluates link validity with optional virtual `file_layout`.** When `file_layout` is provided (from nav snapshot), the server checks link targets against the virtual layout instead of the real filesystem. Supports dead link scanning during batch operations.
+
+7. **`/move-file` and `/rename-folder` update disk state for batch operations.** These endpoints are called from Batch 1. The client updates `_batchRenamedPaths` after each successful call so chained operations resolve correctly.
+
+## Design Document
+
+See `docs/design/DESIGN-architecture-overview.md`, `docs/design/backend/DESIGN-declarative-save-planner.md`.

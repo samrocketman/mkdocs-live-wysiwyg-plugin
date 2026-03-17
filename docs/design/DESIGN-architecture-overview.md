@@ -87,14 +87,66 @@ flowchart LR
 
 `liveWysiwygNavData` (and the snapshots derived from it) is the sole source of truth for all navigation operations — item positioning, movement, sibling lookup, weight computation, and save planning. The DOM is a rendering target rebuilt from the active snapshot on every change; it is never queried for item position, parent–child relationships, or ordering. DOM attributes (`data-nav-uid`, `data-nav-src-path`) exist only for event-to-data bridging (mapping click targets back to navData items) and post-operation visual focus (scrolling a moved item into view).
 
-## More Information
+## Subsystem Directory
 
-For more detail see the following design documents.
+### UI Subsystem
 
-- [DESIGN-centralized-keyboard.md](DESIGN-centralized-keyboard.md) -- Three-tier centralized keyboard handling architecture (dialog, global, editor).
-- [DESIGN-declarative-save-planner.md](DESIGN-declarative-save-planner.md) -- Two-phase save architecture that separates desired end state from execution.
-- [DESIGN-nav-migration.md](DESIGN-nav-migration.md) -- Migrating from mkdocs.yml nav key to mkdocs-nav-weight frontmatter-based ordering.
-- [DESIGN-nav-weight-normalization.md](DESIGN-nav-weight-normalization.md) -- Nav weight normalization: rules, entry points, and the shared single-level algorithm.
-- [DESIGN-popup-dialog-ux.md](DESIGN-popup-dialog-ux.md) -- Unified keyboard interaction model for all popups, dropdowns, and dialogs.
-- [DESIGN-file-management.md](DESIGN-file-management.md) -- File management: single-item and multi-select group movement, unified save pipeline.
-- [DESIGN-snapshot-nav-architecture.md](DESIGN-snapshot-nav-architecture.md) -- Centralized snapshot-driven architecture for the focus mode navigation menu.
+#### Modes of Operation
+
+- [DESIGN-modes-of-operation.md](ui/DESIGN-modes-of-operation.md) -- Mode lifecycle and transition contracts.
+- [DESIGN-unfocused-mode.md](ui/DESIGN-unfocused-mode.md) -- Inline editing on the readonly page.
+- [DESIGN-focus-mode.md](ui/DESIGN-focus-mode.md) -- Fullscreen editing overlay.
+
+#### Toolbars
+
+- [DESIGN-toolbars.md](ui/DESIGN-toolbars.md) -- WYSIWYG toolbar drawer and controls.
+
+#### Content Editing
+
+- [DESIGN-enter-bubble-navigation.md](ui/DESIGN-enter-bubble-navigation.md) -- Enter key block container exit.
+- [DESIGN-targeted-markdown-revert.md](ui/DESIGN-targeted-markdown-revert.md) -- Backspace revert behavior.
+- [DESIGN-raw-html-preservation.md](ui/DESIGN-raw-html-preservation.md) -- Raw HTML and comment preservation.
+- [DESIGN-image-insertion-resize.md](ui/DESIGN-image-insertion-resize.md) -- Image insertion, resize, and settings.
+- [DESIGN-readonly-selection-heuristics.md](ui/DESIGN-readonly-selection-heuristics.md) -- Read-only to edit mode text selection.
+- [DESIGN-unified-content-undo.md](ui/DESIGN-unified-content-undo.md) -- DAG-based content undo/redo.
+- [DESIGN-centralized-keyboard.md](ui/DESIGN-centralized-keyboard.md) -- Three-tier keyboard handling.
+- [DESIGN-popup-dialog-ux.md](ui/DESIGN-popup-dialog-ux.md) -- Unified dialog interaction model.
+- [DESIGN-table-of-contents.md](ui/DESIGN-table-of-contents.md) -- Right sidebar TOC panel.
+
+#### Nav Menu
+
+- [DESIGN-focus-nav-menu.md](ui/DESIGN-focus-nav-menu.md) -- Navigation menu and batch editing.
+- [DESIGN-snapshot-nav-architecture.md](ui/DESIGN-snapshot-nav-architecture.md) -- Snapshot-driven nav architecture.
+- [DESIGN-file-management.md](ui/DESIGN-file-management.md) -- File management and movement.
+- [DESIGN-nav-weight-normalization.md](ui/DESIGN-nav-weight-normalization.md) -- Weight normalization algorithm.
+- [DESIGN-nav-migration.md](ui/DESIGN-nav-migration.md) -- Nav-to-weight migration.
+
+#### Theming & Layout
+
+- [DESIGN-theme-detection.md](ui/DESIGN-theme-detection.md) -- Theme detection and CSS variables.
+
+#### Browser Compatibility
+
+- [DESIGN-browser-compatibility.md](ui/DESIGN-browser-compatibility.md) -- Browser-specific quirks catalog.
+
+### Backend Subsystem
+
+#### Save Pipeline
+
+- [DESIGN-declarative-save-planner.md](backend/DESIGN-declarative-save-planner.md) -- Declarative two-phase save.
+
+#### Content Scanning
+
+- [DESIGN-content-scanning.md](backend/DESIGN-content-scanning.md) -- Dead link scanning and link rewriting.
+
+#### Cautions
+
+- [DESIGN-cautions.md](backend/DESIGN-cautions.md) -- Per-page warning system.
+
+#### Application Storage
+
+- [DESIGN-application-storage.md](backend/DESIGN-application-storage.md) -- localStorage schema and persistence.
+
+### CLI Utility
+
+- [DESIGN-cli-utility.md](DESIGN-cli-utility.md) -- `techdocs-preview.sh` server lifecycle, configuration generation, and dual mkdocs.yml mechanism.

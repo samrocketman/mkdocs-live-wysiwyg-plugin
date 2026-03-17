@@ -1,0 +1,40 @@
+---
+description: Three-tier centralized keyboard architecture
+globs:
+alwaysApply: true
+---
+# Keyboard
+
+The Keyboard subsystem routes all keyboard handling through three centralized routers. Each router owns a single `addEventListener('keydown', ...)` registration for its domain. New keyboard behavior is added by inserting into the appropriate router.
+
+## Rules
+
+1. **No standalone `addEventListener('keydown', ...)`.** All keyboard handling goes through one of three routers.
+
+2. **Tier 1 (Dialog):** `_attachDialogKeyboard` — per-dialog, bubble phase. Handles Enter and ESC for form, confirmation, settings, and informational dialogs.
+
+3. **Tier 2 (Global):** `_globalKeydownRouter` — document, capture phase, registered once. Handles Ctrl+S, Ctrl+., nav edit arrows, content/nav undo, period shortcut.
+
+4. **Tier 3 (Editor):** `_setupEditorKeyboard` — editable area, capture phase, registered once. Handles Enter bubble chain, Backspace revert, Space auto-convert, checklist arrows, emoji autocomplete.
+
+5. **Handlers return true/false in Tier 3.** The router stops dispatching on the first `true`.
+
+6. **Priority is line order in the router function.** Do not reorder without understanding implications. Reverse bubble must be first in the Enter chain.
+
+7. **State flags over dynamic addEventListener/removeEventListener in Tier 2.** Context-dependent shortcuts use boolean flags checked by the router.
+
+8. **Dialog-open guard in Tier 2 yields to Tier 1 for most shortcuts.** Exception: content undo/redo bypasses dialog check when content has focus.
+
+9. **Button-focus override in Tier 1.** When a `<button>` inside the dialog has focus, Enter is not intercepted. Native browser behavior fires the button click.
+
+10. **Single dataset guard `liveWysiwygKeyboardRouterAttached` replaces individual flags.** One flag indicates the editor keyboard router is attached.
+
+## Key Functions
+
+- `_attachDialogKeyboard` — Tier 1, per-dialog attachment
+- `_globalKeydownRouter` — Tier 2, document-level
+- `_setupEditorKeyboard`, `_editorKeydownRouter` — Tier 3, editor-level
+
+## Design Document
+
+See `docs/design/ui/DESIGN-centralized-keyboard.md`.

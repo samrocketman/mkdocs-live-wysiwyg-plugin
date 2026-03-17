@@ -49,4 +49,4 @@ The WYSIWYG editor migrates sites from `mkdocs.yml` `nav` key to `mkdocs-nav-wei
 
 ## Design Document
 
-See `docs/design/DESIGN-nav-migration.md` for the full specification with examples.
+See `docs/design/ui/DESIGN-nav-migration.md` for the full specification with examples.

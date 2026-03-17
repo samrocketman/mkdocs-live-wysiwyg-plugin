@@ -1,0 +1,20 @@
+---
+description: Table of Contents subsystem — right sidebar TOC panel
+globs: 
+alwaysApply: true
+---
+# Table of Contents
+
+## Rules
+
+1. **Material theme CSS classes.** The TOC uses `md-nav`, `md-nav--secondary`, `md-nav__title`, `md-nav__list`, `md-nav__item`, `md-nav__link`, `md-nav__link--active`, and `md-ellipsis` for consistent styling with the Material theme.
+
+2. **One active link at a time.** Exactly one TOC link may have `md-nav__link--active` at any time. The scroll listener determines the topmost heading at or above the viewport top and applies the active class to the corresponding link.
+
+3. **TOC always available.** The TOC panel is a permanent fixture of focus mode. When collapsed it can be toggled back; it is never permanently hidden.
+
+4. **Rebuilt on mode toggle.** The TOC must be rebuilt when switching between WYSIWYG and Markdown mode because the content source changes (DOM vs markdown text).
+
+5. **Non-interactive during nav edit mode.** During nav edit mode, the TOC remains visible but is covered by the read-only overlay. TOC links are non-clickable.
+
+6. **Scroll listener uses focus-main container.** Active heading tracking uses a scroll listener on `.live-wysiwyg-focus-main`, not `editableArea` or the document.

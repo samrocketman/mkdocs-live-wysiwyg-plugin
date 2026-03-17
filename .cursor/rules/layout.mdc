@@ -1,9 +1,9 @@
 ---
-description: Editor width alignment rules ensuring editing surfaces match readonly HTML content width via negative margins while preserving button positions
+description: Layout subsystem — editor width alignment and editing surface dimensions
 alwaysApply: true
 ---
 
-# Editor Width Alignment
+# Layout
 
 The WYSIWYG plugin injects CSS overrides (via `<style id="live-wysiwyg-width-overrides">`) so that editing surfaces match the readonly HTML content width. The overrides are injected when the editor is enabled and removed when disabled.
 
@@ -33,3 +33,5 @@ Affected selectors:
 5. **Do not remove controls padding.** Removing or reducing `padding` on `.live-edit-controls` would shift all buttons and labels. Always use the negative-margin approach on editing surfaces instead.
 
 6. **Wrapper inline style.** The `.live-edit-wysiwyg-wrapper` container uses `margin: 5px 0` (set inline in JS). The horizontal `0` is intentional — the CSS override provides the negative margin to extend through the controls padding. Do not revert this to `margin: 5px`.
+
+This rule was formerly `editor-width-alignment.mdc`.

@@ -1,0 +1,25 @@
+---
+description: Readonly Mode — default page load state and transition triggers
+alwaysApply: true
+---
+
+# Readonly Mode
+
+Readonly Mode is the default state on page load. Content is rendered as static HTML. No editing surfaces are active.
+
+## Text Selection Capture
+
+`storeSelectionIfReadMode` captures user selection during `selectionchange` events when `isInReadMode()` is true. It stores `selectedText`, `contextBefore`, `contextAfter`, and `pseudoMarkdown` in `pendingReadModeSelection`. This data is consumed by `readonly_to_edit_mode_text_selection` when the editor initializes after transitioning to Unfocused Mode.
+
+Do not modify the capture logic in ways that break the pseudo-markdown resolution chain (`buildPseudoMarkdown`, `buildSearchable`, `findInSearchable`).
+
+## Transition to Unfocused Mode
+
+Two triggers enter Unfocused Mode from Readonly:
+
+1. **Edit button**: The upstream live-edit-plugin Edit button (accesskey e). `findEditModeTrigger` locates it; `clickEditTriggerOrDefer` programmatically clicks it when the period shortcut or selection-edit popup is used.
+2. **Period shortcut**: `_handlePeriodEdit` fires when `e.key === '.'` in Readonly Mode. It calls `storeSelectionIfReadMode`, `hideSelectionEditPopup`, and `clickEditTriggerOrDefer`. Guarded by `isInReadMode()` and skips when focus is in INPUT, TEXTAREA, SELECT, or contenteditable.
+
+## No Editing Surfaces Active
+
+In Readonly Mode, `wysiwygEditor` is null and no contenteditable area or markdown textarea is visible. The controls bar may be present (from upstream) but the Edit button shows the page in read-only state until clicked.

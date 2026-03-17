@@ -1205,6 +1205,7 @@
     var origHandleToolbarClick = proto._handleToolbarClick;
     if (origHandleToolbarClick) {
       proto._handleToolbarClick = function (buttonConfig, buttonElement) {
+        _flushHistoryCapture();
         var isListBtn = (buttonConfig.id === 'ul' || buttonConfig.id === 'ol') && this.currentMode === 'wysiwyg';
         if (isListBtn) {
           this.editableArea.focus();
@@ -2239,6 +2240,7 @@
     var origWrap = proto._wrapSelectionInBlockquote;
     if (!origWrap) return;
     proto._wrapSelectionInBlockquote = function () {
+      _flushHistoryCapture();
       var ea = this.editableArea;
       var sel = window.getSelection();
       if (!sel || sel.rangeCount === 0) return origWrap.call(this);
@@ -2380,6 +2382,7 @@
     var origInsertCodeBlock = proto._insertCodeBlock;
     if (!origInsertCodeBlock) return;
     proto._insertCodeBlock = function () {
+      _flushHistoryCapture();
       if (this.currentMode === 'wysiwyg') {
         var ea = this.editableArea;
         ea.focus();
@@ -7442,6 +7445,7 @@
       return serializeWithFrontmatter(this._liveWysiwygFrontmatter, body);
     };
     proto.switchToMode = function (mode, isInitialSetup) {
+      if (!isInitialSetup) _flushHistoryCapture();
       dismissImageSelection();
       dismissImageInsertDropdown();
       dismissImageGearDropdown();
@@ -9083,6 +9087,543 @@
       _inMemoryRenderMode = prev;
     }
   }
+
+  // --- Unified Content Undo DAG ---
+
+  var _historyNodes = {};
+  var _historyCurrentId = null;
+  var _historyRootMd = null;
+  var _historyNextId = 0;
+  var _historyTimer = null;
+  var _historyLastMd = null;
+  var _historyMaxNodes = 200;
+
+  function _historyReset(markdown) {
+    _historyNodes = {};
+    _historyNextId = 0;
+    _historyTimer = null;
+    _historyRootMd = markdown;
+    _historyLastMd = markdown;
+    var rootId = _historyNextId++;
+    _historyNodes[rootId] = {
+      id: rootId,
+      parentId: null,
+      children: [],
+      activeChildId: null,
+      diff: null,
+      cursor: null,
+      timestamp: Date.now(),
+      summary: null
+    };
+    _historyCurrentId = rootId;
+  }
+
+  function _computeLineDiff(oldLines, newLines) {
+    var ops = [];
+    var oLen = oldLines.length;
+    var nLen = newLines.length;
+    var o = 0, n = 0;
+    while (o < oLen && n < nLen) {
+      if (oldLines[o] === newLines[n]) {
+        o++; n++;
+        continue;
+      }
+      var oEnd = o, nEnd = n;
+      while (oEnd < oLen && (nEnd >= nLen || oldLines[oEnd] !== newLines[nEnd])) {
+        oEnd++;
+        if (oEnd < oLen) {
+          var sync = nEnd;
+          while (sync < nLen && newLines[sync] !== oldLines[oEnd]) sync++;
+          if (sync < nLen) break;
+        }
+      }
+      while (nEnd < nLen && (oEnd >= oLen || newLines[nEnd] !== oldLines[oEnd])) {
+        nEnd++;
+        if (nEnd < nLen && oEnd < oLen && newLines[nEnd] === oldLines[oEnd]) break;
+      }
+      var delCount = oEnd - o;
+      var insLines = newLines.slice(n, nEnd);
+      if (delCount > 0 && insLines.length > 0) {
+        ops.push({ type: 'replace', line: o, count: delCount, old: oldLines.slice(o, oEnd), new: insLines });
+      } else if (delCount > 0) {
+        ops.push({ type: 'delete', line: o, count: delCount, old: oldLines.slice(o, oEnd) });
+      } else if (insLines.length > 0) {
+        ops.push({ type: 'insert', afterLine: o, lines: insLines });
+      }
+      o = oEnd;
+      n = nEnd;
+    }
+    if (o < oLen) {
+      ops.push({ type: 'delete', line: o, count: oLen - o, old: oldLines.slice(o) });
+    }
+    if (n < nLen) {
+      ops.push({ type: 'insert', afterLine: o, lines: newLines.slice(n) });
+    }
+    return ops.length > 0 ? { ops: ops } : null;
+  }
+
+  function _applyDiff(lines, diff) {
+    if (!diff || !diff.ops) return lines;
+    var result = lines.slice();
+    var offset = 0;
+    for (var i = 0; i < diff.ops.length; i++) {
+      var op = diff.ops[i];
+      if (op.type === 'replace') {
+        var args = [op.line + offset, op.count].concat(op.new);
+        Array.prototype.splice.apply(result, args);
+        offset += op.new.length - op.count;
+      } else if (op.type === 'insert') {
+        var args2 = [op.afterLine + offset, 0].concat(op.lines);
+        Array.prototype.splice.apply(result, args2);
+        offset += op.lines.length;
+      } else if (op.type === 'delete') {
+        result.splice(op.line + offset, op.count);
+        offset -= op.count;
+      }
+    }
+    return result;
+  }
+
+  function _reverseDiff(diff) {
+    if (!diff || !diff.ops) return null;
+    var rOps = [];
+    for (var i = diff.ops.length - 1; i >= 0; i--) {
+      var op = diff.ops[i];
+      if (op.type === 'replace') {
+        rOps.push({ type: 'replace', line: op.line, count: op.new.length, old: op.new, new: op.old });
+      } else if (op.type === 'insert') {
+        rOps.push({ type: 'delete', line: op.afterLine, count: op.lines.length, old: op.lines });
+      } else if (op.type === 'delete') {
+        rOps.push({ type: 'insert', afterLine: op.line, lines: op.old });
+      }
+    }
+    return { ops: rOps };
+  }
+
+  function _reconstructContentAtNode(nodeId) {
+    var path = [];
+    var id = nodeId;
+    while (id !== null && _historyNodes[id]) {
+      path.unshift(id);
+      id = _historyNodes[id].parentId;
+    }
+    if (path.length === 0 || _historyRootMd === null) return null;
+    var lines = _historyRootMd.split('\n');
+    for (var i = 1; i < path.length; i++) {
+      var node = _historyNodes[path[i]];
+      if (node && node.diff) {
+        lines = _applyDiff(lines, node.diff);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  function _generateSummary(diff) {
+    if (!diff || !diff.ops || diff.ops.length === 0) return null;
+    var totalOld = 0, totalNew = 0;
+    for (var i = 0; i < diff.ops.length; i++) {
+      var op = diff.ops[i];
+      if (op.type === 'replace') { totalOld += op.count; totalNew += op.new.length; }
+      else if (op.type === 'insert') { totalNew += op.lines.length; }
+      else if (op.type === 'delete') { totalOld += op.count; }
+    }
+    if (diff.ops.length === 1) {
+      var singleOp = diff.ops[0];
+      var newLines = singleOp.type === 'replace' ? singleOp.new : (singleOp.type === 'insert' ? singleOp.lines : []);
+      var oldLines = singleOp.old || [];
+      if (newLines.length > 0) {
+        var first = newLines[0];
+        if (/^```/.test(first) && newLines.length > 1) return 'inserted code block';
+        if (/^#{1,6}\s/.test(first)) return 'changed heading';
+        if (/^(!{3}|\?{3}\+?)\s/.test(first)) return 'inserted admonition';
+        if (/^>\s/.test(first) && newLines.length > 1) return 'inserted blockquote';
+        if (/^(\s*[-*+]|\s*\d+\.)\s/.test(first) && newLines.length > 1) return 'added list items';
+        if (/^(---|___|\*\*\*)\s*$/.test(first)) return 'inserted horizontal rule';
+      }
+      if (singleOp.type === 'delete') {
+        if (oldLines.length > 0 && /^```/.test(oldLines[0]) && oldLines.length > 1) return 'removed code block';
+        if (oldLines.length > 0 && /^#{1,6}\s/.test(oldLines[0])) return 'removed heading';
+      }
+      if (singleOp.type === 'replace' && singleOp.count === 1 && newLines.length === 1) {
+        return 'edited line ' + (singleOp.line + 1);
+      }
+    }
+    var total = totalOld + totalNew;
+    return 'edited ' + total + ' line' + (total !== 1 ? 's' : '');
+  }
+
+  function _groupMarkdownConstructs(diff, newLines) {
+    if (!diff || !diff.ops || diff.ops.length === 0) return diff;
+    var grouped = [];
+    for (var i = 0; i < diff.ops.length; i++) {
+      var op = diff.ops[i];
+      if (op.type === 'insert' && op.lines.length > 1) {
+        var first = op.lines[0];
+        var last = op.lines[op.lines.length - 1];
+        if (/^```/.test(first) && /^```\s*$/.test(last)) {
+          grouped.push(op);
+          continue;
+        }
+        if (/^(!{3}|\?{3}\+?)\s/.test(first)) {
+          grouped.push(op);
+          continue;
+        }
+      }
+      grouped.push(op);
+    }
+    return { ops: grouped };
+  }
+
+  function _createHistoryNode(markdown, cursor) {
+    if (_historyLastMd === null || _historyCurrentId === null) return;
+    if (markdown === _historyLastMd) return;
+
+    if (!_doubleRenderCheck(markdown)) {
+      console.log('[UNDO] history capture skipped: double-render corruption detected');
+      return;
+    }
+
+    var oldLines = _historyLastMd.split('\n');
+    var newLines = markdown.split('\n');
+    var diff = _computeLineDiff(oldLines, newLines);
+    if (!diff) return;
+
+    diff = _groupMarkdownConstructs(diff, newLines);
+    var summary = _generateSummary(diff);
+
+    var nodeId = _historyNextId++;
+    var node = {
+      id: nodeId,
+      parentId: _historyCurrentId,
+      children: [],
+      activeChildId: null,
+      diff: diff,
+      cursor: cursor || null,
+      timestamp: Date.now(),
+      summary: summary
+    };
+    _historyNodes[nodeId] = node;
+
+    var parent = _historyNodes[_historyCurrentId];
+    if (parent) {
+      parent.children.push(nodeId);
+      parent.activeChildId = nodeId;
+    }
+
+    _historyCurrentId = nodeId;
+    _historyLastMd = markdown;
+
+    _historyPrune();
+  }
+
+  function _historyPrune() {
+    var ids = Object.keys(_historyNodes);
+    if (ids.length <= _historyMaxNodes) return;
+
+    var onPath = {};
+    var id = _historyCurrentId;
+    while (id !== null && _historyNodes[id]) {
+      onPath[id] = true;
+      id = _historyNodes[id].parentId;
+    }
+
+    var leaves = [];
+    for (var i = 0; i < ids.length; i++) {
+      var nid = parseInt(ids[i], 10);
+      var n = _historyNodes[nid];
+      if (n.children.length === 0 && !onPath[nid]) {
+        leaves.push(nid);
+      }
+    }
+    leaves.sort(function (a, b) { return a - b; });
+
+    var toRemove = ids.length - _historyMaxNodes;
+    for (var j = 0; j < leaves.length && toRemove > 0; j++) {
+      var leafId = leaves[j];
+      var leafNode = _historyNodes[leafId];
+      if (leafNode && leafNode.parentId !== null) {
+        var p = _historyNodes[leafNode.parentId];
+        if (p) {
+          var ci = p.children.indexOf(leafId);
+          if (ci !== -1) p.children.splice(ci, 1);
+          if (p.activeChildId === leafId) {
+            p.activeChildId = p.children.length > 0 ? p.children[p.children.length - 1] : null;
+          }
+        }
+      }
+      delete _historyNodes[leafId];
+      toRemove--;
+    }
+  }
+
+  function _getHistoryBranchPoints() {
+    var points = [];
+    var ids = Object.keys(_historyNodes);
+    for (var i = 0; i < ids.length; i++) {
+      var n = _historyNodes[ids[i]];
+      if (n.children.length > 1) points.push(n);
+    }
+    return points;
+  }
+
+  function _getHistoryBranches(nodeId) {
+    var node = _historyNodes[nodeId];
+    if (!node) return [];
+    var branches = [];
+    for (var i = 0; i < node.children.length; i++) {
+      var childId = node.children[i];
+      var child = _historyNodes[childId];
+      if (!child) continue;
+      var depth = 0;
+      var queue = [childId];
+      while (queue.length > 0) {
+        var cid = queue.shift();
+        depth++;
+        var cn = _historyNodes[cid];
+        if (cn) {
+          for (var j = 0; j < cn.children.length; j++) queue.push(cn.children[j]);
+        }
+      }
+      branches.push({
+        childId: childId,
+        summary: child.summary,
+        timestamp: child.timestamp,
+        depth: depth
+      });
+    }
+    return branches;
+  }
+
+  function _switchHistoryBranch(nodeId, childId) {
+    var node = _historyNodes[nodeId];
+    if (!node) return false;
+    if (node.children.indexOf(childId) === -1) return false;
+    node.activeChildId = childId;
+    return true;
+  }
+
+  function _estimateMdOffsetFromWysiwyg(ea) {
+    var sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || !ea) return 0;
+    var range = sel.getRangeAt(0);
+    if (!ea.contains(range.startContainer)) return 0;
+    var preRange = document.createRange();
+    preRange.setStart(ea, 0);
+    preRange.setEnd(range.startContainer, range.startOffset);
+    var textBefore = preRange.toString();
+    preRange.detach();
+    return textBefore.length;
+  }
+
+  function _captureHistoryCursor() {
+    if (!wysiwygEditor) return null;
+    if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
+      return {
+        mode: 'markdown',
+        start: wysiwygEditor.markdownArea.selectionStart,
+        end: wysiwygEditor.markdownArea.selectionEnd,
+        semantic: null
+      };
+    }
+    if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor.editableArea) {
+      var mdOffset = _estimateMdOffsetFromWysiwyg(wysiwygEditor.editableArea);
+      return {
+        mode: 'wysiwyg',
+        start: mdOffset,
+        end: mdOffset,
+        semantic: captureSemanticSelection(wysiwygEditor.editableArea)
+      };
+    }
+    return null;
+  }
+
+  function _diffToMdOffset(diff, mdContent, isRedo) {
+    if (!diff || !diff.ops || diff.ops.length === 0 || !mdContent) return 0;
+    var lines = mdContent.split('\n');
+    if (isRedo) {
+      var shift = 0;
+      var targetLine = 0;
+      for (var i = 0; i < diff.ops.length; i++) {
+        var op = diff.ops[i];
+        if (op.type === 'replace') {
+          targetLine = op.line + shift + op.new.length;
+          shift += op.new.length - op.count;
+        } else if (op.type === 'insert') {
+          targetLine = op.afterLine + shift + op.lines.length;
+          shift += op.lines.length;
+        } else if (op.type === 'delete') {
+          targetLine = op.line + shift;
+          shift -= op.count;
+        }
+      }
+      var offset = 0;
+      var endLine = Math.min(targetLine, lines.length);
+      for (var j = 0; j < endLine; j++) {
+        offset += lines[j].length + 1;
+      }
+      if (endLine > 0 && endLine <= lines.length) {
+        offset = Math.max(0, offset - 1);
+      }
+      return Math.min(offset, mdContent.length);
+    }
+    var firstOp = diff.ops[0];
+    var startLine = firstOp.line !== undefined ? firstOp.line : (firstOp.afterLine || 0);
+    var offset2 = 0;
+    for (var k = 0; k < Math.min(startLine, lines.length); k++) {
+      offset2 += lines[k].length + 1;
+    }
+    return Math.min(offset2, mdContent.length);
+  }
+
+  function _placeCursorAtMdOffset(mdOffset, mdContent) {
+    if (!wysiwygEditor) return;
+    if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
+      var ma = wysiwygEditor.markdownArea;
+      var pos = Math.min(mdOffset, ma.value.length);
+      ma.focus();
+      ma.setSelectionRange(pos, pos);
+    } else if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor.editableArea) {
+      var ea = wysiwygEditor.editableArea;
+      ea.focus();
+      var lines = mdContent ? mdContent.split('\n') : [];
+      var charCount = 0, targetLine = 0;
+      for (var i = 0; i < lines.length; i++) {
+        if (charCount + lines[i].length + 1 > mdOffset) { targetLine = i; break; }
+        charCount += lines[i].length + 1;
+        targetLine = i + 1;
+      }
+      var blocks = ea.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, pre, blockquote, div.admonition, hr, table');
+      var blockIdx = Math.min(targetLine, blocks.length > 0 ? blocks.length - 1 : 0);
+      if (blocks.length > 0) {
+        var block = blocks[blockIdx];
+        var range = document.createRange();
+        var sel = window.getSelection();
+        if (block.childNodes.length > 0) {
+          var lastChild = block.childNodes[block.childNodes.length - 1];
+          if (lastChild.nodeType === 3) {
+            range.setStart(lastChild, lastChild.textContent.length);
+          } else {
+            range.setStartAfter(lastChild);
+          }
+        } else {
+          range.setStart(block, 0);
+        }
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+  }
+
+  function _restoreHistoryCursor(cursor, diff, mdContent, isRedo) {
+    if (!wysiwygEditor) return;
+    var sameMode = cursor && cursor.mode === wysiwygEditor.currentMode;
+    if (sameMode && cursor.mode === 'markdown' && wysiwygEditor.markdownArea) {
+      var ma = wysiwygEditor.markdownArea;
+      var s = Math.min(cursor.start, ma.value.length);
+      var e = Math.min(cursor.end, ma.value.length);
+      ma.focus();
+      ma.setSelectionRange(s, e);
+      return;
+    }
+    if (sameMode && cursor.mode === 'wysiwyg' && wysiwygEditor.editableArea) {
+      if (cursor.semantic) {
+        wysiwygEditor.editableArea.focus();
+        if (restoreSelectionFromSemantic(wysiwygEditor.editableArea, cursor.semantic)) return;
+      }
+    }
+    if (diff && mdContent) {
+      var offset = _diffToMdOffset(diff, mdContent, isRedo);
+      _placeCursorAtMdOffset(offset, mdContent);
+      return;
+    }
+    if (cursor) {
+      if (cursor.mode === 'markdown' && cursor.start !== undefined && mdContent) {
+        _placeCursorAtMdOffset(cursor.start, mdContent);
+        return;
+      }
+    }
+    if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
+      wysiwygEditor.markdownArea.focus();
+      wysiwygEditor.markdownArea.setSelectionRange(0, 0);
+    } else if (wysiwygEditor.editableArea) {
+      wysiwygEditor.editableArea.focus();
+    }
+  }
+
+  function _flushHistoryCapture() {
+    if (_historyTimer !== null) {
+      clearTimeout(_historyTimer);
+      _historyTimer = null;
+    }
+    if (!wysiwygEditor) return;
+    var md = wysiwygEditor.getValue();
+    if (md && md !== _historyLastMd) {
+      _createHistoryNode(md, _captureHistoryCursor());
+    }
+  }
+
+  function _scheduleHistoryCapture(immediate) {
+    if (_historyTimer !== null) {
+      clearTimeout(_historyTimer);
+      _historyTimer = null;
+    }
+    if (immediate) {
+      _flushHistoryCapture();
+      return;
+    }
+    _historyTimer = setTimeout(function () {
+      _historyTimer = null;
+      _flushHistoryCapture();
+    }, 500);
+  }
+
+  function _contentUndo() {
+    if (_historyCurrentId === null) return;
+    var current = _historyNodes[_historyCurrentId];
+    if (!current || current.parentId === null) return;
+
+    _flushHistoryCapture();
+
+    current = _historyNodes[_historyCurrentId];
+    if (!current || current.parentId === null) return;
+
+    var undoDiff = current.diff;
+    var parentMd = _reconstructContentAtNode(current.parentId);
+    if (parentMd === null) return;
+
+    var parent = _historyNodes[current.parentId];
+    _historyCurrentId = current.parentId;
+    _historyLastMd = parentMd;
+
+    _historySetContent(parentMd);
+    _restoreHistoryCursor(parent ? parent.cursor : null, undoDiff, parentMd, false);
+  }
+
+  function _contentRedo() {
+    if (_historyCurrentId === null) return;
+    var current = _historyNodes[_historyCurrentId];
+    if (!current || !current.activeChildId) return;
+
+    var child = _historyNodes[current.activeChildId];
+    if (!child) return;
+
+    var childMd = _reconstructContentAtNode(child.id);
+    if (childMd === null) return;
+
+    _historyCurrentId = child.id;
+    _historyLastMd = childMd;
+
+    _historySetContent(childMd);
+    _restoreHistoryCursor(child.cursor, child.diff, childMd, true);
+  }
+
+  function _historySetContent(markdown) {
+    if (!wysiwygEditor || !wysiwygEditor._historyApplyContent) return;
+    wysiwygEditor._historyApplyContent(markdown);
+  }
+
+  // --- End Unified Content Undo DAG ---
 
   function _fetchLinkIndex() {
     if (typeof liveWysiwygLinkCheckPort === 'undefined' || !liveWysiwygLinkCheckPort) {
@@ -11803,6 +12344,7 @@
 
   function _enterNavEditMode() {
     if (_navEditMode) return;
+    _flushHistoryCapture();
     _navEditMode = true;
     if (_batchClaimedPaths) _batchClaimedPaths.clear();
 
@@ -20328,17 +20870,24 @@
         }
       }
 
-      if (!_navEditMode && !dialogOpen && (e.metaKey || e.ctrlKey) && e.key === 'z') {
-        if (!e.shiftKey && _navSnapshotIndex > 0) {
-          e.preventDefault(); e.stopImmediatePropagation(); _navUndo(); return;
+      if (!_navEditMode && !dialogOpen && (e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'y')) {
+        var _ael = document.activeElement;
+        var _hasEditFocus = _ael && (_ael.tagName === 'TEXTAREA' || _ael.tagName === 'INPUT' || _ael.isContentEditable);
+        if (!_hasEditFocus) {
+          if (e.key === 'z' && !e.shiftKey && _navSnapshotIndex > 0) {
+            e.preventDefault(); e.stopImmediatePropagation(); _navUndo(); return;
+          }
+          if ((e.key === 'y' || (e.key === 'z' && e.shiftKey)) && _navSnapshotIndex < _navSnapshots.length - 1) {
+            e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
+          }
+        } else {
+          if (e.key === 'z' && !e.shiftKey) {
+            e.preventDefault(); e.stopImmediatePropagation(); _contentUndo(); return;
+          }
+          if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+            e.preventDefault(); e.stopImmediatePropagation(); _contentRedo(); return;
+          }
         }
-        if ((e.shiftKey || e.key === 'y') && _navSnapshotIndex < _navSnapshots.length - 1) {
-          e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
-        }
-      }
-      if (!_navEditMode && !dialogOpen && (e.metaKey || e.ctrlKey) && e.key === 'y' &&
-          _navSnapshotIndex < _navSnapshots.length - 1) {
-        e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
       }
 
       if (e.key === '.') {
@@ -20741,7 +21290,74 @@
         wysiwygEditor.markdownArea.scrollTop = 0;
         if (wysiwygEditor.markdownEditorContainer) wysiwygEditor.markdownEditorContainer.scrollTop = 0;
       }
+      _historyReset(markdown);
     };
+
+    wysiwygEditor._historyApplyContent = function (markdown) {
+      textarea.value = markdown;
+      var parsed = parseFrontmatter(markdown);
+      wysiwygEditor._liveWysiwygFrontmatter = parsed.frontmatter;
+      if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor.editableArea) {
+        var html = wysiwygEditor._markdownToHtml(parsed.body);
+        wysiwygEditor.editableArea.innerHTML = html;
+      } else if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
+        wysiwygEditor.markdownArea.value = markdown;
+        if (wysiwygEditor._updateMarkdownLineNumbers) wysiwygEditor._updateMarkdownLineNumbers();
+      }
+      if (_pristineContent !== null && !isFocusModeActive) {
+        var changed = markdown !== _pristineContent;
+        if (_upstreamSaveBtn) {
+          if (changed) _upstreamSaveBtn.classList.remove('live-edit-hidden');
+          else _upstreamSaveBtn.classList.add('live-edit-hidden');
+        }
+        if (_upstreamCancelBtn) {
+          if (changed) _upstreamCancelBtn.classList.remove('live-edit-hidden');
+          else _upstreamCancelBtn.classList.add('live-edit-hidden');
+        }
+      }
+      if (isFocusModeActive && _focusOverlay && _focusOverlay._updateSaveDiscard) {
+        _focusOverlay._updateSaveDiscard();
+      }
+    };
+
+    _historyReset(initialValue);
+
+    (function attachHistoryListeners() {
+      var ea = wysiwygEditor.editableArea;
+      var ma = wysiwygEditor.markdownArea;
+      if (ea && !ea.dataset.liveWysiwygHistoryAttached) {
+        ea.dataset.liveWysiwygHistoryAttached = '1';
+        ea.addEventListener('input', function (e) {
+          if (wysiwygEditor.currentMode !== 'wysiwyg') return;
+          var immediate = false;
+          if (e.inputType === 'insertText' && e.data) {
+            if (/[\s.,;:!?\-=+(){}[\]<>\/\\|@#$%^&*~`"']/.test(e.data)) immediate = true;
+          } else if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') {
+            immediate = true;
+          } else if (e.inputType === 'insertFromPaste' || e.inputType === 'insertFromDrop') {
+            immediate = true;
+          } else if (e.inputType && e.inputType.indexOf('format') === 0) {
+            immediate = true;
+          } else if (e.inputType && e.inputType.indexOf('delete') === 0) {
+            immediate = true;
+          }
+          _scheduleHistoryCapture(immediate);
+        });
+      }
+      if (ma && !ma.dataset.liveWysiwygHistoryAttached) {
+        ma.dataset.liveWysiwygHistoryAttached = '1';
+        ma.addEventListener('input', function () {
+          if (wysiwygEditor.currentMode !== 'markdown') return;
+          _scheduleHistoryCapture(false);
+        });
+        ma.addEventListener('keydown', function (e) {
+          if (wysiwygEditor.currentMode !== 'markdown') return;
+          if (e.key === ' ' || e.key === 'Enter' || /^[.,;:!?\-=+(){}[\]<>\/\\|@#$%^&*~`"']$/.test(e.key)) {
+            _scheduleHistoryCapture(true);
+          }
+        });
+      }
+    })();
 
     (function () {
       var ma = wysiwygEditor.markdownArea;
@@ -21152,6 +21768,7 @@
           if (!sel || sel.isCollapsed || !sel.rangeCount) return;
           var pasted = (e.clipboardData || window.clipboardData).getData('text');
           if (!pasted || !urlRe.test(pasted.trim())) return;
+          _flushHistoryCapture();
           e.preventDefault();
           var url = pasted.trim();
           document.execCommand('createLink', false, url);
@@ -21173,6 +21790,7 @@
           if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
           var pasted = (e.clipboardData || window.clipboardData).getData('text');
           if (!pasted) return;
+          _flushHistoryCapture();
           var url = pasted.trim();
           if (!imgExtRe.test(url)) return;
 
@@ -25617,6 +26235,7 @@
         if (wysiwygEditor.currentMode !== 'wysiwyg') return;
         var clipHtml = (e.clipboardData || window.clipboardData).getData('text/html');
         if (!clipHtml) return;
+        _flushHistoryCapture();
 
         var temp = document.createElement('div');
         temp.innerHTML = clipHtml;

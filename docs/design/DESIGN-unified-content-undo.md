@@ -1,0 +1,251 @@
+# Unified Content Undo — Design Document
+
+## Overview
+
+The WYSIWYG editor uses a DAG-based undo/redo system for document content. All changes in both WYSIWYG and markdown modes are tracked as line-level markdown diffs. The DAG never discards redo branches, enabling future non-linear branch navigation. The system is independent of the nav snapshot undo system and survives nav edit mode transitions.
+
+All code lives in `live-wysiwyg-integration.js`.
+
+## Problem
+
+Browser native undo (`document.execCommand('undo')` / textarea undo) is mode-specific:
+
+- **WYSIWYG mode**: the contenteditable undo stack tracks DOM mutations. Mode switches, `innerHTML` assignments, and DOM reparenting during nav edit transitions destroy the stack.
+- **Markdown mode**: the textarea undo stack tracks text changes. Switching to WYSIWYG mode replaces the textarea content programmatically, which either clears or corrupts the stack.
+
+After any mode switch or nav edit transition, `Cmd+Z` does nothing. The user loses their entire editing history.
+
+## Architecture
+
+### DAG Data Structure
+
+Content history is a directed acyclic graph (tree) where each node represents a document state. The root node stores the full markdown content; all other nodes store a line-level diff from their parent.
+
+```
+Global variables:
+  _historyNodes = {}        // id → node (flat map for O(1) lookup)
+  _historyCurrentId = null  // id of the current position in the DAG
+  _historyRootMd = null     // full markdown at the root node
+  _historyNextId = 0        // auto-incrementing node ID
+  _historyTimer = null      // debounce timer for capture scheduling
+  _historyLastMd = null     // markdown at _historyCurrentId (cached for fast diff)
+```
+
+### Node Format
+
+```
+{
+  id: number,
+  parentId: number | null,
+  children: number[],        // ordered by creation time (oldest first)
+  activeChildId: number | null,  // which child Cmd+Shift+Z follows
+  diff: { ops: [...] } | null,  // null for root node only
+  cursor: {
+    mode: 'wysiwyg' | 'markdown',
+    start: number,             // markdown: selectionStart
+    end: number,               // markdown: selectionEnd
+    semantic: object | null    // wysiwyg: captureSemanticSelection() result
+  },
+  timestamp: number,
+  summary: string | null       // auto-generated human-readable change description
+}
+```
+
+### Diff Format
+
+Each diff contains an array of line-level operations:
+
+```
+{
+  ops: [
+    { type: 'replace', line: 5, count: 2, old: ['...', '...'], new: ['...'] },
+    { type: 'insert', afterLine: 10, lines: ['...', '...'] },
+    { type: 'delete', line: 15, count: 1, old: ['...'] }
+  ]
+}
+```
+
+- `replace`: lines `line` through `line + count - 1` are replaced with `new` lines
+- `insert`: new lines are inserted after `afterLine` (0 = before first line)
+- `delete`: `count` lines starting at `line` are removed; `old` stores them for undo
+
+**Undo**: reverse each op (replace swaps old/new, insert → delete, delete → insert), applied in reverse order.
+
+**Redo**: apply ops in forward order.
+
+### Summary Generation
+
+`_generateSummary(diff)` produces a human-readable string from the diff ops:
+
+- Single-line text change → `"edited line N"`
+- Multi-line insert between ``` delimiters → `"inserted code block"`
+- Line starting with `#` added/changed → `"changed heading"`
+- Admonition insert (`!!!`/`???`/`???+`) → `"inserted admonition"`
+- List items added → `"added list items"`
+- Fallback → `"edited N lines"`
+
+## Markdown-Aware Construct Grouping
+
+When computing a diff, multi-line markdown constructs that were inserted or deleted as a whole unit are grouped into a single op:
+
+- **Code blocks**: lines between matching ` ``` ` delimiters
+- **Admonitions**: `!!!`/`???`/`???+` line plus indented body lines
+- **Blockquotes**: consecutive `> ` prefixed lines
+- **Lists**: consecutive list items at the same or deeper indent level
+- **Horizontal rules**: `---`, `***`, `___`
+
+Grouping only applies when an entire construct appears or disappears in one diff. If the user edits a single line within a construct (e.g., changes code inside a code block), the diff contains only the changed lines — the construct is not grouped.
+
+## Capture Points and Timing
+
+### Debounced Capture (Typing)
+
+`_scheduleHistoryCapture()` is called on every `input` event from both `editableArea` and `markdownArea`.
+
+- **Regular characters**: reset a 500ms debounce timer
+- **Word boundaries** (space, punctuation, Enter): flush immediately (captures the completed word/line), then start a new debounce window
+- **Timer expiry**: capture snapshot
+
+### Immediate Flush
+
+`_flushHistoryCapture()` is called before any transition that could affect content or mode:
+
+| Trigger | Location |
+|---------|----------|
+| Mode switch | `proto.switchToMode` in `patchSetValueAndGetValueForFrontmatter` |
+| Nav edit mode entry | `_enterNavEditMode` |
+| Paste | `ea.addEventListener('paste', ...)` handlers |
+| Toolbar format commands | `_handleToolbarClick`, `_insertCodeBlock`, `_wrapSelectionInBlockquote`, etc. |
+
+### Corruption Guard
+
+Before creating a diff node, the current markdown is passed through `_doubleRenderCheck()` (md → html → md → html, compare normalized HTML). If the check fails:
+
+1. Log `console.log('[UNDO] history capture skipped: double-render corruption detected')`
+2. Skip this capture entirely
+3. The content will be captured at the next successful checkpoint
+
+This prevents storing diffs that would produce corrupted content on undo/redo restore.
+
+## Undo / Redo Flow
+
+### Undo (`Cmd+Z` with content editor focused)
+
+1. If `_historyCurrentId` is the root node, do nothing
+2. Flush any pending capture (so current typing is saved as a node first)
+3. Get current node's diff, reverse-apply to reconstruct parent's markdown
+4. Set editor content via `_loadContent()` (works in whichever mode is active)
+5. Restore cursor from parent node's stored cursor
+6. Set `_historyCurrentId = parentId`, update `_historyLastMd` cache
+
+### Redo (`Cmd+Shift+Z` / `Cmd+Y` with content editor focused)
+
+1. If current node has no `activeChildId`, do nothing
+2. Get activeChild's diff, apply forward to reconstruct child's markdown
+3. Set editor content, restore cursor from child node
+4. Set `_historyCurrentId = activeChildId`, update `_historyLastMd` cache
+
+### New Change After Undo (Branching)
+
+1. User undoes to node B, then starts typing
+2. New node F is created as child of B
+3. B's `activeChildId` is set to F (redo now follows the new branch)
+4. B's old children (C, D, ...) remain in the tree — never discarded
+5. B's `children` array becomes `[C, F]` (or `[C, D, F]` etc.)
+
+## Cursor Preservation
+
+Each node stores cursor at capture time:
+
+- **Markdown mode**: `{ mode: 'markdown', start: selectionStart, end: selectionEnd, semantic: null }`
+- **WYSIWYG mode**: `{ mode: 'wysiwyg', start: estimatedMdOffset, end: estimatedMdOffset, semantic: captureSemanticSelection(editableArea) }`
+
+The WYSIWYG capture estimates a markdown character offset via `_estimateMdOffsetFromWysiwyg`, which counts the text length before the cursor in the editable area. This offset is approximate but enables meaningful cross-mode cursor placement.
+
+On restore (`_restoreHistoryCursor(cursor, diff, mdContent, isRedo)`):
+
+1. **Same mode, markdown**: `setSelectionRange(start, end)` directly.
+2. **Same mode, WYSIWYG**: `restoreSelectionFromSemantic(editableArea, cursor.semantic)`.
+3. **Cross-mode with diff**: `_diffToMdOffset` computes a markdown character offset from the diff operations. For **redo** (`isRedo=true`), the offset points to the **end** of the last changed region (end of inserted/replaced lines). For **undo** (`isRedo=false`), the offset points to the **start** of the first changed region.
+4. **Cross-mode without diff**: falls back to the stored `cursor.start` offset.
+5. **Last resort**: focuses the editor at position 0.
+
+`_placeCursorAtMdOffset` translates a markdown character offset to the appropriate cursor position for the current mode — directly for markdown (`setSelectionRange`), or by walking WYSIWYG block elements to find the corresponding block and placing the cursor at the end of that block.
+
+## Keyboard Integration
+
+In `_globalKeydownRouter` (line ~20277), the existing `_hasEditFocus` path is modified:
+
+**Before** (current): logs "skipped, edit focus active" and lets browser handle it.
+
+**After**: intercepts and dispatches to the custom undo manager:
+
+```
+if (_hasEditFocus) {
+  if (e.key === 'z' && !e.shiftKey) {
+    e.preventDefault(); e.stopImmediatePropagation(); _contentUndo(); return;
+  }
+  if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+    e.preventDefault(); e.stopImmediatePropagation(); _contentRedo(); return;
+  }
+}
+```
+
+The nav-edit-mode undo path (`if (_navEditMode && !dialogOpen)`) is completely independent and unchanged.
+
+## Lifecycle
+
+- **Initialization**: when `replaceTextareaWithWysiwyg` creates the editor, a root node is created with the initial markdown content. `_historyRootMd = initialValue`.
+- **Page navigation**: `_loadContent()` resets the entire DAG (new root with loaded content). All previous history is discarded.
+- **Save**: `_resetPristineContent()` does NOT clear the DAG. The user may still want to undo after saving. History is only cleared on page navigation.
+- **Pruning**: when total node count exceeds ~200, oldest leaf branches are pruned (nodes with no children that are not on the current path from root to `_historyCurrentId`).
+
+## Extensibility for Non-Linear Redo
+
+The DAG preserves all redo branches with metadata needed for a future branch navigation UI:
+
+**Data at branch points:**
+- `node.children` lists all branches (in creation order)
+- Each child has `summary` and `timestamp` for branch picker display
+- `node.activeChildId` marks the default redo path
+
+**Helper functions (built now, consumed by future UI):**
+- `_getHistoryBranchPoints()` — all nodes where `children.length > 1`
+- `_getHistoryBranches(nodeId)` — `[{ childId, summary, timestamp, depth }]` for each child
+- `_switchHistoryBranch(nodeId, childId)` — changes `activeChildId` for a future branch picker
+- `_reconstructContentAtNode(nodeId)` — returns full markdown at any node (for preview)
+
+## Relationship to Nav Snapshot Undo
+
+Content undo and nav snapshot undo are completely independent:
+
+| | Content Undo (this system) | Nav Snapshot Undo |
+|---|---|---|
+| **Tracks** | Document text changes | navData state (selections, moves, weights) |
+| **Storage** | `_historyNodes` DAG | `_navSnapshots` array |
+| **Dispatch** | `Cmd+Z` when content editor has focus | `Cmd+Z` when `_navEditMode` or when no edit focus with preserved snapshots |
+| **Survives nav edit** | Yes (JS array in memory) | N/A (is the nav edit system) |
+
+They never conflict: dispatch is determined by `_navEditMode` flag and focus state.
+
+## Rules
+
+1. **Always flush before mode switch.** `_flushHistoryCapture()` must be called before `switchToMode` begins conversion. Failing to flush loses the pre-switch typing.
+
+2. **Always flush before nav edit entry.** `_flushHistoryCapture()` must be called at the top of `_enterNavEditMode`. The DAG persists in memory across nav edit transitions.
+
+3. **Never clear the DAG on nav edit exit.** The DAG is a JS array unaffected by DOM transitions. `_exitNavEditMode` must not touch `_historyNodes` or `_historyCurrentId`.
+
+4. **Never clear the DAG on save.** Only clear on page navigation (`_loadContent` with new document).
+
+5. **Cmd+Z in content editor always dispatches to content undo.** When `_hasEditFocus` is true, `Cmd+Z` must be `preventDefault`'d and routed to `_contentUndo()`. Browser native undo must never fire.
+
+6. **Skip capture on corruption.** If `_doubleRenderCheck()` fails, skip the capture and log. Do not store a diff that could produce corrupted content on restore.
+
+7. **Diffs are line-level, not character-level.** The unit of change is a line. Word-boundary grouping is achieved by controlling *when* captures happen (debounce timing), not by storing character-level diffs.
+
+8. **Root node always stores full content.** `_historyRootMd` is the single source of truth for reconstructing any node's content by walking diffs from root.
+
+9. **`activeChildId` determines default redo.** `Cmd+Shift+Z` always follows `activeChildId`. A future branch picker can change this via `_switchHistoryBranch`.
+
+10. **Never discard redo branches.** Old children remain in the `children` array when new branches are created. Only pruning (lifecycle cap) removes nodes, and it only removes leaves not on the current path.

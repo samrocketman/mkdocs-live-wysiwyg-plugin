@@ -1881,6 +1881,21 @@
       if (!b64) continue;
       var decoded = _b64Decode(b64);
       if (/^\s*<details\b/i.test(decoded)) {
+        var detailsTagMatch = decoded.match(/^\s*<details\b([^>]*)>/i);
+        var detailsAttrs = detailsTagMatch ? detailsTagMatch[1] : '';
+        var detailsClassMatch = detailsAttrs.match(/class\s*=\s*["']([^"']*)["']/i);
+        var detailsHasOpen = /\bopen\b/i.test(detailsAttrs);
+        var detailsType = 'note';
+        if (detailsClassMatch) {
+          var detailsClasses = detailsClassMatch[1].split(/\s+/);
+          for (var dti = 0; dti < ADMONITION_TYPE_IDS.length; dti++) {
+            if (detailsClasses.indexOf(ADMONITION_TYPE_IDS[dti]) >= 0) {
+              detailsType = ADMONITION_TYPE_IDS[dti];
+              break;
+            }
+          }
+        }
+
         var summaryMatch = decoded.match(/<summary\b[^>]*>([\s\S]*?)<\/summary>/i);
         var summaryText = summaryMatch ? summaryMatch[1].replace(/<[^>]+>/g, '').trim() : 'Details';
         var bodyMd = decoded;
@@ -1891,9 +1906,9 @@
         bodyMd = _dedentLines(bodyMd);
 
         var newDetails = document.createElement('details');
-        newDetails.className = 'note';
+        newDetails.className = detailsType;
         newDetails.setAttribute('data-details-tag', '1');
-        newDetails.setAttribute('data-default-collapsed', '1');
+        if (!detailsHasOpen) newDetails.setAttribute('data-default-collapsed', '1');
         newDetails.setAttribute('contenteditable', 'true');
         var newSummary = document.createElement('summary');
         newSummary.textContent = summaryText;
@@ -1951,7 +1966,7 @@
     if (hasTypeClass) return;
     det.classList.add('note');
     det.setAttribute('data-details-tag', '1');
-    det.setAttribute('data-default-collapsed', '1');
+    if (!det.hasAttribute('open')) det.setAttribute('data-default-collapsed', '1');
     det.setAttribute('contenteditable', 'true');
     if (!det.querySelector(':scope > summary')) {
       var sum = document.createElement('summary');
@@ -4047,7 +4062,11 @@
               detailsBodyParts.push(this._nodeToMarkdownRecursive(dc, options || {}));
             }
             var detailsBody = detailsBodyParts.join('\n').trim();
-            return '<details>\n<summary>' + detailsSummary + '</summary>\n\n' + detailsBody + '\n\n</details>\n\n';
+            var detailsOpenTag = '<details';
+            if (type) detailsOpenTag += ' class="' + type + '"';
+            if (isExpanded) detailsOpenTag += ' open';
+            detailsOpenTag += '>';
+            return detailsOpenTag + '\n<summary>' + detailsSummary + '</summary>\n\n' + detailsBody + '\n\n</details>\n\n';
           }
 
           var contentParts = [];
@@ -4124,6 +4143,28 @@
           }
           out += '\n' + (bodyIndented ? bodyIndented + '\n' : '');
           return out + '\n';
+        } else if (_isDetailsAdmonition) {
+          var fbTitleEl = node.querySelector(':scope > summary');
+          var fbSummary = fbTitleEl ? fbTitleEl.textContent.replace(/\u00a0/g, ' ').trim() : 'Details';
+          var fbExpanded = !node.hasAttribute('data-default-collapsed');
+          var fbBodyParts = [];
+          for (var fj = 0; fj < node.childNodes.length; fj++) {
+            var fc = node.childNodes[fj];
+            if (fc === fbTitleEl) continue;
+            if (fc.nodeType === 1 && fc.classList && fc.classList.contains('md-admonition-settings-btn')) continue;
+            if (fc.nodeType === 3) {
+              var ftxt = fc.textContent;
+              if (ftxt && !/^[\s\u200B\u200C\u200D\uFEFF]*$/.test(ftxt)) fbBodyParts.push(ftxt);
+              continue;
+            }
+            if (fc.nodeType !== 1) continue;
+            fbBodyParts.push(this._nodeToMarkdownRecursive(fc, options || {}));
+          }
+          var fbBody = fbBodyParts.join('\n').trim();
+          var fbOpenTag = '<details';
+          if (fbExpanded) fbOpenTag += ' open';
+          fbOpenTag += '>';
+          return fbOpenTag + '\n<summary>' + fbSummary + '</summary>\n\n' + fbBody + '\n\n</details>\n\n';
         }
       }
       if (node.nodeName === 'A') {
@@ -5251,7 +5292,7 @@
             if (/[^\s]/.test(afterCloseOnLine)) {
               blockNewlinesAfter = 0;
             } else {
-              var jBlock = i + blockLines.length;
+              var jBlock = i + 1;
               var blanksBlock = 0;
               while (jBlock < lines.length && /^\s*$/.test(lines[jBlock])) {
                 blanksBlock++;
@@ -7009,6 +7050,32 @@
           ensureTrailingNewlines(2);
           return;
         }
+        ensureTrailingNewlines(md.length > 0 ? 2 : 0);
+        var detFbPrefix = '??? note';
+        var detFbSummaryEl = null;
+        for (var fsc = node.firstChild; fsc; fsc = fsc.nextSibling) {
+          if (fsc.nodeType === 1 && fsc.nodeName === 'SUMMARY') { detFbSummaryEl = fsc; break; }
+        }
+        if (detFbSummaryEl) {
+          var detFbSummaryText = detFbSummaryEl.textContent.replace(/\u00b6/g, '').trim();
+          if (detFbSummaryText && detFbSummaryText !== 'Note') detFbPrefix += ' "' + detFbSummaryText + '"';
+        }
+        md += detFbPrefix + '\n';
+        var detFbSavedLen = md.length;
+        for (var fdc = node.firstChild; fdc; fdc = fdc.nextSibling) {
+          if (fdc === detFbSummaryEl) continue;
+          if (fdc.nodeType === 1 && fdc.classList && fdc.classList.contains('md-admonition-settings-btn')) continue;
+          walk(fdc);
+        }
+        var detFbBody = md.slice(detFbSavedLen);
+        md = md.slice(0, detFbSavedLen);
+        var detFbLines = detFbBody.split('\n');
+        for (var fbli = 0; fbli < detFbLines.length; fbli++) {
+          md += detFbLines[fbli] ? '    ' + detFbLines[fbli] : '';
+          if (fbli < detFbLines.length - 1) md += '\n';
+        }
+        ensureTrailingNewlines(2);
+        return;
       }
 
       if (tag === 'HR') {

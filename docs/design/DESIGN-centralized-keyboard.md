@@ -141,42 +141,71 @@ A single document-level capture-phase handler that replaces ~8 separate `documen
 ### Routing Logic
 
 ```javascript
-document.addEventListener('keydown', _globalKeydownRouter, true);
+document.addEventListener('keydown', _globalKeydownRouter);
 
 function _globalKeydownRouter(e) {
-  if (_isDialogOpen()) return;
+  var dialogOpen = _isNavDialogOpen();
 
+  // --- Escape ---
   if (e.key === 'Escape') {
+    if (dialogOpen) return;  // let Tier 1 handle
     if (_navEditMode)              return _handleNavEditEscape(e);
     if (_admonitionDropdownOpen)   return _handleAdmonitionDropdownEscape(e);
     if (_reviewChangesPopupOpen)   return _handleReviewEscape(e);
   }
+
+  // --- Ctrl+S ---
   if (_isCtrlOrCmd(e) && e.key === 's') {
     if (_focusModeRebuildPromptOpen) return _handleRebuildSave(e);
+    if (dialogOpen) return;
     if (_navEditMode)                return _handleNavSave(e);
     return _handleDocSave(e);
   }
+
+  // --- Ctrl+. ---
   if (_isCtrlOrCmd(e) && e.key === '.') return _handleToggleMode(e);
-  if (_navEditMode && e.key.indexOf('Arrow') === 0) return _handleNavArrowKeys(e);
-  if (_navEditMode && _isUndoRedo(e)) return _handleNavUndoRedo(e);
+
+  // --- Nav edit arrows / enter (no dialog, nav edit only) ---
+  if (_navEditMode && !dialogOpen) {
+    if (e.key.indexOf('Arrow') === 0 && _navKeyboardActiveItem)
+      return _handleNavArrowKeys(e);
+    if (e.key === 'Enter' && _navKeyboardActiveItem && !_hasContentFocus())
+      return _handleNavSave(e);
+  }
+
+  // --- Unified Cmd+Z / Cmd+Shift+Z / Cmd+Y ---
+  if (_isCtrlOrCmd(e) && (e.key === 'z' || e.key === 'y')) {
+    if (_hasContentFocus()) {
+      return _handleContentUndoRedo(e);   // DAG undo — always, regardless of _navEditMode
+    }
+    if (!dialogOpen) {
+      return _handleNavUndoRedo(e);        // nav snapshot undo
+    }
+  }
+
+  // --- Period (read mode) ---
   if (e.key === '.' && _isReadMode()) return _handlePeriodEdit(e);
 }
 ```
 
+**Key principle**: Content undo/redo (DAG) dispatches whenever a content editor element has focus, **regardless** of `_navEditMode` or `dialogOpen` state. Nav undo/redo dispatches only when no content element has focus and no dialog is open. This ensures the user can always undo content changes even while nav edit mode is active.
+
 ### Handler Inventory
 
-| Key | State Guard | Handler | Previously |
-|-----|------------|---------|------------|
-| Escape | `_navEditMode` | `_handleNavEditEscape` | Dynamic add/remove in `_enterNavEditMode`/`_exitNavEditMode` |
-| Escape | `_admonitionDropdownOpen` | `_handleAdmonitionDropdownEscape` | Dynamic add/remove in `showDropdown`/`hideDropdown` |
-| Escape | `_reviewChangesPopupOpen` | `_handleReviewEscape` | Dynamic add/remove in `_showReviewChangesPopup` |
-| Ctrl+S | `_focusModeRebuildPromptOpen` | `_handleRebuildSave` | Dynamic add/remove in rebuild prompt |
-| Ctrl+S | `_navEditMode` | `_handleNavSave` | Dynamic add/remove in `_enterNavEditMode`/`_exitNavEditMode` |
-| Ctrl+S | (default) | `_handleDocSave` | Static IIFE `attachCtrlSSave` |
-| Ctrl+. | (always) | `_handleToggleMode` | Static IIFE `attachCtrlDotToggle` |
-| Arrow keys | `_navEditMode` | `_handleNavArrowKeys` | Dynamic add/remove in `_enterNavEditMode`/`_exitNavEditMode` |
-| Ctrl+Z/Y | `_navEditMode` | `_handleNavUndoRedo` | Dynamic add/remove in `_enterNavEditMode`/`_exitNavEditMode` |
-| Period | `_isReadMode()` | `_handlePeriodEdit` | Static anonymous handler |
+| Key | State Guard | Handler | Notes |
+|-----|------------|---------|-------|
+| Escape | `_navEditMode` | `_handleNavEditEscape` | Clears selection/focus, or prompts discard |
+| Escape | `_admonitionDropdownOpen` | `_handleAdmonitionDropdownEscape` | Dismisses admonition dropdown |
+| Escape | `_reviewChangesPopupOpen` | `_handleReviewEscape` | Dismisses review popup |
+| Ctrl+S | `_focusModeRebuildPromptOpen` | `_handleRebuildSave` | Clicks primary button |
+| Ctrl+S | `_navEditMode` | `_handleNavSave` | Confirms nav save |
+| Ctrl+S | (default) | `_handleDocSave` | Saves doc; falls through to nav save if doc clean |
+| Ctrl+. | (always) | `_handleToggleMode` | Toggles WYSIWYG/Markdown |
+| Arrow keys | `_navEditMode` + `_navKeyboardActiveItem` | `_handleNavArrowKeys` | Nav item movement |
+| Enter | `_navEditMode` + `_navKeyboardActiveItem` + no content focus | `_handleNavSave` | Confirms nav save |
+| Ctrl+Z/Y | Content focus (any mode) | `_handleContentUndoRedo` | DAG undo/redo — always wins when content has focus |
+| Ctrl+Z/Y | No content focus, no dialog | `_handleNavUndoRedo` | Nav snapshot undo/redo |
+| Period | `_isReadMode()` | `_handlePeriodEdit` | Read-mode edit trigger |
 
 ### State Flags
 
@@ -258,7 +287,7 @@ To add a new editor keyboard handler:
 
 4. **State flags over dynamic registration.** In Tier 2, context-dependent shortcuts use boolean flags checked by the router, not dynamic `addEventListener`/`removeEventListener`. This eliminates handler leak risks.
 
-5. **Dialog-open guard in Tier 2.** The global router yields when any dialog overlay is open. Dialog-level keyboard handling (Tier 1) takes priority.
+5. **Dialog-open guard in Tier 2.** The global router yields to dialog-level keyboard handling (Tier 1) for most shortcuts. **Exception**: Content undo/redo (`Cmd+Z`/`Cmd+Shift+Z`/`Cmd+Y`) bypasses the dialog-open check when a content editor element has focus, so the user can always undo content changes even while a link edit dialog or other popup is open.
 
 6. **Button-focus override in Tier 1.** When a `<button>` inside the dialog has focus, Enter is not intercepted. This is enforced by `_attachDialogKeyboard` and cannot be accidentally omitted.
 

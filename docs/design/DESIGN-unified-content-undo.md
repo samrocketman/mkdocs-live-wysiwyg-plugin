@@ -176,24 +176,10 @@ On restore (`_restoreHistoryCursor(cursor, diff, mdContent, isRedo)`):
 
 ## Keyboard Integration
 
-In `_globalKeydownRouter` (line ~20277), the existing `_hasEditFocus` path is modified:
+In `_globalKeydownRouter`, all `Cmd+Z` / `Cmd+Shift+Z` / `Cmd+Y` handling is unified in a single dispatch block that runs regardless of `_navEditMode` state:
 
-**Before** (current): logs "skipped, edit focus active" and lets browser handle it.
-
-**After**: intercepts and dispatches to the custom undo manager:
-
-```
-if (_hasEditFocus) {
-  if (e.key === 'z' && !e.shiftKey) {
-    e.preventDefault(); e.stopImmediatePropagation(); _contentUndo(); return;
-  }
-  if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
-    e.preventDefault(); e.stopImmediatePropagation(); _contentRedo(); return;
-  }
-}
-```
-
-The nav-edit-mode undo path (`if (_navEditMode && !dialogOpen)`) is completely independent and unchanged.
+1. **Content focus** (`TEXTAREA`, `INPUT`, or `contentEditable`): always dispatches to `_contentUndo()` / `_contentRedo()`. This works in both nav edit mode and normal mode, and is not gated by `dialogOpen` (so it works even when a link edit dialog is open).
+2. **No content focus, no dialog open**: dispatches to `_navUndo()` / `_navRedo()` for nav snapshot undo.
 
 ## Lifecycle
 
@@ -225,10 +211,10 @@ Content undo and nav snapshot undo are completely independent:
 |---|---|---|
 | **Tracks** | Document text changes | navData state (selections, moves, weights) |
 | **Storage** | `_historyNodes` DAG | `_navSnapshots` array |
-| **Dispatch** | `Cmd+Z` when content editor has focus | `Cmd+Z` when `_navEditMode` or when no edit focus with preserved snapshots |
+| **Dispatch** | `Cmd+Z` when content editor has focus (any mode, including nav edit) | `Cmd+Z` when no content focus and no dialog open |
 | **Survives nav edit** | Yes (JS array in memory) | N/A (is the nav edit system) |
 
-They never conflict: dispatch is determined by `_navEditMode` flag and focus state.
+They never conflict: dispatch is determined solely by whether the active element is a content editor (`TEXTAREA`, `INPUT`, or `contentEditable`). Content focus always wins, regardless of `_navEditMode` state.
 
 ## Rules
 

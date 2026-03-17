@@ -10,6 +10,11 @@ set -euo pipefail
 WYSIWYG_VERSION=0.2.5
 YML_INSTALL_FILES_VERSION="v3.8"
 
+# GITHUB_DOWNLOAD_MIRROR=...
+# RAW_GITHUB_DOWNLOAD_MIRROR=...
+yq_mirror="${GITHUB_DOWNLOAD_MIRROR:-https://github.com}"
+export GITHUB_DOWNLOAD_MIRROR yq_mirror
+
 # set SKIP_NEXUS=1 if you don't want to download from Nexus on VPN.
 TECHDOCS_HOST="${TECHDOCS_HOST:-127.0.0.1}"
 TECHDOCS_PORT="${TECHDOCS_PORT:-8000}"
@@ -82,7 +87,7 @@ uv() {
       mkdir -p ~/.techdocs
       if [ ! -x ~/.techdocs/download-utilities.sh ]; then
         curl -fsSL -o ~/.techdocs/download-utilities.sh \
-          "https://raw.githubusercontent.com/samrocketman/yml-install-files/${YML_INSTALL_FILES_VERSION}/download-utilities.sh"
+          "${RAW_GITHUB_DOWNLOAD_MIRROR:-https://raw.githubusercontent.com}/samrocketman/yml-install-files/${YML_INSTALL_FILES_VERSION}/download-utilities.sh"
         chmod +x ~/.techdocs/download-utilities.sh
       fi
       export DESTINATION_DIR=~/.techdocs yaml_file='-'

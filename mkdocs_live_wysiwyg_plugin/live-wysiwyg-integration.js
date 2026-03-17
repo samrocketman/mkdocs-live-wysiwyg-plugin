@@ -2914,7 +2914,6 @@
       editableArea._linkChainAttached = true;
 
       editableArea.addEventListener('mouseover', function (e) {
-        if (_navEditMode) return;
         if (_activeLinkDropdown) return;
         var node = e.target;
         while (node && node !== editableArea) {
@@ -2945,7 +2944,6 @@
       });
 
       document.addEventListener('selectionchange', function () {
-        if (_navEditMode) return;
         if (!wysiwygEditor || wysiwygEditor.currentMode !== 'wysiwyg') return;
         if (_activeLinkDropdown) return;
         var anchor = _findAnchorAtCursor(editableArea);
@@ -9500,32 +9498,30 @@
     } else if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor.editableArea) {
       var ea = wysiwygEditor.editableArea;
       ea.focus();
-      var lines = mdContent ? mdContent.split('\n') : [];
-      var charCount = 0, targetLine = 0;
-      for (var i = 0; i < lines.length; i++) {
-        if (charCount + lines[i].length + 1 > mdOffset) { targetLine = i; break; }
-        charCount += lines[i].length + 1;
-        targetLine = i + 1;
-      }
-      var blocks = ea.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, pre, blockquote, div.admonition, hr, table');
-      var blockIdx = Math.min(targetLine, blocks.length > 0 ? blocks.length - 1 : 0);
-      if (blocks.length > 0) {
-        var block = blocks[blockIdx];
-        var range = document.createRange();
-        var sel = window.getSelection();
-        if (block.childNodes.length > 0) {
-          var lastChild = block.childNodes[block.childNodes.length - 1];
-          if (lastChild.nodeType === 3) {
-            range.setStart(lastChild, lastChild.textContent.length);
-          } else {
-            range.setStartAfter(lastChild);
-          }
-        } else {
-          range.setStart(block, 0);
+      var walker = document.createTreeWalker(ea, NodeFilter.SHOW_TEXT, null, false);
+      var n, pos2 = 0, lastNode = null, lastLen = 0;
+      while ((n = walker.nextNode())) {
+        lastNode = n;
+        lastLen = n.textContent.length;
+        if (pos2 + lastLen >= mdOffset) {
+          var off = Math.min(mdOffset - pos2, lastLen);
+          var range = document.createRange();
+          range.setStart(n, off);
+          range.collapse(true);
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return;
         }
-        range.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(range);
+        pos2 += lastLen;
+      }
+      if (lastNode) {
+        var range2 = document.createRange();
+        range2.setStart(lastNode, lastLen);
+        range2.collapse(true);
+        var sel2 = window.getSelection();
+        sel2.removeAllRanges();
+        sel2.addRange(range2);
       }
     }
   }
@@ -10545,7 +10541,7 @@
               _commitNavSnapshot();
               return;
             }
-            if (_navEditMode) {
+            if (_navEditMode && _hasAnyNavFocused()) {
               e.preventDefault();
               e.stopPropagation();
               navItem._expanded = !navItem._expanded;
@@ -10758,14 +10754,8 @@
               return;
             }
             var targetPath = aEl.getAttribute('data-src-path');
-            if (_navEditMode) {
+            if (_navEditMode && _hasAnyNavFocused()) {
               e.stopPropagation();
-              var curPath = _getCurrentSrcPath();
-              var curPageGone = curPath && !_findNavItemByPath(curPath);
-              if (curPageGone) {
-                _navigateToPage(aEl.href, aEl.textContent, targetPath);
-                return;
-              }
               if (navItem._focused) {
                 _clearNavItemFocused();
               } else {
@@ -10823,7 +10813,7 @@
               _commitNavSnapshot();
               return;
             }
-            if (_navEditMode) {
+            if (_navEditMode && _hasAnyNavFocused()) {
               e.preventDefault();
               e.stopPropagation();
               if (navItem._focused) {
@@ -11073,6 +11063,12 @@
   function _hasAnyNavSelected() {
     var found = false;
     _walkNavData(function (it) { if (it._selected) found = true; });
+    return found;
+  }
+
+  function _hasAnyNavFocused() {
+    var found = false;
+    _walkNavData(function (it) { if (it._focused) found = true; });
     return found;
   }
 
@@ -15289,6 +15285,8 @@
     var effectiveMeta = (itemType === 'section' && item.index_meta) ? item.index_meta : item;
     var effectiveIsIndex = itemType === 'section' || (item.isIndex === true);
     var hasFrontmatter = itemType !== 'asset' && !noIndexSection;
+    var isRootIndexItem = _isRootIndex(item) ||
+      (itemType === 'section' && sectionHasIndex && item.src_path === 'index.md');
 
     // ======================================================
     // Content area (above final divider)
@@ -15301,7 +15299,7 @@
 
     // --- Folder name row (sections) ---
     var folderDir, folderBaseName, renameFolderInput, doFolderRename, folderRenameRef;
-    if (itemType === 'section' && (nwConfig.enabled || noIndexSection)) {
+    if (itemType === 'section' && (nwConfig.enabled || noIndexSection) && !isRootIndexItem) {
       folderDir = _getSectionFolderDir(item);
       if (folderDir) {
         folderBaseName = folderDir.indexOf('/') >= 0 ? folderDir.substring(folderDir.lastIndexOf('/') + 1) : folderDir;
@@ -15420,13 +15418,13 @@
     }
 
     // --- First divider (separates name fields from settings) ---
-    if (hasFrontmatter) {
+    if (hasFrontmatter && !isRootIndexItem) {
       addDivider();
     }
 
     // --- Weight + Headless row (pages and sections with index) ---
     var weightRow, weightInput, headlessCb;
-    if (hasFrontmatter) {
+    if (hasFrontmatter && !isRootIndexItem) {
       var defaultWeight = effectiveIsIndex
         ? (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined
           ? nwConfig.frontmatter_defaults.index_weight : -10)
@@ -15580,7 +15578,7 @@
     }
 
     // --- Section with index / Page: Normalize Weights, Delete + Apply ---
-    if (nwConfig.enabled) {
+    if (nwConfig.enabled && !isRootIndexItem) {
       var normalizeTarget = itemType === 'section' ? item : _findParentSectionItem(item);
       if (normalizeTarget) {
         addButtonRow([{ text: 'Normalize Weights', onClick: function () {
@@ -15601,7 +15599,7 @@
 
     var deleteFn;
     var deleteLabel;
-    if (itemType === 'section' && folderDir) {
+    if (itemType === 'section' && folderDir && !isRootIndexItem) {
       deleteLabel = 'Delete';
       deleteFn = function () {
         dropdown.parentNode.removeChild(dropdown);
@@ -20851,34 +20849,41 @@
           return;
         }
         if (e.key === 'Enter' && _navKeyboardActiveItem) {
-          e.preventDefault(); e.stopImmediatePropagation();
-          _confirmNavSave();
-          return;
-        }
-        if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
-          e.preventDefault(); e.stopImmediatePropagation(); _navUndo(); return;
-        }
-        if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
-          e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
+          var _enterEl = document.activeElement;
+          var _enterInContent = _enterEl && (_enterEl.tagName === 'TEXTAREA' || _enterEl.tagName === 'INPUT' || _enterEl.isContentEditable);
+          if (!_enterInContent) {
+            e.preventDefault(); e.stopImmediatePropagation();
+            _confirmNavSave();
+            return;
+          }
         }
       }
 
-      if (!_navEditMode && !dialogOpen && (e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'y')) {
-        var _ael = document.activeElement;
-        var _hasEditFocus = _ael && (_ael.tagName === 'TEXTAREA' || _ael.tagName === 'INPUT' || _ael.isContentEditable);
-        if (!_hasEditFocus) {
-          if (e.key === 'z' && !e.shiftKey && _navSnapshotIndex > 0) {
-            e.preventDefault(); e.stopImmediatePropagation(); _navUndo(); return;
-          }
-          if ((e.key === 'y' || (e.key === 'z' && e.shiftKey)) && _navSnapshotIndex < _navSnapshots.length - 1) {
-            e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
-          }
-        } else {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'y')) {
+        var _undoEl = document.activeElement;
+        var _undoInContent = _undoEl && (_undoEl.tagName === 'TEXTAREA' || _undoEl.tagName === 'INPUT' || _undoEl.isContentEditable);
+        if (_undoInContent) {
           if (e.key === 'z' && !e.shiftKey) {
             e.preventDefault(); e.stopImmediatePropagation(); _contentUndo(); return;
           }
           if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
             e.preventDefault(); e.stopImmediatePropagation(); _contentRedo(); return;
+          }
+        } else if (!dialogOpen) {
+          if (_navEditMode) {
+            if (e.key === 'z' && !e.shiftKey) {
+              e.preventDefault(); e.stopImmediatePropagation(); _navUndo(); return;
+            }
+            if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+              e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
+            }
+          } else {
+            if (e.key === 'z' && !e.shiftKey && _navSnapshotIndex > 0) {
+              e.preventDefault(); e.stopImmediatePropagation(); _navUndo(); return;
+            }
+            if ((e.key === 'y' || (e.key === 'z' && e.shiftKey)) && _navSnapshotIndex < _navSnapshots.length - 1) {
+              e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
+            }
           }
         }
       }

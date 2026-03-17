@@ -861,9 +861,21 @@ class MarkdownWYSIWYG {
         this.markdownArea.classList.add('md-markdown-area');
         this.markdownArea.setAttribute('spellcheck', 'false');
 
+        this.markdownLineMirror = document.createElement('div');
+        this.markdownLineMirror.classList.add('md-markdown-line-mirror');
+        this.markdownLineMirror.setAttribute('aria-hidden', 'true');
+
         this.markdownTextareaWrapper.appendChild(this.markdownArea);
+        this.markdownTextareaWrapper.appendChild(this.markdownLineMirror);
         this.markdownEditorContainer.appendChild(this.markdownLineNumbersDiv);
         this.markdownEditorContainer.appendChild(this.markdownTextareaWrapper);
+
+        if (typeof ResizeObserver !== 'undefined') {
+            this._markdownResizeObserver = new ResizeObserver(() => {
+                if (this.currentMode === 'markdown') this._updateMarkdownLineNumbers();
+            });
+            this._markdownResizeObserver.observe(this.markdownTextareaWrapper);
+        }
 
         this.contentAreaContainer.appendChild(this.markdownEditorContainer);
         this.editorWrapper.appendChild(this.contentAreaContainer);
@@ -927,14 +939,29 @@ class MarkdownWYSIWYG {
     }
 
     _updateMarkdownLineNumbers() {
-        if (!this.markdownArea || !this.markdownLineNumbersDiv) return;
+        if (!this.markdownArea || !this.markdownLineNumbersDiv || !this.markdownLineMirror) return;
 
         const lines = this.markdownArea.value.split('\n');
-        let lineCount = lines.length;
+        const lineCount = lines.length;
 
+        const mirror = this.markdownLineMirror;
+        mirror.innerHTML = '';
+        for (let i = 0; i < lineCount; i++) {
+            const div = document.createElement('div');
+            div.textContent = lines[i] || '\u00A0';
+            mirror.appendChild(div);
+        }
+        if (!mirror.firstChild) {
+            const div = document.createElement('div');
+            div.textContent = '\u00A0';
+            mirror.appendChild(div);
+        }
+
+        const mirrorChildren = mirror.children;
         let lineNumbersHtml = '';
-        for (let i = 1; i <= lineCount; i++) {
-            lineNumbersHtml += `<div>${i}</div>`;
+        for (let i = 0; i < mirrorChildren.length; i++) {
+            const h = mirrorChildren[i].offsetHeight;
+            lineNumbersHtml += '<div style="height:' + h + 'px">' + (i + 1) + '</div>';
         }
         this.markdownLineNumbersDiv.innerHTML = lineNumbersHtml || '<div>1</div>';
         this._autoResizeMarkdownArea();
@@ -2854,10 +2881,16 @@ class MarkdownWYSIWYG {
             this.markdownTabButton.removeEventListener('click', this._boundListeners.onMarkdownTabClick);
         }
 
+        if (this._markdownResizeObserver) {
+            this._markdownResizeObserver.disconnect();
+            this._markdownResizeObserver = null;
+        }
+
         this.hostElement.innerHTML = '';
         this._boundListeners = null;
         this.editableArea = null;
         this.markdownArea = null;
+        this.markdownLineMirror = null;
         this.markdownLineNumbersDiv = null;
         this.markdownTextareaWrapper = null;
         this.markdownEditorContainer = null;

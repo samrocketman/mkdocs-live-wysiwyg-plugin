@@ -332,6 +332,24 @@
  overflow: hidden;
 }
 
+.md-markdown-line-mirror {
+ position: absolute;
+ top: 0;
+ left: 0;
+ right: 0;
+ visibility: hidden;
+ pointer-events: none;
+ padding: 15px;
+ font-family: inherit;
+ font-size: inherit;
+ line-height: inherit;
+ box-sizing: border-box;
+ white-space: pre-wrap;
+ word-wrap: break-word;
+ overflow-wrap: break-word;
+ overflow: hidden;
+}
+
 
 .md-tabs {
  display: flex;

@@ -7939,7 +7939,7 @@
     var keys = [
       'liveWysiwygEditorEnabled', 'liveWysiwygIndent',
       'live_wysiwyg_autofocus', 'live_wysiwyg_focus_remain',
-      'live_wysiwyg_focus_toolbar', 'live_wysiwyg_focus_nav',
+      'live_wysiwyg_focus_toolbar', 'live_wysiwyg_focus_nav', 'live_wysiwyg_focus_toc',
       'live_wysiwyg_show_hidden', 'live_wysiwyg_image_attr_syntax',
       'live_wysiwyg_nav_edit_cursor', 'live_wysiwyg_focus_nav_retry',
       'live_wysiwyg_migration_result', 'live_wysiwyg_migration_normalize',
@@ -9944,8 +9944,12 @@
             if (_navEditMode && _hasAnyNavSelected()) {
               e.preventDefault();
               e.stopPropagation();
-              _clearAllNavSelected();
-              _setNavItemFocused(navItem);
+              if (navItem._selected && navItem._focused && _countNavSelected() === 1) {
+                _clearNavGroup();
+              } else {
+                _clearAllNavSelected();
+                _setNavItemFocused(navItem);
+              }
               _commitNavSnapshot();
               return;
             }
@@ -10152,8 +10156,12 @@
             }
             if (_navEditMode && _hasAnyNavSelected()) {
               e.stopPropagation();
-              _clearAllNavSelected();
-              _setNavItemFocused(navItem);
+              if (navItem._selected && navItem._focused && _countNavSelected() === 1) {
+                _clearNavGroup();
+              } else {
+                _clearAllNavSelected();
+                _setNavItemFocused(navItem);
+              }
               _commitNavSnapshot();
               return;
             }
@@ -10166,8 +10174,12 @@
                 _navigateToPage(aEl.href, aEl.textContent, targetPath);
                 return;
               }
-              _setNavFocusTarget(targetPath);
-              _setNavItemFocused(navItem);
+              if (navItem._focused) {
+                _clearNavItemFocused();
+              } else {
+                _setNavFocusTarget(targetPath);
+                _setNavItemFocused(navItem);
+              }
               _commitNavSnapshot();
               return;
             }
@@ -10210,15 +10222,23 @@
             if (_navEditMode && _hasAnyNavSelected()) {
               e.preventDefault();
               e.stopPropagation();
-              _clearAllNavSelected();
-              _setNavItemFocused(navItem);
+              if (navItem._selected && navItem._focused && _countNavSelected() === 1) {
+                _clearNavGroup();
+              } else {
+                _clearAllNavSelected();
+                _setNavItemFocused(navItem);
+              }
               _commitNavSnapshot();
               return;
             }
             if (_navEditMode) {
               e.preventDefault();
               e.stopPropagation();
-              _setNavItemFocused(navItem);
+              if (navItem._focused) {
+                _clearNavItemFocused();
+              } else {
+                _setNavItemFocused(navItem);
+              }
               _commitNavSnapshot();
               return;
             }
@@ -10464,6 +10484,12 @@
     return found;
   }
 
+  function _countNavSelected() {
+    var c = 0;
+    _walkNavData(function (it) { if (it._selected) c++; });
+    return c;
+  }
+
   function _clearNavFocus() {
     _clearNavItemFocused();
   }
@@ -10523,8 +10549,9 @@
         delete item._selected;
         delete item._groupMode;
         if (!_hasAnyNavSelected()) {
+          var wasFocused = !!item._focused;
           _clearNavGroup();
-          _setNavItemFocused(item);
+          if (!wasFocused) _setNavItemFocused(item);
           _commitNavSnapshot();
           return;
         }
@@ -10538,8 +10565,9 @@
         delete item._selected;
         delete item._groupMode;
         if (!_hasAnyNavSelected()) {
+          var wasFocused = !!item._focused;
           _clearNavGroup();
-          _setNavItemFocused(item);
+          if (!wasFocused) _setNavItemFocused(item);
           _commitNavSnapshot();
           return;
         }
@@ -11798,6 +11826,7 @@
 
   function _exitNavEditMode(restoreCursor) {
     if (!_navEditMode) return;
+    var hasSaveable = _snapshotHasSaveableChanges();
     _navEditMode = false;
 
     if (_navEditActionsEl && _navEditActionsEl.parentNode) {
@@ -11805,28 +11834,31 @@
     }
     _navEditActionsEl = null;
 
-    _navBatchQueue = [];
-    if (_batchClaimedPaths) _batchClaimedPaths.clear();
-    _batchRenamedPaths = {};
-    _batchDeletedPaths = {};
-    _navBadges = [];
-    _navMigrationPending = false;
-    _pendingFolderDelete = null;
-    _navPostSaveDeadLinkFolder = null;
-    _navFocusTarget = null;
-    _navTopWarnings = [];
-    _navTopInfo = [];
     _clearNavFocus();
     _clearNavGroup();
 
-    if (restoreCursor && _navSnapshots.length > 0) {
-      var initial = _navSnapshots[0];
-      _applySnapshotToGlobals(initial);
-    }
+    if (hasSaveable) {
+      _navBatchQueue = [];
+      if (_batchClaimedPaths) _batchClaimedPaths.clear();
+      _batchRenamedPaths = {};
+      _batchDeletedPaths = {};
+      _navBadges = [];
+      _navMigrationPending = false;
+      _pendingFolderDelete = null;
+      _navPostSaveDeadLinkFolder = null;
+      _navFocusTarget = null;
+      _navTopWarnings = [];
+      _navTopInfo = [];
 
-    var initialSnap = (_navSnapshots.length > 0) ? _navSnapshots[0] : null;
-    _navSnapshots = initialSnap ? [initialSnap] : [];
-    _navSnapshotIndex = initialSnap ? 0 : -1;
+      if (restoreCursor && _navSnapshots.length > 0) {
+        var initial = _navSnapshots[0];
+        _applySnapshotToGlobals(initial);
+      }
+
+      var initialSnap = (_navSnapshots.length > 0) ? _navSnapshots[0] : null;
+      _navSnapshots = initialSnap ? [initialSnap] : [];
+      _navSnapshotIndex = initialSnap ? 0 : -1;
+    }
 
     if (_navSidebarEl) {
       _navSidebarEl.classList.remove('live-wysiwyg-nav-edit-mode');
@@ -12058,7 +12090,8 @@
   }
 
   var _navContentHashReplacer = function (key, value) {
-    if (key === '_warnings' || key === '_deadLinks' || key === '_expanded') return undefined;
+    if (key === '_warnings' || key === '_deadLinks' || key === '_expanded' ||
+        key === '_focused' || key === '_selected' || key === '_groupMode') return undefined;
     return value;
   };
 
@@ -12142,6 +12175,7 @@
     _navSnapshots.push(_takeNavSnapshot());
     _navSnapshotIndex = _navSnapshots.length - 1;
     _renderNavFromSnapshot();
+    _navAutoExitCheck();
   }
 
   function _captureExpandedFromNavData(items, result) {
@@ -12205,16 +12239,48 @@
     _persistWarningsFromSnapshot();
   }
 
+  function _snapshotHasNavEditState(snapshot) {
+    if (!snapshot || !snapshot.navData) return false;
+    var found = false;
+    (function walk(items) {
+      for (var i = 0; i < items.length; i++) {
+        if (found) return;
+        if (items[i]._selected || items[i]._focused) { found = true; return; }
+        if (items[i].children) walk(items[i].children);
+      }
+    })(snapshot.navData);
+    return found;
+  }
+
+  function _ensureNavEditModeForSnapshot() {
+    var snap = (_navSnapshotIndex >= 0 && _navSnapshotIndex < _navSnapshots.length)
+      ? _navSnapshots[_navSnapshotIndex] : null;
+    if (!_navEditMode && snap && _snapshotHasNavEditState(snap)) {
+      _navEditMode = true;
+      if (_navSidebarEl) _navSidebarEl.classList.add('live-wysiwyg-nav-edit-mode');
+    }
+  }
+
+  function _navAutoExitCheck() {
+    if (_navEditMode && !_navKeyboardActiveItem && !_hasAnyNavSelected() && !_snapshotHasSaveableChanges()) {
+      _exitNavEditMode(true);
+    }
+  }
+
   function _navUndo() {
     if (_navSnapshotIndex <= 0) return;
     _navSnapshotIndex--;
+    _ensureNavEditModeForSnapshot();
     _renderNavFromSnapshot();
+    _navAutoExitCheck();
   }
 
   function _navRedo() {
     if (_navSnapshotIndex >= _navSnapshots.length - 1) return;
     _navSnapshotIndex++;
+    _ensureNavEditModeForSnapshot();
     _renderNavFromSnapshot();
+    _navAutoExitCheck();
   }
 
   function _findNavLi(item) {
@@ -14511,75 +14577,39 @@
 
   function _initiateFolderRename(item, oldFolder, newFolder) {
     _enterNavEditModeAsync().then(function (ready) {
-    if (!ready) return;
+      if (!ready) return;
 
-    _fetchLinkIndex().then(function (linkIndex) {
-      var folderPrefix = oldFolder + '/';
-      var affectedPages = [];
-      for (var srcPath in linkIndex) {
-        if (!Object.prototype.hasOwnProperty.call(linkIndex, srcPath)) continue;
-        if (srcPath.indexOf(folderPrefix) === 0) continue;
-        var refs = linkIndex[srcPath];
-        if (!Array.isArray(refs)) continue;
-        var pageDir = _getDir(srcPath);
-        for (var i = 0; i < refs.length; i++) {
-          var ref = refs[i];
-          var target = ref && ref.target;
-          if (!target) continue;
-          var absTarget = _resolvePath(pageDir, target);
-          if (absTarget === null) continue;
-          if (absTarget.indexOf(folderPrefix) === 0 || absTarget === oldFolder) {
-            affectedPages.push(srcPath);
-            break;
+      _navBatchQueue.push({ type: 'rename-folder', oldFolder: oldFolder, newFolder: newFolder });
+
+      var oldPrefix = oldFolder + '/';
+      var newPrefix = newFolder + '/';
+      _walkNavData(function (navItem) {
+        var sp = _getItemSrcPath(navItem);
+        if (sp && sp.indexOf(oldPrefix) === 0) {
+          var newSp = newPrefix + sp.substring(oldPrefix.length);
+          navItem.src_path = newSp;
+          if (navItem.index_meta && navItem.index_meta.src_path) {
+            navItem.index_meta.src_path = newPrefix + navItem.index_meta.src_path.substring(oldPrefix.length);
           }
         }
-      }
-
-      var msg = 'Rename folder "' + oldFolder + '" to "' + newFolder + '"?';
-      if (affectedPages.length) {
-        msg += '\n\n' + affectedPages.length + ' page' + (affectedPages.length !== 1 ? 's' : '') +
-          ' with links pointing into this folder will be automatically updated.';
-      }
-
-      _showNavDialog(msg, [
-        { text: 'Cancel', value: 'cancel' },
-        { text: 'Rename', value: 'rename', className: 'live-wysiwyg-nav-dialog-primary' }
-      ]).then(function (result) {
-        if (result !== 'rename') return;
-
-        _navBatchQueue.push({ type: 'rename-folder', oldFolder: oldFolder, newFolder: newFolder });
-
-        var oldPrefix = oldFolder + '/';
-        var newPrefix = newFolder + '/';
-        _walkNavData(function (navItem) {
-          var sp = _getItemSrcPath(navItem);
-          if (sp && sp.indexOf(oldPrefix) === 0) {
-            var newSp = newPrefix + sp.substring(oldPrefix.length);
-            navItem.src_path = newSp;
-            if (navItem.index_meta && navItem.index_meta.src_path) {
-              navItem.index_meta.src_path = newPrefix + navItem.index_meta.src_path.substring(oldPrefix.length);
-            }
-          }
-        });
-
-        var sectionHasIdx = (item.index_meta != null) ||
-          (item.children && item.children.some(function (c) { return c.type === 'page' && c.isIndex; }));
-        if (!sectionHasIdx) {
-          item.title = newFolder.split('/').pop();
-        }
-
-        item._renamed = true;
-        _markChildrenRenamed(item);
-
-        _collectRecursiveNormalizeOpsForSection(item);
-
-        _addNavBadge({
-          className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-rename-badge',
-          text: 'Rename "' + oldFolder.split('/').pop() + '" \u2192 "' + newFolder.split('/').pop() + '" + normalize'
-        });
-        _commitNavSnapshot();
       });
-    });
+
+      var sectionHasIdx = (item.index_meta != null) ||
+        (item.children && item.children.some(function (c) { return c.type === 'page' && c.isIndex; }));
+      if (!sectionHasIdx) {
+        item.title = newFolder.split('/').pop();
+      }
+
+      item._renamed = true;
+      _markChildrenRenamed(item);
+
+      _collectRecursiveNormalizeOpsForSection(item);
+
+      _addNavBadge({
+        className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-rename-badge',
+        text: 'Rename "' + oldFolder.split('/').pop() + '" \u2192 "' + newFolder.split('/').pop() + '" + normalize'
+      });
+      _commitNavSnapshot();
     });
   }
 
@@ -14691,7 +14721,6 @@
 
   function _buildSettingsContent(dropdown, item, itemType, nwConfig) {
     var _renameRef = {};
-    var _normalizeRef = {};
 
     function addTextRow(label, key, val) {
       var row = document.createElement('div');
@@ -14762,75 +14791,40 @@
     );
     var noIndexSection = itemType === 'section' && !sectionHasIndex;
 
-    // --- Page / Section frontmatter fields (skipped for assets and no-index sections) ---
     var effectiveMeta = (itemType === 'section' && item.index_meta) ? item.index_meta : item;
     var effectiveIsIndex = itemType === 'section' || (item.isIndex === true);
-    if (itemType !== 'asset' && !noIndexSection) {
-      var defaultWeight = effectiveIsIndex
-        ? (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined
-          ? nwConfig.frontmatter_defaults.index_weight : -10)
-        : (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.weight !== undefined
-          ? nwConfig.frontmatter_defaults.weight : 0);
+    var hasFrontmatter = itemType !== 'asset' && !noIndexSection;
 
+    // ======================================================
+    // Content area (above final divider)
+    // ======================================================
+
+    // --- Title row (pages and sections with index) ---
+    if (hasFrontmatter) {
       addTextRow('Title', 'title', item.title || '');
-
-      var weightRow = document.createElement('div');
-      weightRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
-      var weightSpan = document.createElement('span');
-      weightSpan.textContent = 'Weight';
-      weightRow.appendChild(weightSpan);
-      var weightInput = document.createElement('input');
-      weightInput.type = 'number';
-      weightInput.value = (effectiveMeta.weight !== undefined && effectiveMeta.weight !== null) ? effectiveMeta.weight : defaultWeight;
-      weightInput.setAttribute('data-fm-key', 'weight');
-      weightInput.style.width = '80px';
-      weightRow.appendChild(weightInput);
-      if (_isRootIndex(item)) {
-        weightInput.disabled = true;
-        weightInput.title = 'Root index page does not use a weight';
-      }
-      if (nwConfig.enabled) {
-        var headlessLbl = document.createElement('label');
-        var headlessCb = document.createElement('input');
-        headlessCb.type = 'checkbox';
-        headlessCb.checked = !!(effectiveMeta.headless);
-        headlessCb.setAttribute('data-fm-key', 'headless');
-        headlessLbl.appendChild(headlessCb);
-        headlessLbl.appendChild(document.createTextNode(' Headless'));
-        weightRow.appendChild(headlessLbl);
-      }
-      dropdown.appendChild(weightRow);
-
-      if (nwConfig.enabled && effectiveIsIndex) {
-        addCheckboxGroup([
-          { label: 'Retitled', key: 'retitled', val: effectiveMeta.retitled || false },
-          { label: 'Empty', key: 'empty', val: effectiveMeta.empty || false }
-        ]);
-      }
-
-      addDivider();
     }
 
-    // --- Folder name + Rename/Delete Folder ---
+    // --- Folder name row (sections) ---
+    var folderDir, folderBaseName, renameFolderInput, doFolderRename, folderRenameRef;
     if (itemType === 'section' && (nwConfig.enabled || noIndexSection)) {
-      var folderDir = _getSectionFolderDir(item);
+      folderDir = _getSectionFolderDir(item);
       if (folderDir) {
-        var folderBaseName = folderDir.indexOf('/') >= 0 ? folderDir.substring(folderDir.lastIndexOf('/') + 1) : folderDir;
+        folderBaseName = folderDir.indexOf('/') >= 0 ? folderDir.substring(folderDir.lastIndexOf('/') + 1) : folderDir;
         var folderRow = document.createElement('div');
         folderRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
         var folderLabel = document.createElement('span');
         folderLabel.textContent = 'Folder name';
         folderLabel.style.flexShrink = '0';
         folderRow.appendChild(folderLabel);
-        var renameFolderInput = document.createElement('input');
+        renameFolderInput = document.createElement('input');
         renameFolderInput.type = 'text';
         renameFolderInput.value = folderBaseName;
         renameFolderInput.setAttribute('data-folder-rename', 'true');
         folderRow.appendChild(renameFolderInput);
         dropdown.appendChild(folderRow);
 
-        var folderRenameRef = {};
-        var doFolderRename = function () {
+        folderRenameRef = {};
+        doFolderRename = function () {
           var newName = renameFolderInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
           if (!newName || newName === folderBaseName) return;
           var parentDir = folderDir.indexOf('/') >= 0 ? folderDir.substring(0, folderDir.lastIndexOf('/')) : '';
@@ -14842,37 +14836,38 @@
           var normalized = renameFolderInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
           folderRenameRef.btn.disabled = !normalized || normalized === folderBaseName;
         });
-        addButtonRow([
-          { text: 'Rename Folder', disabled: true, ref: folderRenameRef, shrink: true, syncRef: _renameRef, onClick: doFolderRename },
-          { text: 'Delete', style: 'background:#d9534f', onClick: function () {
-            dropdown.parentNode.removeChild(dropdown);
-            _initiateFolderDelete(item, folderDir);
-          }}
-        ]);
 
-        addDivider();
+        // Store folder rename info on dropdown for Apply to use implicitly (sections with index)
+        if (sectionHasIndex) {
+          dropdown._folderRenameInput = renameFolderInput;
+          dropdown._folderOriginalName = folderBaseName;
+          dropdown._folderDir = folderDir;
+        }
       }
-    } else if ((nwConfig.enabled && itemType === 'page' && !_isRootIndex(item)) || itemType === 'asset') {
-      // --- File name + Rename/Delete File (pages and assets) ---
-      var srcPath = _getItemSrcPath(item) || '';
+    }
+
+    // --- File name row (pages and assets) ---
+    var srcPath, fileDisplayName, fileRenameInput, doFileRename, fileRenameRef, isAsset;
+    if ((nwConfig.enabled && itemType === 'page' && !_isRootIndex(item)) || itemType === 'asset') {
+      srcPath = _getItemSrcPath(item) || '';
       if (srcPath) {
-        var isAsset = itemType === 'asset';
+        isAsset = itemType === 'asset';
         var fileName = srcPath.indexOf('/') >= 0 ? srcPath.substring(srcPath.lastIndexOf('/') + 1) : srcPath;
-        var fileDisplayName = isAsset ? fileName : fileName.replace(/\.md$/, '');
+        fileDisplayName = isAsset ? fileName : fileName.replace(/\.md$/, '');
         var fileRow = document.createElement('div');
         fileRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
         var fileLabel = document.createElement('span');
         fileLabel.textContent = 'File name';
         fileLabel.style.flexShrink = '0';
         fileRow.appendChild(fileLabel);
-        var fileRenameInput = document.createElement('input');
+        fileRenameInput = document.createElement('input');
         fileRenameInput.type = 'text';
         fileRenameInput.value = fileDisplayName;
         fileRow.appendChild(fileRenameInput);
         dropdown.appendChild(fileRow);
 
-        var fileRenameRef = {};
-        var doFileRename = function () {
+        fileRenameRef = {};
+        doFileRename = function () {
           var dir = srcPath.indexOf('/') >= 0 ? srcPath.substring(0, srcPath.lastIndexOf('/')) : '';
           var newName, newPath, badgeText, badgeAttrs;
           if (isAsset) {
@@ -14919,107 +14914,116 @@
             fileRenameRef.btn.disabled = !normalized || normalized === fileDisplayName;
           }
         });
-        addButtonRow([
-          { text: 'Rename File', disabled: true, ref: fileRenameRef, shrink: true, syncRef: _renameRef, onClick: doFileRename },
-          { text: 'Delete', style: 'background:#d9534f', onClick: function () {
-            dropdown.parentNode.removeChild(dropdown);
-            _enterNavEditModeAsync().then(function (ready) {
-              if (!ready) return;
-              item._deleted = true;
-              _addNavBadge({
-                className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-delete-badge',
-                text: 'Delete "' + fileDisplayName + '"',
-                style: 'background:#d9534f'
-              });
-              _commitNavSnapshot();
-              _renderNavFromSnapshot();
-            });
-          }}
-        ]);
 
-        if (itemType !== 'asset') addDivider();
+        // Store file rename info on dropdown for Apply to use implicitly (pages only)
+        if (!isAsset) {
+          dropdown._fileRenameInput = fileRenameInput;
+          dropdown._fileOriginalName = fileDisplayName;
+          dropdown._fileSrcPath = srcPath;
+        }
       }
     }
 
-    if (itemType === 'asset' || noIndexSection) return;
-
-    // --- Normalize + Apply ---
-    var bottomBtns = [];
-    if (nwConfig.enabled && itemType === 'section') {
-      var normalizeTarget = item;
-      bottomBtns.push({ text: 'Normalize Weights', shrink: true, ref: _normalizeRef, onClick: function () {
-        dropdown.parentNode.removeChild(dropdown);
-        _enterNavEditModeAsync().then(function (ready) {
-          if (!ready) return;
-          _applyNormalizeFolderToNavData(normalizeTarget);
-          _adjustDefaultPageWeightSilent();
-          _addNavBadge({
-            className: 'live-wysiwyg-nav-normalize-badge',
-            text: 'Normalize folder weights'
-          });
-          _commitNavSnapshot();
-        });
-      }});
+    // --- First divider (separates name fields from settings) ---
+    if (hasFrontmatter) {
+      addDivider();
     }
-    bottomBtns.push({ text: 'Apply', style: 'background:var(--md-primary-fg-color,#4051b5)', onClick: function () {
-      _applySettingsGearChanges(dropdown, item, itemType);
-      dropdown.parentNode.removeChild(dropdown);
-    }});
-    addButtonRow(bottomBtns);
 
-    if (_renameRef.btn && _normalizeRef.btn) {
-      requestAnimationFrame(function () {
-        var nw = _normalizeRef.btn.offsetWidth;
-        if (nw > 0) {
-          _renameRef.btn.style.setProperty('width', nw + 'px', 'important');
-          _renameRef.btn.style.setProperty('flex', '0 0 auto', 'important');
+    // --- Weight + Headless row (pages and sections with index) ---
+    var weightRow, weightInput, headlessCb;
+    if (hasFrontmatter) {
+      var defaultWeight = effectiveIsIndex
+        ? (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined
+          ? nwConfig.frontmatter_defaults.index_weight : -10)
+        : (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.weight !== undefined
+          ? nwConfig.frontmatter_defaults.weight : 0);
+      var wasOriginallyHeadless = !!(effectiveMeta.headless);
+      var isPage = itemType === 'page';
+
+      weightRow = document.createElement('div');
+      weightRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
+      var weightSpan = document.createElement('span');
+      weightSpan.textContent = 'Weight';
+      weightRow.appendChild(weightSpan);
+      weightInput = document.createElement('input');
+      weightInput.type = 'number';
+      weightInput.value = (effectiveMeta.weight !== undefined && effectiveMeta.weight !== null) ? effectiveMeta.weight : defaultWeight;
+      weightInput.setAttribute('data-fm-key', 'weight');
+      weightInput.style.width = '80px';
+      weightRow.appendChild(weightInput);
+      if (_isRootIndex(item)) {
+        weightInput.disabled = true;
+        weightInput.title = 'Root index page does not use a weight';
+      }
+
+      if (nwConfig.enabled) {
+        headlessCb = document.createElement('input');
+        headlessCb.type = 'checkbox';
+        headlessCb.checked = !!wasOriginallyHeadless;
+        headlessCb.setAttribute('data-fm-key', 'headless');
+        var headlessLbl = document.createElement('label');
+        headlessLbl.appendChild(headlessCb);
+        headlessLbl.appendChild(document.createTextNode(' Headless'));
+
+        if (isPage && wasOriginallyHeadless) {
+          weightRow.style.display = 'none';
         }
-      });
+
+        if (isPage) {
+          headlessCb.addEventListener('change', function () {
+            if (headlessCb.checked) {
+              weightRow.style.display = 'none';
+            } else {
+              weightRow.style.display = '';
+              if (wasOriginallyHeadless) {
+                weightInput.value = _computeUnhideWeight(item);
+              }
+            }
+          });
+        }
+
+        // Headless on the same row as Weight for sections; separate row for pages when headless hides weight
+        if (isPage) {
+          dropdown.appendChild(weightRow);
+          var headlessRow = document.createElement('div');
+          headlessRow.className = 'live-wysiwyg-nav-settings-row live-wysiwyg-nav-settings-inline';
+          headlessRow.appendChild(headlessLbl);
+          dropdown.appendChild(headlessRow);
+        } else {
+          weightRow.appendChild(headlessLbl);
+          dropdown.appendChild(weightRow);
+        }
+      } else {
+        dropdown.appendChild(weightRow);
+      }
+
+      if (nwConfig.enabled && effectiveIsIndex) {
+        addCheckboxGroup([
+          { label: 'Retitled', key: 'retitled', val: effectiveMeta.retitled || false },
+          { label: 'Empty', key: 'empty', val: effectiveMeta.empty || false }
+        ]);
+      }
     }
-  }
 
-  function _repositionDropdown(dropdown) {
-    if (!dropdown._gearBtn || !dropdown.parentNode) return;
-    var rect = dropdown._gearBtn.getBoundingClientRect();
-    var ddRect = dropdown.getBoundingClientRect();
-    var vpW = window.innerWidth;
-    var vpH = window.innerHeight;
-    var top = rect.bottom + 4;
-    var left = Math.max(4, rect.left - 100);
-    if (top + ddRect.height > vpH - 8) {
-      top = Math.max(4, rect.top - ddRect.height - 4);
-    }
-    if (left + ddRect.width > vpW - 8) {
-      left = Math.max(4, vpW - ddRect.width - 8);
-    }
-    dropdown.style.top = top + 'px';
-    dropdown.style.left = left + 'px';
-  }
+    // ======================================================
+    // Final divider (separates content from action buttons)
+    // ======================================================
+    addDivider();
 
-  function _showSettingsGear(item, itemType, gearBtn) {
-    var existing = document.querySelector('.live-wysiwyg-nav-settings-dropdown');
-    if (existing) { existing.parentNode.removeChild(existing); return; }
+    // ======================================================
+    // Action buttons area (below final divider)
+    // ======================================================
 
-    var dropdown = document.createElement('div');
-    dropdown.className = 'live-wysiwyg-nav-settings-dropdown';
-    var nwConfig = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : { enabled: false };
-
-    _buildSettingsContent(dropdown, item, itemType, nwConfig);
-
-    var sectionHasIndex = itemType === 'section' && (
-      (item.src_path != null && item.src_path !== '') ||
-      (item.index_meta != null) ||
-      (item.children && item.children.some(function (c) { return c.type === 'page' && c.isIndex; }))
-    );
-    if (itemType === 'section' && !sectionHasIndex) {
+    if (noIndexSection) {
+      // --- Indexless section: Create folder index, Delete + Rename Folder ---
       var createIndexBtn = document.createElement('button');
       createIndexBtn.className = 'live-wysiwyg-nav-settings-normalize-btn';
       createIndexBtn.textContent = 'Create folder index';
       createIndexBtn.addEventListener('click', function () {
         dropdown.parentNode.removeChild(dropdown);
-        var folderDir = _getSectionFolderDir(item);
-        if (!folderDir) return;
-        var indexPath = folderDir + '/index.md';
+        var fd = folderDir || _getSectionFolderDir(item);
+        if (!fd) return;
+        var indexPath = fd + '/index.md';
         var indexWeight = (nwConfig.frontmatter_defaults && nwConfig.frontmatter_defaults.index_weight !== undefined)
           ? nwConfig.frontmatter_defaults.index_weight
           : (nwConfig.index_weight !== undefined ? nwConfig.index_weight : -10);
@@ -15038,19 +15042,156 @@
           };
           _addNavBadge({
             className: 'live-wysiwyg-nav-normalize-badge',
-            text: 'Create index for "' + (item.title || folderDir) + '"'
+            text: 'Create index for "' + (item.title || fd) + '"'
           });
           _commitNavSnapshot();
         });
       });
       dropdown.appendChild(createIndexBtn);
+
+      if (folderRenameRef) {
+        addButtonRow([
+          { text: 'Delete', style: 'background:#d9534f', shrink: true, onClick: function () {
+            dropdown.parentNode.removeChild(dropdown);
+            _initiateFolderDelete(item, folderDir);
+          }},
+          { text: 'Rename Folder', disabled: true, ref: folderRenameRef, syncRef: _renameRef, onClick: doFolderRename }
+        ]);
+      }
+      return;
     }
+
+    if (itemType === 'asset') {
+      // --- Asset: Delete + Rename File ---
+      if (fileRenameRef) {
+        addButtonRow([
+          { text: 'Delete', style: 'background:#d9534f', shrink: true, onClick: function () {
+            dropdown.parentNode.removeChild(dropdown);
+            _enterNavEditModeAsync().then(function (ready) {
+              if (!ready) return;
+              item._deleted = true;
+              _addNavBadge({
+                className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-delete-badge',
+                text: 'Delete "' + fileDisplayName + '"',
+                style: 'background:#d9534f'
+              });
+              _commitNavSnapshot();
+              _renderNavFromSnapshot();
+            });
+          }},
+          { text: 'Rename File', disabled: true, ref: fileRenameRef, syncRef: _renameRef, onClick: doFileRename }
+        ]);
+      }
+      return;
+    }
+
+    // --- Section with index / Page: Normalize Weights, Delete + Apply ---
+    if (nwConfig.enabled) {
+      var normalizeTarget = itemType === 'section' ? item : _findParentSectionItem(item);
+      if (normalizeTarget) {
+        addButtonRow([{ text: 'Normalize Weights', onClick: function () {
+          dropdown.parentNode.removeChild(dropdown);
+          _enterNavEditModeAsync().then(function (ready) {
+            if (!ready) return;
+            _applyNormalizeFolderToNavData(normalizeTarget);
+            _adjustDefaultPageWeightSilent();
+            _addNavBadge({
+              className: 'live-wysiwyg-nav-normalize-badge',
+              text: 'Normalize folder weights'
+            });
+            _commitNavSnapshot();
+          });
+        }}]);
+      }
+    }
+
+    var deleteFn;
+    var deleteLabel;
+    if (itemType === 'section' && folderDir) {
+      deleteLabel = 'Delete';
+      deleteFn = function () {
+        dropdown.parentNode.removeChild(dropdown);
+        _initiateFolderDelete(item, folderDir);
+      };
+    } else if (itemType === 'page' && !_isRootIndex(item)) {
+      var delDisplayName = fileDisplayName || (item.title || 'page');
+      deleteLabel = 'Delete';
+      deleteFn = function () {
+        dropdown.parentNode.removeChild(dropdown);
+        _enterNavEditModeAsync().then(function (ready) {
+          if (!ready) return;
+          item._deleted = true;
+          _addNavBadge({
+            className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-delete-badge',
+            text: 'Delete "' + delDisplayName + '"',
+            style: 'background:#d9534f'
+          });
+          _commitNavSnapshot();
+          _renderNavFromSnapshot();
+        });
+      };
+    }
+
+    var actionBtns = [];
+    if (deleteFn) {
+      actionBtns.push({ text: deleteLabel, style: 'background:#d9534f', shrink: true, onClick: deleteFn });
+    }
+    actionBtns.push({ text: 'Apply', style: 'background:var(--md-primary-fg-color,#4051b5)', onClick: function () {
+      _applySettingsGearChanges(dropdown, item, itemType);
+      dropdown.parentNode.removeChild(dropdown);
+    }});
+    addButtonRow(actionBtns);
+  }
+
+  function _repositionDropdown(dropdown) {
+    if (!dropdown._gearBtn || !dropdown.parentNode) return;
+    var rect = dropdown._gearBtn.getBoundingClientRect();
+    var ddRect = dropdown.getBoundingClientRect();
+    var vpW = window.innerWidth;
+    var vpH = window.innerHeight;
+
+    if (!dropdown._topLocked) {
+      var top = rect.bottom + 4;
+      if (top + ddRect.height > vpH - 8) {
+        top = Math.max(4, rect.top - ddRect.height - 4);
+      }
+      dropdown.style.top = top + 'px';
+      dropdown._topLocked = true;
+    }
+
+    var left = Math.max(4, rect.left - 100);
+    if (left + ddRect.width > vpW - 8) {
+      left = Math.max(4, vpW - ddRect.width - 8);
+    }
+    dropdown.style.left = left + 'px';
+  }
+
+  function _showSettingsGear(item, itemType, gearBtn) {
+    var existing = document.querySelector('.live-wysiwyg-nav-settings-dropdown');
+    if (existing) { existing.parentNode.removeChild(existing); return; }
+
+    var dropdown = document.createElement('div');
+    dropdown.className = 'live-wysiwyg-nav-settings-dropdown';
+    var nwConfig = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : { enabled: false };
+
+    _buildSettingsContent(dropdown, item, itemType, nwConfig);
 
     dropdown._gearBtn = gearBtn;
 
     var hasApplyBtn = Array.prototype.some.call(
       dropdown.querySelectorAll('.live-wysiwyg-nav-settings-normalize-btn'),
       function (b) { return b.textContent === 'Apply'; }
+    );
+    var renameBtn = null;
+    var renameBtnClick = null;
+    Array.prototype.forEach.call(
+      dropdown.querySelectorAll('.live-wysiwyg-nav-settings-normalize-btn'),
+      function (b) {
+        if (b.textContent === 'Rename Folder' || b.textContent === 'Rename File') {
+          renameBtn = b;
+          renameBtnClick = function () { b.click(); };
+        }
+      }
     );
 
     function _dismissGearDropdown() {
@@ -15059,17 +15200,36 @@
     }
 
     var firstInput = dropdown.querySelector('input[type="text"], input[type="number"], select');
-    _attachDialogKeyboard(dropdown, {
-      category: 'form',
-      trackDirty: true,
-      isDirty: hasApplyBtn ? null : function () { return false; },
-      onConfirm: function () {
-        _applySettingsGearChanges(dropdown, item, itemType);
-        _dismissGearDropdown();
-      },
-      onDismiss: function () { _dismissGearDropdown(); },
-      autoFocus: firstInput ? function () { firstInput.focus(); firstInput.select(); } : null
-    });
+
+    if (hasApplyBtn) {
+      _attachDialogKeyboard(dropdown, {
+        category: 'form',
+        trackDirty: true,
+        onConfirm: function () {
+          _applySettingsGearChanges(dropdown, item, itemType);
+          _dismissGearDropdown();
+        },
+        onDismiss: function () { _dismissGearDropdown(); },
+        autoFocus: firstInput ? function () { firstInput.focus(); firstInput.select(); } : null
+      });
+    } else if (renameBtn) {
+      _attachDialogKeyboard(dropdown, {
+        category: 'form',
+        trackDirty: true,
+        isDirty: function () { return !renameBtn.disabled; },
+        onConfirm: function () {
+          if (!renameBtn.disabled) renameBtnClick();
+        },
+        onDismiss: function () { _dismissGearDropdown(); },
+        autoFocus: firstInput ? function () { firstInput.focus(); firstInput.select(); } : null
+      });
+    } else {
+      _attachDialogKeyboard(dropdown, {
+        category: 'settings',
+        onDismiss: function () { _dismissGearDropdown(); },
+        autoFocus: firstInput ? function () { firstInput.focus(); firstInput.select(); } : null
+      });
+    }
 
     dropdown.style.position = 'fixed';
     dropdown.style.visibility = 'hidden';
@@ -15130,10 +15290,39 @@
       updates.weight = _computeUnhideWeight(item);
     }
 
+    // Check for implicit file rename (pages only — stored by _buildSettingsContent)
+    var fileRenameNeeded = false;
+    var fileNewPath, fileNewBase, fileBadgeText, fileBadgeAttrs;
+    if (dropdown._fileRenameInput && dropdown._fileOriginalName && dropdown._fileSrcPath) {
+      var newBase = dropdown._fileRenameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      if (newBase && newBase !== dropdown._fileOriginalName) {
+        fileRenameNeeded = true;
+        var dir = dropdown._fileSrcPath.indexOf('/') >= 0 ? dropdown._fileSrcPath.substring(0, dropdown._fileSrcPath.lastIndexOf('/')) : '';
+        fileNewPath = dir ? dir + '/' + newBase + '.md' : newBase + '.md';
+        fileNewBase = newBase;
+        fileBadgeText = 'Rename "' + dropdown._fileOriginalName + '" \u2192 "' + newBase + '"';
+        fileBadgeAttrs = { 'data-rename-page': '1' };
+      }
+    }
+
+    // Check for implicit folder rename (sections with index — stored by _buildSettingsContent)
+    var folderRenameNeeded = false;
+    var folderNewFolder, folderOldFolder, folderBadgeNewName;
+    if (dropdown._folderRenameInput && dropdown._folderOriginalName && dropdown._folderDir) {
+      var newFolderName = dropdown._folderRenameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      if (newFolderName && newFolderName !== dropdown._folderOriginalName) {
+        folderRenameNeeded = true;
+        folderOldFolder = dropdown._folderDir;
+        var parentDir = folderOldFolder.indexOf('/') >= 0 ? folderOldFolder.substring(0, folderOldFolder.lastIndexOf('/')) : '';
+        folderNewFolder = parentDir ? parentDir + '/' + newFolderName : newFolderName;
+        folderBadgeNewName = newFolderName;
+      }
+    }
+
     var effectivePath = _getItemSrcPath(item);
     var effectiveIsIndex = itemType === 'section' || (item.isIndex === true);
 
-    if (effectivePath === _getCurrentSrcPath()) {
+    if (effectivePath === _getCurrentSrcPath() && !fileRenameNeeded && !folderRenameNeeded) {
       if (wysiwygEditor) {
         var md = wysiwygEditor.getValue ? wysiwygEditor.getValue() : '';
         var updated = _updateFrontmatter(md, updates, effectiveIsIndex);
@@ -15175,6 +15364,23 @@
         if (isBeingUnhidden && effectivePath) {
           _promoteHiddenToNav(item, updates);
         }
+
+        if (fileRenameNeeded) {
+          _navBatchQueue.push({ type: 'rename-page', oldPath: dropdown._fileSrcPath, newPath: fileNewPath, item: item });
+          item.src_path = fileNewPath;
+          item._renamed = true;
+          _addNavBadge({
+            className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-rename-badge',
+            text: fileBadgeText,
+            attrs: fileBadgeAttrs
+          });
+        }
+
+        if (folderRenameNeeded) {
+          _initiateFolderRename(item, folderOldFolder, folderNewFolder);
+          return;
+        }
+
         _commitNavSnapshot();
       });
       return;
@@ -17254,6 +17460,7 @@
       _hideDeadLinkPanel();
       return;
     }
+    _ensureTocUncollapsed();
     var tocEl = document.querySelector('.live-wysiwyg-focus-toc');
     if (tocEl) _showDeadLinkPanel(tocEl, item);
   }
@@ -17784,6 +17991,14 @@
     }
   }
 
+  function _ensureTocUncollapsed() {
+    if (!_focusOverlay) return;
+    if (_focusOverlay.classList.contains('live-wysiwyg-focus-toc-collapsed')) {
+      _focusOverlay.classList.remove('live-wysiwyg-focus-toc-collapsed');
+      _setSetting('live_wysiwyg_focus_toc', '1');
+    }
+  }
+
   function _updateToolbarHeight(overlayEl, drawerEl) {
     if (!overlayEl || !drawerEl) return;
     function measure() { overlayEl.style.setProperty('--_toolbar-h', drawerEl.scrollHeight + 'px'); }
@@ -17836,6 +18051,14 @@
       '}' +
       '.live-wysiwyg-focus-nav-toggle:hover{opacity:1;}' +
       '.live-wysiwyg-focus-nav-toggle svg{width:1.2rem;height:1.2rem;transform:rotate(90deg);}' +
+
+      '.live-wysiwyg-focus-toc-toggle{' +
+        'background:none;border:none;cursor:pointer;padding:.4rem;' +
+        'color:var(--md-primary-bg-color,#fff);' +
+        'display:flex;align-items:center;opacity:.7;transition:opacity .25s;' +
+      '}' +
+      '.live-wysiwyg-focus-toc-toggle:hover{opacity:1;}' +
+      '.live-wysiwyg-focus-toc-toggle svg{width:1.2rem;height:1.2rem;transform:rotate(90deg);}' +
 
       '.live-wysiwyg-focus-header-title{' +
         'flex-grow:1;font-size:.9rem;height:2.4rem;line-height:2.4rem;' +
@@ -18029,6 +18252,7 @@
         'font-size:.7rem;overflow-y:auto;max-height:calc(var(--_panel-h,calc(100vh - 2.4rem)) - 1.5rem);' +
         'scrollbar-color:var(--md-default-fg-color--lighter,#ccc) transparent;' +
         'scrollbar-width:thin;' +
+        'transition:transform .3s ease-in-out,opacity .3s ease-in-out;' +
       '}' +
       '.live-wysiwyg-focus-toc .md-nav__title{' +
         'font-size:.7rem;font-weight:700;' +
@@ -18069,8 +18293,18 @@
       '.focus-mode-markdown.live-wysiwyg-focus-nav-collapsed .live-wysiwyg-focus-sidebar-left{' +
         'width:0;margin-left:0;padding:0;' +
       '}' +
+      '.live-wysiwyg-focus-toc-collapsed .live-wysiwyg-focus-toc{' +
+        'transform:translateX(100%);opacity:0;pointer-events:none;' +
+      '}' +
+      '.focus-mode-markdown .live-wysiwyg-focus-toc{' +
+        'transition:transform .3s ease-in-out,opacity .3s ease-in-out,width .3s ease-in-out,margin .3s ease-in-out;' +
+      '}' +
+      '.focus-mode-markdown.live-wysiwyg-focus-toc-collapsed .live-wysiwyg-focus-toc{' +
+        'width:0;margin-right:0;padding:0;' +
+      '}' +
       '@media screen and (max-width:60em){' +
         '.live-wysiwyg-focus-toc{display:none;}' +
+        '.live-wysiwyg-focus-toc-toggle{display:none;}' +
       '}' +
 
       // --- Nav menu in left sidebar (matches md-sidebar--primary / md-nav--primary at >=76.25em) ---
@@ -18447,7 +18681,7 @@
 
       // --- Settings gear dropdown ---
       '.live-wysiwyg-nav-settings-dropdown{' +
-        'position:absolute;z-index:99995;background:var(--md-default-bg-color,#fff);' +
+        'position:fixed;z-index:99995;background:var(--md-default-bg-color,#fff);' +
         'border:1px solid var(--md-default-fg-color--lightest,#ddd);border-radius:6px;' +
         'box-shadow:0 4px 16px rgba(0,0,0,.15);padding:12px 14px;min-width:220px;' +
         'max-height:80vh;overflow-y:auto;' +
@@ -18993,6 +19227,9 @@
     if (_getSetting('live_wysiwyg_focus_nav') === '0') {
       overlay.classList.add('live-wysiwyg-focus-nav-collapsed');
     }
+    if (_getSetting('live_wysiwyg_focus_toc') === '0') {
+      overlay.classList.add('live-wysiwyg-focus-toc-collapsed');
+    }
     _focusOverlay = overlay;
 
     var themeColors = _detectThemeColors();
@@ -19028,8 +19265,18 @@
       var isCollapsed = overlay.classList.toggle('live-wysiwyg-focus-nav-collapsed');
       _setSetting('live_wysiwyg_focus_nav', isCollapsed ? '0' : '1');
     });
+    var tocToggle = document.createElement('button');
+    tocToggle.type = 'button';
+    tocToggle.className = 'live-wysiwyg-focus-toc-toggle';
+    tocToggle.title = 'Toggle table of contents';
+    tocToggle.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z" fill="currentColor"/></svg>';
+    tocToggle.addEventListener('click', function () {
+      var isCollapsed = overlay.classList.toggle('live-wysiwyg-focus-toc-collapsed');
+      _setSetting('live_wysiwyg_focus_toc', isCollapsed ? '0' : '1');
+    });
     headerLeft.appendChild(navToggle);
     headerLeft.appendChild(drawerToggle);
+    headerLeft.appendChild(tocToggle);
     header.appendChild(headerLeft);
 
     var titleDiv = document.createElement('div');
@@ -20007,7 +20254,8 @@
     }
 
     document.addEventListener('keydown', function _globalKeydownRouter(e) {
-      var dialogOpen = !!document.querySelector('.live-wysiwyg-nav-dialog');
+      var dialogOpen = !!document.querySelector('.live-wysiwyg-nav-dialog') ||
+                       !!document.querySelector('.live-wysiwyg-nav-settings-dropdown');
 
       if (e.key === 'Escape') {
         if (dialogOpen) return;
@@ -20078,6 +20326,19 @@
         if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
           e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
         }
+      }
+
+      if (!_navEditMode && !dialogOpen && (e.metaKey || e.ctrlKey) && e.key === 'z') {
+        if (!e.shiftKey && _navSnapshotIndex > 0) {
+          e.preventDefault(); e.stopImmediatePropagation(); _navUndo(); return;
+        }
+        if ((e.shiftKey || e.key === 'y') && _navSnapshotIndex < _navSnapshots.length - 1) {
+          e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
+        }
+      }
+      if (!_navEditMode && !dialogOpen && (e.metaKey || e.ctrlKey) && e.key === 'y' &&
+          _navSnapshotIndex < _navSnapshots.length - 1) {
+        e.preventDefault(); e.stopImmediatePropagation(); _navRedo(); return;
       }
 
       if (e.key === '.') {

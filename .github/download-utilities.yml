@@ -18,7 +18,7 @@ checksums:
       amd64: 0c4d965ea944b64b8fddaf7f27779ee3034e5693263786506ccd1c120f184e8c
 
 defaults: &defaults
-  dest: /usr/local/bin
+  dest: '${DESTINATION_DIR:-/usr/local/bin}'
   perm: '0755'
   update: |
     owner="$(awk -F/ '{print $4"/"$5}' <<< "${download}")"

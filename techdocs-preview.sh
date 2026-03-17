@@ -8,6 +8,7 @@ set -euo pipefail
 
 # since rapidly developing I'll track this at the top for now
 WYSIWYG_VERSION=0.2.5
+YML_INSTALL_FILES_VERSION="v3.8"
 
 # set SKIP_NEXUS=1 if you don't want to download from Nexus on VPN.
 TECHDOCS_HOST="${TECHDOCS_HOST:-127.0.0.1}"
@@ -15,8 +16,84 @@ TECHDOCS_PORT="${TECHDOCS_PORT:-8000}"
 TECHDOCS_WEBSOCKET_PORT="${TECHDOCS_WEBSOCKET_PORT:-8484}"
 export TECHDOCS_HOST TECHDOCS_PORT TECHDOCS_WEBSOCKET_PORT
 
+uv_download_yaml() {
+cat <<'UV_DOWNLOAD_YAML'
+versions:
+  uv: 0.10.7
+  yq: 4.52.4
+checksums:
+  uv:
+    unknown-linux-gnu:
+      x86_64: 3b9d43bace955a409eb6f012b0932a4935534bdb54b85b9fd696cabbb15979a0
+      aarch64: ad4f54ea470da62875ba5c45d4bd8e0bd0271989c68ce3335bbea26a5a6706e8
+    apple-darwin:
+      aarch64: e7a5bf88df262cdf04ee035ac75dc91b753316dab29730ab4c08e03c40d11c7e
+      x86_64: 9ce2a8d60b251ef51f3469ba80ac362f6dcf5a25f6871024385e2c6aa13e201f
+  yq:
+    darwin:
+      arm64: 6bfa43a439936644d63c70308832390c8838290d064970eaada216219c218a13
+      amd64: d72a75fe9953c707d395f653d90095b133675ddd61aa738e1ac9a73c6c05e8be
+    linux:
+      arm64: 4c2cc022a129be5cc1187959bb4b09bebc7fb543c5837b93001c68f97ce39a5d
+      amd64: 0c4d965ea944b64b8fddaf7f27779ee3034e5693263786506ccd1c120f184e8c
+
+defaults: &defaults
+  dest: '${DESTINATION_DIR:-/usr/local/bin}'
+  perm: '0755'
+  update: |
+    owner="$(awk -F/ '{print $4"/"$5}' <<< "${download}")"
+    export download=https://github.com/"${owner}"/releases/latest
+    eval "${default_download_head}" |
+    awk '$1 ~ /[Ll]ocation:/ { gsub(".*/[^0-9.]*", "", $0); print;exit}'
+
+utility:
+  uv:
+    <<: *defaults
+    # uv uses different naming: x86_64/aarch64 and unknown-linux-gnu/apple-darwin
+    os:
+      Linux: unknown-linux-gnu
+      Darwin: apple-darwin
+    arch:
+      Darwin:
+        arm64: aarch64
+    download: https://github.com/astral-sh/uv/releases/download/${version}/uv-${arch}-${os}.tar.gz
+    extract: tar -xzC ${dest}/ --no-same-owner --strip-components=1 uv-${arch}-${os}/uv
+  yq:
+    <<: *defaults
+    os:
+      Linux: linux
+      Darwin: darwin
+    arch:
+      x86_64: amd64
+      aarch64: arm64
+      Darwin:
+        i386: amd64
+    download: https://github.com/mikefarah/yq/releases/download/v${version}/yq_${os}_${arch}
+UV_DOWNLOAD_YAML
+}
+
+uv() {
+  if type -P uv &> /dev/null; then
+    command uv "$@"
+  elif [ -x ~/.techdocs/uv ]; then
+    command ~/.techdocs/uv "$@"
+  else
+    (
+      mkdir -p ~/.techdocs
+      if [ ! -x ~/.techdocs/download-utilities.sh ]; then
+        curl -fsSL -o ~/.techdocs/download-utilities.sh \
+          "https://raw.githubusercontent.com/samrocketman/yml-install-files/${YML_INSTALL_FILES_VERSION}/download-utilities.sh"
+        chmod +x ~/.techdocs/download-utilities.sh
+      fi
+      export DESTINATION_DIR=~/.techdocs yaml_file='-'
+      uv_download_yaml | ~/.techdocs/download-utilities.sh uv
+    )
+    command ~/.techdocs/uv "$@"
+  fi
+}
+
 pip() (
-  if [ -z "${FORCE_PIP:-}" ] && type -P uv > /dev/null; then
+  if [ -z "${FORCE_PIP:-}" ]; then
     uv pip "$@"
   else
     command pip "$@"
@@ -24,7 +101,7 @@ pip() (
 )
 
 cleanup_on() {
-  if [ -n "${DOCS_DIR_AUTO_GENERATED:-}" ]; then
+  if [ -n "${DOCS_DIR_AUTO_GENERATED:-}" ] && [ -z "${READONLY_MODE:-}" ]; then
     find docs -name '*.md' -type f | while IFS= read -r _doc; do
       _dest="$(sed -n '2s/^full_path: //p' "$_doc")"
       if [ -n "$_dest" ]; then
@@ -119,11 +196,7 @@ install_techdocs() (
     exit
   else
     mkdir -p ~/.techdocs
-    if type -P uv > /dev/null; then
-      uv venv --python 3.13 ~/.techdocs/python3
-    else
-      python3 -m venv ~/.techdocs/python3
-    fi
+    uv venv --python 3.13 ~/.techdocs/python3
   fi
   # shellcheck disable=SC1090
   source ~/.techdocs/python3/bin/activate
@@ -307,6 +380,7 @@ fi
 # Parse flags
 USE_USER_THEME=
 USE_CURRENT_DIR=
+READONLY_MODE=
 ASSET_PATHS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -316,6 +390,10 @@ while [ $# -gt 0 ]; do
       ;;
     -c|--current-dir)
       USE_CURRENT_DIR=1
+      shift
+      ;;
+    -r|--readonly)
+      READONLY_MODE=1
       shift
       ;;
     -a|--assets)
@@ -336,7 +414,7 @@ case "${1:-}" in
     cat<<'EOF'
 SYNOPSIS
   techdocs-preview.sh
-  techdocs-preview.sh [-c|--current-dir] [-a|--assets path...]
+  techdocs-preview.sh [-c|--current-dir] [-r|--readonly] [-a|--assets path...]
   techdocs-preview.sh serve [additional mkdocs options]
   techdocs-preview.sh build [additional mkdocs options]
   techdocs-preview.sh add_plugins [mkdocs-pypi-package...]
@@ -373,6 +451,12 @@ OPTIONS
     instead.  Useful for editing standalone markdown files like README.md.
     On exit, edited files are restored to the current directory with
     frontmatter stripped and the temporary docs/ is removed.
+
+  -r, --readonly
+    Only meaningful with -c.  Prevents edited files from being copied back
+    to the original directory on exit.  All changes made in the temporary
+    docs/ directory are discarded.  Useful for testing or previewing without
+    risk of modifying the source files.
 
   --theme
     Prioritize the theme defined in your mkdocs.yml.  Without this flag the
@@ -434,6 +518,12 @@ if {
   esac
 }; then
   # Generate minimal mkdocs.yml for serve/build; will be removed on exit
+  if [ -z "${site_name:-}" ]; then
+    site_name="${PWD##*/}"
+  fi
+  if [ -n "${READONLY_MODE:-}" ]; then
+    site_name="RO ${site_name}"
+  fi
   printf 'site_name: "%s"\ndocs_dir: docs\n' "${PWD##*/}" > mkdocs.yml
   export MKDOCS_YML_AUTO_GENERATED=1
 fi
@@ -464,6 +554,7 @@ if { [ ! -d docs ] || [ -n "${USE_CURRENT_DIR:-}" ]; } && {
     tar -c "${ASSET_PATHS[@]}" | tar -xC "${TMP_DIR}/docs"
   fi
   export DOCS_DIR_AUTO_GENERATED=1
+  export site_name="${PWD##*/}"
   pushd "${TMP_DIR}" > /dev/null
   if [ -x ~1/"$0" ]; then
     DOCS_DIR_AUTO_GENERATED="" ~1/"$0" || true
@@ -471,17 +562,21 @@ if { [ ! -d docs ] || [ -n "${USE_CURRENT_DIR:-}" ]; } && {
     DOCS_DIR_AUTO_GENERATED="" "${0}" || true
   fi
   popd > /dev/null
-  find "${TMP_DIR}"/docs -name '*.md' -type f | while IFS= read -r _doc; do
-    _dest="$(sed -n '2s/^full_path: //p' "$_doc")"
-    if [ -n "$_dest" ]; then
-      if head -n 1 "$_doc" | grep -q '^---$'; then
-        awk 'BEGIN{fm=0} /^---$/{fm++;next} fm>=2{print}' "$_doc" > "$_dest"
-      else
-        cp "$_doc" "$_dest"
+  if [ -n "${READONLY_MODE:-}" ]; then
+    echo 'Read-only mode: changes discarded.' >&2
+  else
+    find "${TMP_DIR}"/docs -name '*.md' -type f | while IFS= read -r _doc; do
+      _dest="$(sed -n '2s/^full_path: //p' "$_doc")"
+      if [ -n "$_dest" ]; then
+        if head -n 1 "$_doc" | grep -q '^---$'; then
+          awk 'BEGIN{fm=0} /^---$/{fm++;next} fm>=2{print}' "$_doc" > "$_dest"
+        else
+          cp "$_doc" "$_dest"
+        fi
       fi
-    fi
-  done
-  echo 'Edited markdown files restored.' >&2
+    done
+    echo 'Edited markdown files restored.' >&2
+  fi
   unset DOCS_DIR_AUTO_GENERATED
   exit
 fi

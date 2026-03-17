@@ -10243,6 +10243,22 @@
           assetSpan.appendChild(extBadge);
         }
 
+        if (item._warnings && item._warnings.length) {
+          (function (cautionItem, cautionLink, cautionLi) {
+            var cautionIcon = document.createElement('span');
+            cautionIcon.className = 'live-wysiwyg-nav-caution';
+            cautionIcon.textContent = '\u26A0';
+            cautionIcon.title = 'Unreferenced asset';
+            cautionIcon.addEventListener('click', function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              _showCautionPopup(cautionIcon, cautionItem);
+            });
+            cautionLink.appendChild(cautionIcon);
+            cautionLi.classList.add('live-wysiwyg-nav-caution-item');
+          })(item, assetSpan, li);
+        }
+
         li.appendChild(assetSpan);
         li.setAttribute('data-nav-src-path', item.src_path || '');
       }
@@ -13207,6 +13223,10 @@
       }
     }
     _installReloadGuard();
+    if (wysiwygEditor) {
+      if (wysiwygEditor.editableArea) wysiwygEditor.editableArea.contentEditable = 'false';
+      if (wysiwygEditor.markdownArea) wysiwygEditor.markdownArea.readOnly = true;
+    }
 
     var overlay = document.querySelector('.live-wysiwyg-focus-overlay') || document.body;
     var statusContainer = contentEl || overlay;
@@ -13260,6 +13280,10 @@
     _batchRenamedPaths = {};
     _batchLinkIndex = null;
     _userActionInProgress = false;
+    if (wysiwygEditor) {
+      if (wysiwygEditor.editableArea) wysiwygEditor.editableArea.contentEditable = 'true';
+      if (wysiwygEditor.markdownArea) wysiwygEditor.markdownArea.readOnly = false;
+    }
 
     if (options.onComplete) {
       _removeReloadGuard();
@@ -14928,6 +14952,7 @@
         _enterNavEditModeAsync().then(function (ready) {
           if (!ready) return;
           _applyNormalizeFolderToNavData(normalizeTarget);
+          _adjustDefaultPageWeightSilent();
           _addNavBadge({
             className: 'live-wysiwyg-nav-normalize-badge',
             text: 'Normalize folder weights'
@@ -16426,6 +16451,31 @@
     } catch (e) { /* storage full or unavailable */ }
   }
 
+  function _getUnreferencedAssets() {
+    try {
+      var raw = localStorage.getItem('live_wysiwyg_unreferenced_assets');
+      if (!raw) return [];
+      var parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) { return []; }
+  }
+
+  function _setUnreferencedAssets(files) {
+    try {
+      if (!files || !files.length) {
+        localStorage.removeItem('live_wysiwyg_unreferenced_assets');
+        return;
+      }
+      localStorage.setItem('live_wysiwyg_unreferenced_assets', JSON.stringify(files));
+    } catch (e) {}
+  }
+
+  function _fetchUnreferencedFiles() {
+    return _apiPost('/unreferenced-files', {}).then(function (resp) {
+      return (resp && resp.files) ? resp.files : [];
+    });
+  }
+
   function _addDeadLinksForPage(srcPath, internal, external) {
     if (_warningDirectMode) {
       var pages = _getDeadLinkPages();
@@ -16538,8 +16588,7 @@
 
   function _sendLinkChecks(allChecks, checkMeta, externalUrlMap, mode, overlay) {
     if (!allChecks.length) {
-      _fadeOutOverlay(overlay);
-      _showToast('No dead links found!');
+      _processDeadLinkResults(allChecks, [], checkMeta, externalUrlMap, mode, overlay);
       return;
     }
     var port = liveWysiwygLinkCheckPort;
@@ -16636,8 +16685,19 @@
       }
     }
 
+    if (mode === 'internal') {
+      _updateTransitionText(overlay, 'Checking for unreferenced assets...');
+      _fetchUnreferencedFiles().catch(function () { return []; }).then(function (unreferenced) {
+        _finalizeDeadLinkResults(deadByPage, mode, overlay, unreferenced || []);
+      });
+    } else {
+      _finalizeDeadLinkResults(deadByPage, mode, overlay, []);
+    }
+  }
+
+  function _finalizeDeadLinkResults(deadByPage, mode, overlay, unreferenced) {
     var deadPageCount = Object.keys(deadByPage).length;
-    if (deadPageCount === 0) {
+    if (deadPageCount === 0 && !unreferenced.length) {
       _fadeOutOverlay(overlay);
       _showToast('No dead links found!');
       return;
@@ -16647,36 +16707,73 @@
     if (analysis.groups.length > 0) {
       _fadeOutOverlay(overlay);
       _showDeadLinkAnalysisWizard(analysis, deadByPage, mode).then(function (filtered) {
-        if (filtered) _commitDeadLinkResults(filtered, mode);
+        if (filtered) _commitDeadLinkResults(filtered, mode, unreferenced);
       });
     } else {
       _fadeOutOverlay(overlay);
-      _commitDeadLinkResults(deadByPage, mode);
+      _commitDeadLinkResults(deadByPage, mode, unreferenced);
     }
   }
 
-  function _commitDeadLinkResults(deadByPage, mode) {
+  function _commitDeadLinkResults(deadByPage, mode, unreferenced) {
+    if (!unreferenced) unreferenced = [];
     var deadPageCount = Object.keys(deadByPage).length;
-    if (deadPageCount === 0) {
+    if (deadPageCount === 0 && !unreferenced.length) {
       _showToast('No dead links remain after exclusions.');
       return;
     }
 
+    var needsSnapshot = false;
     _suppressWarningSnapshot = true;
-    for (var pagePath in deadByPage) {
-      if (!deadByPage.hasOwnProperty(pagePath)) continue;
-      var info = deadByPage[pagePath];
-      _addDeadLinksForPage(pagePath,
-        (mode === 'external') ? null : info.internal,
-        (mode === 'internal') ? null : info.external
-      );
-      if (info.internal.length) _addCautionPage(pagePath, 'Internal dead links found');
-      if (info.external.length) _addCautionPage(pagePath, 'External dead links found');
-    }
-    _suppressWarningSnapshot = false;
-    _commitNavSnapshot();
 
-    _checkDeadLinksForCurrentPage();
+    if (deadPageCount > 0) {
+      for (var pagePath in deadByPage) {
+        if (!deadByPage.hasOwnProperty(pagePath)) continue;
+        var info = deadByPage[pagePath];
+        _addDeadLinksForPage(pagePath,
+          (mode === 'external') ? null : info.internal,
+          (mode === 'internal') ? null : info.external
+        );
+        if (info.internal.length) _addCautionPage(pagePath, 'Internal dead links found');
+        if (info.external.length) _addCautionPage(pagePath, 'External dead links found');
+      }
+      needsSnapshot = true;
+    }
+
+    _clearUnreferencedAssetWarnings();
+    if (unreferenced.length) {
+      for (var u = 0; u < unreferenced.length; u++) {
+        var assetItem = _findNavItemByPath(unreferenced[u]);
+        if (assetItem) {
+          if (!assetItem._warnings) assetItem._warnings = [];
+          var alreadyWarned = false;
+          for (var w = 0; w < assetItem._warnings.length; w++) {
+            if (assetItem._warnings[w].reason === 'Unreferenced asset') { alreadyWarned = true; break; }
+          }
+          if (!alreadyWarned) assetItem._warnings.push({ reason: 'Unreferenced asset', renames: 0 });
+        }
+      }
+      needsSnapshot = true;
+    }
+
+    _suppressWarningSnapshot = false;
+
+    var needsShowHidden = unreferenced.length > 0;
+    if (!needsShowHidden && deadPageCount > 0) {
+      for (var hp in deadByPage) {
+        if (!deadByPage.hasOwnProperty(hp)) continue;
+        var hpItem = _findNavItemByPath(hp);
+        if (hpItem && hpItem.headless) { needsShowHidden = true; break; }
+      }
+    }
+    if (needsShowHidden) _setSetting('live_wysiwyg_show_hidden', '1');
+
+    if (needsSnapshot) {
+      _commitNavSnapshot();
+      _checkDeadLinksForCurrentPage();
+    }
+
+    _setUnreferencedAssets(unreferenced);
 
     var totalDead = 0;
     for (var p in deadByPage) {
@@ -16684,10 +16781,15 @@
         totalDead += deadByPage[p].internal.length + deadByPage[p].external.length;
       }
     }
-    _showToast(
-      'Found ' + totalDead + ' dead link' + (totalDead !== 1 ? 's' : '') + ' across ' +
-      deadPageCount + ' page' + (deadPageCount !== 1 ? 's' : '') + '.'
-    );
+    var parts = [];
+    if (totalDead > 0) {
+      parts.push(totalDead + ' dead link' + (totalDead !== 1 ? 's' : '') + ' across ' +
+        deadPageCount + ' page' + (deadPageCount !== 1 ? 's' : ''));
+    }
+    if (unreferenced.length) {
+      parts.push(unreferenced.length + ' unreferenced asset' + (unreferenced.length !== 1 ? 's' : '') + ' in docs');
+    }
+    _showToast(parts.length ? 'Found ' + parts.join(', ') + '.' : 'No issues found.');
   }
 
   function _updateTransitionText(overlay, text) {
@@ -17071,6 +17173,17 @@
       _removeNavWarningReason(item, 'Internal dead links found');
       _removeNavWarningReason(item, 'External dead links found');
     }
+  }
+
+  function _clearUnreferencedAssetWarnings() {
+    (function walk(items) {
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].type === 'asset') {
+          _removeNavWarningReason(items[i], 'Unreferenced asset');
+        }
+        if (items[i].children) walk(items[i].children);
+      }
+    })(typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : []);
   }
 
 
@@ -17535,6 +17648,7 @@
     _enterNavEditModeAsync().then(function (ready) {
       if (!ready) return;
       _applyNormalizeWeightsToNavData(liveWysiwygNavData);
+      _adjustDefaultPageWeightSilent();
       _addNavBadge({
         className: 'live-wysiwyg-nav-normalize-badge',
         text: 'Normalize all weights'
@@ -19420,6 +19534,7 @@
     _enterNavEditModeAsync().then(function (ready) {
       if (!ready) { _removeReloadGuard(); return; }
       _applyNormalizeWeightsToNavData(liveWysiwygNavData);
+      _adjustDefaultPageWeightSilent();
       _addNavBadge({
         className: 'live-wysiwyg-nav-normalize-badge',
         text: 'Normalize all weights (post-migration)'
@@ -19427,6 +19542,29 @@
       _commitNavSnapshot();
       _executeNavBatchSave();
     });
+  }
+
+  function _adjustDefaultPageWeightSilent() {
+    var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
+    if (!nwCfg.enabled) return;
+    var defWeight = nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 1000;
+    var maxW = 0;
+    (function walk(items) {
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (it.weight != null && it.weight > maxW) maxW = it.weight;
+        if (it.children) walk(it.children);
+        if (it.index_meta && it.index_meta.weight != null && it.index_meta.weight > maxW) maxW = it.index_meta.weight;
+      }
+    })(liveWysiwygNavData);
+    if (maxW <= defWeight) return;
+    var suggested = Math.ceil((maxW + 500) / 1000) * 1000;
+    _virtualMkdocsYml = _replaceDefaultPageWeight(_virtualMkdocsYml || '', suggested);
+    if (_virtualOriginalMkdocsYml != null) {
+      _virtualOriginalMkdocsYml = _replaceDefaultPageWeight(_virtualOriginalMkdocsYml, suggested);
+    }
+    liveWysiwygNavWeightConfig.default_page_weight = suggested;
+    _removeNavTopWarning('weight-exceeds-default');
   }
 
   function _autoAdjustDefaultPageWeight() {

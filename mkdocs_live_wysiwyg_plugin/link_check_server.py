@@ -3,7 +3,8 @@
 Runs in a daemon thread alongside the MkDocs dev server.  Exposes
 ``POST /check-links``, ``POST /file-exists``, ``POST /list-items``,
 ``POST /rename-folder``, ``POST /delete-folder``, ``POST /move-file``,
-``POST /delete-file``, and ``GET /link-index``, ``GET /build-epoch`` endpoints.
+``POST /delete-file``, ``POST /unreferenced-files``, and
+``GET /link-index``, ``GET /build-epoch`` endpoints.
 """
 
 from __future__ import annotations
@@ -105,6 +106,8 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             return self._handle_move_file()
         if self.path == "/delete-file":
             return self._handle_delete_file()
+        if self.path == "/unreferenced-files":
+            return self._handle_unreferenced_files()
         self.send_error(404)
 
     def _read_json_body(self) -> dict | None:
@@ -485,6 +488,45 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json({"ok": True})
+
+    # ------------------------------------------------------------------
+    # POST /unreferenced-files  — non-md files not referenced by any md
+    # ------------------------------------------------------------------
+
+    def _handle_unreferenced_files(self):
+        docs = Path(self.walk_dir or self.docs_dir).resolve()
+
+        all_files: set[str] = set()
+        for root, dirs, files in os.walk(docs):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            root_path = Path(root)
+            for f in files:
+                if f.startswith(".") or f.endswith(".md"):
+                    continue
+                rel = str(root_path.joinpath(f).relative_to(docs)).replace(
+                    "\\", "/"
+                )
+                all_files.add(rel)
+
+        referenced: set[str] = set()
+        for src_path, refs in self.link_index.items():
+            src_dir = (docs / src_path).parent
+            for ref in refs:
+                target = ref.get("target", "")
+                if not target:
+                    continue
+                if target.startswith("/"):
+                    resolved = (docs / target.lstrip("/")).resolve()
+                else:
+                    resolved = (src_dir / target).resolve()
+                try:
+                    rel = str(resolved.relative_to(docs)).replace("\\", "/")
+                    referenced.add(rel)
+                except ValueError:
+                    pass
+
+        unreferenced = sorted(all_files - referenced)
+        self._send_json({"files": unreferenced})
 
     # ------------------------------------------------------------------
     # Path sandboxing helper

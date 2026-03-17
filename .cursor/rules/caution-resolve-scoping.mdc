@@ -20,3 +20,4 @@ Multiple features can add caution reasons to the same page (e.g. nav migration a
 5. **Each feature owns its reason strings.** Document which reason strings a feature uses so other features don't accidentally match them. Current inventory:
    - Nav migration: `"Link integrity may need attention"`
    - Dead link finder: `"Internal dead links found"`, `"External dead links found"`
+   - Unreferenced asset finder: `"Unreferenced asset"`

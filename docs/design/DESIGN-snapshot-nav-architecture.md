@@ -39,7 +39,6 @@ Each snapshot captures the full editor state:
   badges: [...]               // badge descriptors for the actions bar
   migrationPending: bool      // migration was staged
   focusTarget: string|null    // src_path to focus after save
-  pendingFolderDelete: obj|null
   topWarnings: [...]          // top-level warning message strings
   topInfo: [...]              // top-level info message strings
   mkdocsYml: string|null      // virtual mkdocs.yml content
@@ -279,12 +278,85 @@ Both actions create a snapshot, so they can be undone.
 
 ### Dead Link Scan
 
-`_scanDeadLinks(mode)` scans all pages for broken links via the link-checker server. Results flow through `_processDeadLinkResults` → `_commitDeadLinkResults`:
+`_scanDeadLinks(mode, options)` scans all pages for broken links via the link-checker server. Results flow through `_processDeadLinkResults` → `_finalizeDeadLinkResults` → `_commitDeadLinkResults`:
 
 1. Set `_suppressWarningSnapshot = true`
 2. For each page with dead links: `_addDeadLinksForPage(path, internal, external)` + `_addCautionPage(path, reason)` — both modify navData without committing
 3. Set `_suppressWarningSnapshot = false`
 4. `_commitNavSnapshot()` — single snapshot for the entire scan
+
+The optional `options` parameter supports:
+
+| Option | Type | Purpose |
+|--------|------|---------|
+| `fileLayout` | `string[]` | Virtual file layout for the server — when provided, the server checks link targets against this set instead of the real filesystem |
+| `filterTargets` | `object` | Map of deleted paths — only report dead links whose resolved target matches a key in this map |
+| `quiet` | `boolean` | Skip overlay, wizard popup, unreferenced asset check, and toast. Used for background scans |
+| `onComplete` | `function(deadByPage)` | Callback invoked after results are committed (or when no dead links are found) |
+
+These options are threaded through `_sendLinkChecks`, `_sendLinkBatches`, `_processDeadLinkResults`, `_finalizeDeadLinkResults`, and `_commitDeadLinkResults`.
+
+### Virtual File Layout (`file_layout`)
+
+The `file_layout` is a shared data structure between the editor's snapshot system and the link check server. It represents a virtual filesystem derived from the nav snapshot's current state, enabling the dead link checker to evaluate link validity against the *intended* file layout rather than the actual disk state.
+
+**Client-side construction (`_buildFileLayoutFromNav`):**
+
+Walks `liveWysiwygNavData` and collects `src_path` values for all non-deleted items. For sections, also includes the directory path (derived via `_getDir`). Supplements with `liveWysiwygAllMdSrcPaths` (hidden pages not in nav), excluding any paths marked `_deleted` in navData or under deleted directories. Returns a flat array of docs-relative path strings.
+
+```
+_buildFileLayoutFromNav(deletedDirs)
+  → walk navData: collect src_path where !item._deleted
+  → for sections: also collect _getDir(src_path) as directory entries
+  → for deletedDirs: build exclusion prefixes
+  → supplement with liveWysiwygAllMdSrcPaths minus excluded paths
+  → return string[]
+```
+
+**Server-side usage (`_check_internal`):**
+
+When `file_layout` is provided in the `POST /check-links` body, the handler converts it to a `set` and passes it to `_check_internal`. Instead of calling `resolved.exists()` on the real filesystem, the method checks set membership against the virtual layout. The same resolution logic applies:
+
+- Direct path match: `rel in file_layout_set`
+- Bare name → index: `(rel + "/index.md") in file_layout_set`
+- Bare name → `.md`: `(rel + ".md") in file_layout_set`
+- `.md` → directory: `rel.removesuffix(".md") in file_layout_set`
+
+When `file_layout` is absent, `_check_internal` falls back to the original `resolved.exists()` filesystem checks.
+
+**Wire format:**
+
+```
+POST /check-links
+{
+  "checks": [...],
+  "file_layout": ["index.md", "guide/index.md", "guide/setup.md", "assets/logo.png", "guide"]
+}
+```
+
+### Post-Delete Impact Scan
+
+When a page, asset, or folder is deleted in nav edit mode, `_scanDeleteImpact(deletedDirs)` runs a targeted internal dead link scan to identify pages that will have broken links as a result of the deletion. No confirmation popups are shown — the impact is surfaced as caution icons on affected nav items.
+
+```
+Delete button click
+  → item._deleted = true (or _markSubtreeDeleted for folders)
+  → _addNavBadge (delete badge)
+  → _scanDeleteImpact(deletedDirs)
+    → _buildFileLayoutFromNav(deletedDirs)  // excludes deleted items
+    → collect filterTargets from _deleted items + deletedDirs contents
+    → _scanDeadLinks('internal', { fileLayout, filterTargets, quiet: true, onComplete })
+      → POST /check-links with file_layout
+      → server evaluates links against virtual layout
+      → _processDeadLinkResults filters to links targeting deleted paths only
+      → _commitDeadLinkResults
+        → _addDeadLinksForPage + _addCautionPage for affected pages
+        → _commitNavSnapshot()  ← single snapshot for delete + warnings
+```
+
+The `onComplete` callback handles the case where no dead links are found — it calls `_commitNavSnapshot()` directly so there is exactly one snapshot commit regardless of outcome. When dead links are found, `_commitDeadLinkResults` commits the snapshot (which includes both the deletion state and the new warnings).
+
+The `filterTargets` map ensures only *new* dead links caused by the deletion are surfaced. Pre-existing dead links to other targets are excluded from the results.
 
 ### Helper Functions
 
@@ -298,6 +370,8 @@ Both actions create a snapshot, so they can be undone.
 | `_collectNavDeadLinks(items)` | Walk tree, return `[{path, internal, external}]` for localStorage format |
 | `_applyStoredWarningsToNavData()` | Read localStorage, apply to navData items (on load) |
 | `_persistWarningsFromSnapshot()` | Write navData warnings to localStorage (on save) |
+| `_buildFileLayoutFromNav(deletedDirs)` | Build virtual file layout from nav snapshot; excludes `_deleted` items and files under `deletedDirs` |
+| `_scanDeleteImpact(deletedDirs)` | Run targeted internal dead link scan after a delete; builds file layout, collects filter targets, delegates to `_scanDeadLinks` in quiet mode |
 
 ## Data Flags on NavData Items
 
@@ -375,7 +449,13 @@ Asset moves are collected as `assetMoves` in the desired state and executed via 
 
 ### Delete Operations
 
-Assets can be deleted from the settings gear via a "Delete File" button. The deletion marks the item as `_deleted = true`, commits a snapshot, and re-renders the nav. The save planner detects deleted assets (present in original snapshot, missing from current) and collects them as `assetDeletes` in the desired state. `_planDiskOperations` converts these to `delete-file` ops in Batch 2b. `_executeDeleteFileOp` calls `_apiPost('/delete-file', { path })` on the API server, which verifies the path is within `docs_dir`, rejects `.md` files, and unlinks the file.
+All delete operations in nav edit mode are popup-free. No confirmation dialogs are shown for deleting pages, assets, or folders. The impact of each deletion is surfaced as caution icons on affected nav items via the post-delete impact scan (see "Post-Delete Impact Scan" above).
+
+**Pages and assets** can be deleted from the settings gear via a "Delete" button. The deletion marks the item as `_deleted = true`, runs `_scanDeleteImpact()` to identify pages that will have broken links, and commits a single snapshot containing both the deletion and any resulting dead link warnings.
+
+**Folders** are deleted via `_initiateFolderDelete`, which removes the section from navData via `_removeSectionFromNav`, queues a `delete-folder` batch op, and runs `_scanDeleteImpact([folderDir])`. The virtual file layout excludes all files under the deleted directory. Empty folders use `_markSubtreeDeleted` to flag all descendants, then call `_scanDeleteImpact()`.
+
+The save planner detects deleted assets (present in original snapshot, missing from current) and collects them as items with `isDeleted: true` in the desired state. `_planDiskOperations` converts asset deletes to `delete-file` ops in Batch 2b. `_executeDeleteFileOp` calls `_apiPost('/delete-file', { path })` on the API server, which verifies the path is within `docs_dir`, rejects `.md` files, and unlinks the file. Page deletes are converted to `delete-page` ops executed via `_wsDeleteFile`.
 
 ### Link Rewriting
 

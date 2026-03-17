@@ -136,6 +136,11 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             return
 
         checks = body.get("checks", [])
+        raw_layout = body.get("file_layout")
+        file_layout_set: set[str] | None = None
+        if isinstance(raw_layout, list):
+            file_layout_set = set(raw_layout)
+
         results: list[dict] = []
         for item in checks:
             try:
@@ -143,7 +148,7 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionError, OSError):
                 return
             if item.get("type") == "internal":
-                results.append(self._check_internal(item))
+                results.append(self._check_internal(item, file_layout_set))
             elif item.get("type") == "external":
                 results.append(self._check_external(item))
             else:
@@ -551,18 +556,35 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
     # Check helpers
     # ------------------------------------------------------------------
 
-    def _check_internal(self, item: dict) -> dict:
+    def _check_internal(
+        self, item: dict, file_layout_set: set[str] | None = None
+    ) -> dict:
         from_path = item.get("from", "")
         target = item.get("target", "")
         if not target:
             return {"ok": False, "error": "Empty target"}
         docs = Path(self.docs_dir)
+        docs_resolved = docs.resolve()
         from_dir = (docs / from_path).parent
         resolved = (from_dir / target).resolve()
         try:
-            resolved.relative_to(docs.resolve())
+            resolved.relative_to(docs_resolved)
         except ValueError:
             return {"ok": False, "error": "Path escapes docs_dir"}
+
+        if file_layout_set is not None:
+            rel = str(resolved.relative_to(docs_resolved)).replace("\\", "/")
+            if rel in file_layout_set:
+                return {"ok": True}
+            if not resolved.suffix:
+                if (rel + "/index.md") in file_layout_set:
+                    return {"ok": True}
+                if (rel + ".md") in file_layout_set:
+                    return {"ok": True}
+            if resolved.suffix == ".md" and rel.removesuffix(".md") in file_layout_set:
+                return {"ok": True}
+            return {"ok": False, "error": "File not found"}
+
         if resolved.exists():
             return {"ok": True}
         if not resolved.suffix:

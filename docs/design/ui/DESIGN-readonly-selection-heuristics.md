@@ -5,7 +5,7 @@
 When a user selects text in the **read-only rendered HTML page** and then switches to **edit mode** (WYSIWYG or Markdown), the selection must be preserved. This is non-trivial because:
 
 1. **Rendered HTML ≠ Markdown source.** Markdown formatting characters (`` ` ``, `#`, `**`, etc.) are absent in the rendered output. Selecting `Ctrl+A` in rendered HTML corresponds to `` `Ctrl+A` `` in the markdown source.
-2. **Non-text elements.** Emoji images (`<img data-emoji-shortcode="heart_eyes">`) render visually but have no text content in `range.toString()`.
+2. **Non-text elements.** Emoji images (`<img data-emoji-shortcode="heart_eyes">`) render visually but have no text content in `range.toString()`. Browser-specific behavior of `Range.toString()` and the selectionchange API is documented in [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md).
 3. **Embedded `<script>` and `<style>` tags.** The plugin injects CSS and JS inside the `<article>` element. DOM methods like `root.textContent` include this source code, corrupting context.
 4. **Headerlink anchors.** MkDocs renders `<a class="headerlink">¶</a>` inside headings. The `¶` character appears in `range.toString()` but has no markdown equivalent.
 5. **Whitespace differences.** Rendered HTML has single newlines (or none) between block elements; markdown uses `\n\n`. `range.toString()` whitespace does not match markdown whitespace.

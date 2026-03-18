@@ -151,7 +151,7 @@ Only applies when alt is empty on open. Strips path, removes extension, replaces
 |-------|---------|--------|
 | URL (new links only) | Clipboard content if URL | `navigator.clipboard.readText()` (async, graceful fallback) |
 
-Only attempted when creating a new link (not editing an existing one) and the URL field would be the default `https://`. If clipboard read fails (permissions denied, non-URL content), the field keeps its default. This is async and runs after the initial focus.
+Only attempted when creating a new link (not editing an existing one) and the URL field would be the default `https://`. If clipboard read fails (permissions denied, non-URL content), the field keeps its default. This is async and runs after the initial focus. Browser-specific clipboard behavior (including Safari user-gesture timing) is documented in [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md).
 
 #### Insert Image (`createImageInsertDropdown`)
 

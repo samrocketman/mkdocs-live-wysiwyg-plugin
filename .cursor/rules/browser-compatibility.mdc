@@ -1,14 +1,40 @@
 ---
-description: Browser Compatibility — centralized browser quirk handling
+description: Browser Compatibility — centralized browser quirk handling via browser-compat.js
 globs: 
 alwaysApply: true
 ---
 # Browser Compatibility
 
+The `browser-compat.js` file is the single authority for all browser-specific detection, normalization, and workarounds. It exposes `window.LiveWysiwygCompat`, captured as `var _compat = window.LiveWysiwygCompat` at the top of the integration IIFE.
+
 ## Rules
 
-1. **Document browser quirks centrally.** Browser-specific workarounds and known quirks must be documented in `docs/design/ui/DESIGN-browser-compatibility.md`. New browser-specific code should add an entry to that catalog.
+1. **All `execCommand` calls in the integration script must use `_compat.exec()`.** Never call `document.execCommand` directly from `live-wysiwyg-integration.js`. The global `document.execCommand` patch handles calls from `vendor/editor.js` transparently.
 
-2. **New workarounds belong in this subsystem.** When adding a workaround for a browser quirk, update both the design document and this rule file if the quirk affects invariants or coding patterns.
+2. **All keyboard routers must check `_compat.isComposing(e)` before dispatch.** Tier 2 (`_globalKeydownRouter`) and Tier 3 (`_editorKeydownRouter`) must return early when `isComposing` is true. This prevents handler dispatch during IME composition on all browsers.
 
-3. **Chrome location object restrictions.** Chrome (and most modern browsers) treat `window.location` as a security-critical object. Its native properties (`reload`, `assign`, `replace`, `href`) are non-configurable on the `Location` prototype. `Object.defineProperty(location, 'reload', { ... })` and similar attempts throw `TypeError`. Direct assignment like `location.reload = fn` is silently ignored. Never redefine `location` properties without try/catch. Never assume `location` overrides succeeded. Prefer `beforeunload` for reload prevention; `Object.defineProperty` on `location` is best-effort only.
+3. **Chrome location object restrictions.** Chrome (and most modern browsers) treat `window.location` as a security-critical object. Its native properties (`reload`, `assign`, `replace`, `href`) are non-configurable on the `Location` prototype. `Object.defineProperty(location, 'reload', { ... })` and similar attempts throw `TypeError`. All location property overrides are centralized in `_compat.installLocationGuard()` with try/catch. Never override location properties outside the compat layer.
+
+4. **All clipboard access must use `_compat` methods.** Use `_compat.readClipboardText()` for async reads, `_compat.getClipboardData(e, type)` for paste event data, and `_compat.setClipboardData(e, type, data)` for cut/copy. Never access `e.clipboardData.getData()` or `e.clipboardData.setData()` directly — the compat wrappers provide try/catch protection against sandbox restrictions, untrusted events, and quota errors.
+
+5. **Safari clipboard reads must be cached before `requestAnimationFrame`.** Call `_compat.cacheClipboardForGesture()` synchronously in click handlers before deferring work to `requestAnimationFrame`. Safari's strict user-gesture timing rejects `readText()` calls inside rAF callbacks.
+
+6. **New browser-specific code must be added to `browser-compat.js`.** Do not scatter browser conditionals in the integration script. If a workaround requires engine detection, add it to the compat layer and expose a normalized API.
+
+7. **Engine detection is feature-based, never userAgent string parsing.** Use CSS feature detection (`CSS.supports`, style property presence) to identify Blink, Gecko, and WebKit. `navigator.userAgent` is unreliable and should never be used for engine detection.
+
+8. **CSS vendor prefixes must be paired with unprefixed equivalents.** When injecting styles via JS, always include both `-webkit-` prefixed and unprefixed versions. Example: `-webkit-appearance:none;appearance:none;`. This applies to `-webkit-mask-*`, `-webkit-backdrop-filter`, and `-webkit-user-select`.
+
+9. **`getData`/`setData` on `clipboardData` must be wrapped in try/catch.** Firefox may throw on untrusted events or sandbox contexts. All sites are covered by `_compat.getClipboardData` and `_compat.setClipboardData`.
+
+10. **Use `_compat.getRangeRect(range)` for collapsed range positioning.** Safari and Firefox can return zero-rect for `getBoundingClientRect()` on collapsed ranges. The compat method handles this with temporary span insertion.
+
+11. **Use `_compat.isPrintableKey(e)` instead of `e.key.length === 1` checks.** The `isPrintableKey` method excludes dead keys (`'Dead'`), process keys (`'Process'`), and modifier combos, preventing false positives on Firefox during IME input.
+
+12. **Document browser quirks centrally.** Browser-specific workarounds and known quirks must be documented in `docs/design/ui/DESIGN-browser-compatibility.md`. New browser-specific code should add an entry to that catalog.
+
+13. **`vendor/editor.js` must not be modified.** The global `document.execCommand` and `document.queryCommandState` patches in `browser-compat.js` intercept all calls from the vendor file transparently. Any vendor-level normalization must be implemented in the compat layer's global patches.
+
+## Design Document
+
+See `docs/design/ui/DESIGN-browser-compatibility.md`.

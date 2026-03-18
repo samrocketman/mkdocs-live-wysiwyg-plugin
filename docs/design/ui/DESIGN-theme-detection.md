@@ -104,7 +104,7 @@ Overrides the upstream `mkdocs-live-edit-plugin`'s hardcoded styles with CSS-var
 
 ### `<style id="live-wysiwyg-width-overrides">`
 
-Separate style block for width alignment (documented in `DESIGN-editor-width-alignment` / `editor-width-alignment.mdc`). Not part of the theming system.
+Separate style block for width alignment (documented in `DESIGN-layout.md` / `layout.mdc`). Not part of the theming system.
 
 ## Focus Mode Theming
 

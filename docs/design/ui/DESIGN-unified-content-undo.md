@@ -13,7 +13,7 @@ Browser native undo (`document.execCommand('undo')` / textarea undo) is mode-spe
 - **WYSIWYG mode**: the contenteditable undo stack tracks DOM mutations. Mode switches, `innerHTML` assignments, and DOM reparenting during nav edit transitions destroy the stack.
 - **Markdown mode**: the textarea undo stack tracks text changes. Switching to WYSIWYG mode replaces the textarea content programmatically, which either clears or corrupts the stack.
 
-After any mode switch or nav edit transition, `Cmd+Z` does nothing. The user loses their entire editing history.
+After any mode switch or nav edit transition, `Cmd+Z` does nothing. The user loses their entire editing history. Browser-specific behavior of `execCommand('undo')` and contenteditable undo stacks is documented in [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md).
 
 ## Architecture
 

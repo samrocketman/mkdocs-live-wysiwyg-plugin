@@ -54,6 +54,8 @@ All inline markdown typing handlers set `data-md-literal` on the created element
 - `execCommand('insertHorizontalRule')` (toolbar HR)
 - `_markdownToHtml` / `marked.parse()` (document load, mode switch)
 
+All `execCommand` calls in the integration script use the compat layer. See [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md) for cross-browser contenteditable and execCommand behavior.
+
 ## Backspace Behavior
 
 ### Block elements

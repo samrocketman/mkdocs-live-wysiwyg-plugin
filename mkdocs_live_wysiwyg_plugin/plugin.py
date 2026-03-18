@@ -358,10 +358,13 @@ class LiveWysiwygPlugin(BasePlugin):
         vendor_dir = parent_dir / "vendor"
         integration_js = parent_dir / "live-wysiwyg-integration.js"
         admonition_extension_js = parent_dir / "mkdocs-admonition-extension.js"
+        browser_compat_js = parent_dir / "browser-compat.js"
         with open(integration_js, "r", encoding="utf-8") as f:
             integration_script = f.read()
         with open(admonition_extension_js, "r", encoding="utf-8") as f:
             admonition_extension_script = f.read()
+        with open(browser_compat_js, "r", encoding="utf-8") as f:
+            browser_compat_content = f.read()
 
         autoload_wysiwyg = self.config.get("autoload_wysiwyg")
         preamble_parts = []
@@ -531,6 +534,7 @@ class LiveWysiwygPlugin(BasePlugin):
             f'<style>{admonition_css_content}</style>'
             f'<script>{marked_js_content}</script>'
             f'<script>{admonition_extension_script}</script>'
+            f'<script>{browser_compat_content}</script>'
             f'<script>{editor_js_content}</script>'
             f'<script>{preamble}\n{integration_script}</script>'
         )

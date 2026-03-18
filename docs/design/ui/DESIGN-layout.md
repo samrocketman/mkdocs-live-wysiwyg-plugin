@@ -30,7 +30,7 @@ Cursor rule: `.cursor/rules/layout.mdc`
 
 ### Width Alignment (Unfocused Mode)
 
-Editing surfaces use **negative horizontal margins** (`-10px`) to extend through the `10px` padding on `div.live-edit-controls`, matching the readonly HTML content width. See `editor-width-alignment.mdc` for the full mechanism.
+Editing surfaces use **negative horizontal margins** (`-10px`) to extend through the `10px` padding on `div.live-edit-controls`, matching the readonly HTML content width. See `layout.mdc` for the full mechanism.
 
 ### Responsive Breakpoints
 
@@ -212,4 +212,4 @@ Colors in `editor.css` are owned by the Theme subsystem. Layout owns only the st
 - [DESIGN-image-insertion-resize.md](DESIGN-image-insertion-resize.md) — z-index, fixed positioning, resize handles
 - [DESIGN-unfocused-mode.md](DESIGN-unfocused-mode.md) — width alignment
 - [DESIGN-snapshot-nav-architecture.md](DESIGN-snapshot-nav-architecture.md) — notification positioning
-- [DESIGN-theme-detection.md](../DESIGN-theme-detection.md) — overlay inline styles (layout aspect)
+- [DESIGN-theme-detection.md](DESIGN-theme-detection.md) — overlay inline styles (layout aspect)

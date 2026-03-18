@@ -48,6 +48,8 @@ The TOC uses Material theme classes for consistent styling:
 - `heading.scrollIntoView({ behavior: 'smooth', block: 'start' })` for browser-native smooth scrolling
 - Places cursor at the heading for immediate editing
 
+See [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md) for cross-browser considerations around `scrollIntoView` and smooth scrolling.
+
 ## Collapsible Toggle
 
 - Toggle: TOC toggle button (hamburger rotated 90°) in header-left

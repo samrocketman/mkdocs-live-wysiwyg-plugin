@@ -249,20 +249,20 @@ Reverse bubble **must** be first. This was previously enforced by handler regist
 #### Backspace Priority
 
 1. `_handleChecklistBackspace` — Remove checkbox or delete checklist item
-2. `_handleCodeBlockBackspace` — Revert/delete/exit code block
-3. `_handleAdmonitionBackspace` — Exit empty admonition on backspace
-4. `_handleMarkdownRevert` — Revert inline markdown elements, delete blocks
+2. `_handleMarkdownAutoConvert` — Revert inline markdown elements, delete blocks; also handles image delete for Delete key
+3. `_handleCodeBlockBackspace` — Revert/delete/exit code block
+4. `_handleAdmonitionBackspace` — Exit empty admonition on backspace
 
 #### Other Keys
 
 | Key | Handler |
 |-----|---------|
 | Space | `_handleMarkdownAutoConvert` — Block-level markdown conversions |
-| Delete | `_handleImageDelete` — Delete selected image |
+| Delete | `_handleMarkdownAutoConvert` — Delete selected image (inside `_ekh.mdAuto`) |
 | ArrowLeft/Right | `_handleChecklistArrows` — Cursor normalization around checkboxes |
 | Ctrl+A | `_handleSelectAllInBlock` — Progressive select-all |
 | Emoji keys | `_handleEmojiKey` — Ctrl+Space, arrows, Enter/Tab, Backspace, printable (when autocomplete visible) |
-| Various | `_maybeClearPendingBacktick` — Clear pending backtick state on Escape/Enter/arrows/Home/End/Page keys |
+| All keys | `_ekh.inlineCodeClear` — Invoked on every keydown; clears pending backtick state when key is Escape, Enter, arrows, Home, End, or PageUp/PageDown |
 
 ### Dataset Guard
 
@@ -293,4 +293,4 @@ To add a new editor keyboard handler:
 
 7. **`enterGuard` for special cases.** Dropdowns with autocomplete or other sub-UIs that consume Enter use `opts.enterGuard` to conditionally bypass dialog-level Enter handling.
 
-8. **Shift bypass in Tier 3.** The editor router checks `e.shiftKey` for Enter to allow Shift+Enter to pass through to browser default. This check is in the router, not in individual handlers.
+8. **Shift bypass in Tier 3.** Each Enter handler (reverseBubble, listEnterExit, admonitionEnterExit, blockquoteEnterExit, headingEnter, hiddenTitleAdmonitionEnter, codeBlockEnterExit) checks `e.shiftKey` individually and returns early when Shift is held, allowing Shift+Enter to pass through to browser default. The router has no central shift check.

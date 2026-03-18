@@ -338,7 +338,7 @@ Called **after** reparenting completes and the overlay/normal layout is settled.
 
 ### Why Direct Range Restore Works
 
-`enterFocusMode` and `exitFocusMode` reparent the editor wrapper — they move DOM nodes between parents using `appendChild` / `insertBefore`. The nodes themselves are never cloned or recreated. A `Range` whose `startContainer` / `endContainer` point into these nodes remains valid after reparenting because the node references don't change. This makes direct `Range` restore the fastest and most reliable mechanism.
+`enterFocusMode` and `exitFocusMode` reparent the editor wrapper — they move DOM nodes between parents using `appendChild` / `insertBefore`. The nodes themselves are never cloned or recreated. A `Range` whose `startContainer` / `endContainer` point into these nodes remains valid after reparenting because the node references don't change. This makes direct `Range` restore the fastest and most reliable mechanism. Safari and other browsers may have quirks with Range/Selection after DOM operations; see [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md).
 
 ## Invariants
 

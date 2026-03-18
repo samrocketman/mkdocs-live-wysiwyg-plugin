@@ -209,7 +209,7 @@ Valid JSON with wrong structure (e.g., array where object expected, missing fiel
 
 ### Layer 4: Write Protection
 
-Every `localStorage.setItem` call is wrapped in try/catch. Storage-full (quota exceeded) or unavailable (private browsing) conditions are silently absorbed. No write failure can propagate into application logic or interrupt operations like batch save.
+Every `localStorage.setItem` call is wrapped in try/catch. Storage-full (quota exceeded) or unavailable (private browsing) conditions are silently absorbed. No write failure can propagate into application logic or interrupt operations like batch save. See [DESIGN-browser-compatibility.md](../ui/DESIGN-browser-compatibility.md) for cross-browser storage considerations.
 
 ### Layer 5: Pipeline Resume Safety
 

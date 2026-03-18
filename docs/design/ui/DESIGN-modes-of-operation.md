@@ -66,6 +66,8 @@ Every mode transition that affects the editing surface must preserve cursor posi
 | Unfocused | `true` on `.md-editable-area` | WYSIWYG mode; textarea in markdown mode |
 | Focus | Same as Unfocused | Editor wrapper reparented, not recreated |
 
+Browser fullscreen and contenteditable behavior vary across browsers. See [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md) for cross-browser considerations.
+
 ### Overlay Management
 
 | Mode | Overlay |

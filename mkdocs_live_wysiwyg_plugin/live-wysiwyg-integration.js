@@ -18,6 +18,8 @@
     return;
   }
 
+  var _compat = window.LiveWysiwygCompat;
+
   function resolveImageSrc(href) {
     if (!href) return href;
     if (/^(?:https?:\/\/|\/|data:)/.test(href)) return href;
@@ -2771,7 +2773,7 @@
               sel.removeAllRanges();
               sel.addRange(rangeToUse);
             }
-            document.execCommand('createLink', false, url);
+            _compat.exec('createLink', false, url);
           }
           if (editor._finalizeUpdate) editor._finalizeUpdate(ea.innerHTML);
         } else {
@@ -2819,19 +2821,18 @@
         selector: '.md-link-settings-input',
         onResize: function () { _repositionLinkDropdown(dropdown); }
       });
+      _compat.cacheClipboardForGesture();
       requestAnimationFrame(function () {
         urlInput.focus(); urlInput.select();
         if (!existingAnchor && urlInput.value === 'https://') {
-          try {
-            navigator.clipboard.readText().then(function (text) {
-              text = (text || '').trim();
-              if (/^https?:\/\//.test(text)) {
-                urlInput.value = text;
-                urlInput.select();
-                dirty = true;
-              }
-            }).catch(function () {});
-          } catch (e) {}
+          _compat.readClipboardText().then(function (text) {
+            text = (text || '').trim();
+            if (/^https?:\/\//.test(text)) {
+              urlInput.value = text;
+              urlInput.select();
+              dirty = true;
+            }
+          });
         }
       });
 
@@ -3422,21 +3423,20 @@
       selector: '.md-image-insert-input',
       onResize: positionDropdown
     });
+    _compat.cacheClipboardForGesture();
     requestAnimationFrame(function () {
       urlInput.focus();
-      try {
-        navigator.clipboard.readText().then(function (text) {
-          text = (text || '').trim();
-          if (!text) return;
-          if (/^https?:\/\/.+/.test(text) || /\.(?:png|jpe?g|gif|svg|webp|bmp|ico|tiff?)$/i.test(text)) {
-            var rel = _tryConvertToRelativeImageUrl(text);
-            urlInput.value = (rel !== null) ? rel : text;
-            urlInput.select();
-            dirty = true;
-            acRender(urlInput.value.trim());
-          }
-        }).catch(function () {});
-      } catch (e) {}
+      _compat.readClipboardText().then(function (text) {
+        text = (text || '').trim();
+        if (!text) return;
+        if (/^https?:\/\/.+/.test(text) || /\.(?:png|jpe?g|gif|svg|webp|bmp|ico|tiff?)$/i.test(text)) {
+          var rel = _tryConvertToRelativeImageUrl(text);
+          urlInput.value = (rel !== null) ? rel : text;
+          urlInput.select();
+          dirty = true;
+          acRender(urlInput.value.trim());
+        }
+      });
     });
 
     var closeHandler = function (ev) {
@@ -7904,10 +7904,7 @@
   var _focusModeBuildEpoch = null;
   var _fmgOrigXHROpen = null;
   var _fmgOrigXHRSend = null;
-  var _fmgOrigLocationReload = null;
-  var _fmgOrigLocationAssign = null;
-  var _fmgOrigLocationReplace = null;
-  var _fmgOrigLocationHrefDesc = null;
+  var _focusModeLocationGuardHandle = null;
 
   var FOCUS_MODE_STYLE_ID = 'live-wysiwyg-focus-mode-styles';
   var _ajaxCurrentSrcPath = null;
@@ -8493,10 +8490,7 @@
   var _reloadGuardActive = false;
   var _origXHROpen = null;
   var _origXHRSend = null;
-  var _origLocationReload = null;
-  var _origLocationAssign = null;
-  var _origLocationReplace = null;
-  var _origLocationHrefDesc = null;
+  var _reloadLocationGuardHandle = null;
   var _reloadGuardBeforeUnloadHandler = null;
 
   // ======================================================================
@@ -8592,50 +8586,10 @@
       return _origXHRSend.apply(this, arguments);
     };
 
-    try {
-      if (!_origLocationReload) _origLocationReload = location.reload.bind(location);
-      Object.defineProperty(location, 'reload', {
-        configurable: true,
-        value: function () {
-          if (_reloadGuardActive) { return; }
-          return _origLocationReload();
-        }
-      });
-    } catch (e) { _origLocationReload = null; }
-    try {
-      if (!_origLocationAssign) _origLocationAssign = location.assign.bind(location);
-      Object.defineProperty(location, 'assign', {
-        configurable: true,
-        value: function (url) {
-          if (_reloadGuardActive) { return; }
-          return _origLocationAssign(url);
-        }
-      });
-    } catch (e) { _origLocationAssign = null; }
-    try {
-      if (!_origLocationReplace) _origLocationReplace = location.replace.bind(location);
-      Object.defineProperty(location, 'replace', {
-        configurable: true,
-        value: function (url) {
-          if (_reloadGuardActive) { return; }
-          return _origLocationReplace(url);
-        }
-      });
-    } catch (e) { _origLocationReplace = null; }
-    try {
-      if (!_origLocationHrefDesc) _origLocationHrefDesc = Object.getOwnPropertyDescriptor(Location.prototype, 'href') ||
-        Object.getOwnPropertyDescriptor(location, 'href');
-      if (_origLocationHrefDesc && _origLocationHrefDesc.set) {
-        Object.defineProperty(location, 'href', {
-          configurable: true,
-          get: _origLocationHrefDesc.get ? _origLocationHrefDesc.get.bind(location) : function () { return location.toString(); },
-          set: function (v) {
-            if (_reloadGuardActive) { return; }
-            _origLocationHrefDesc.set.call(location, v);
-          }
-        });
-      }
-    } catch (e) { _origLocationHrefDesc = null; }
+    _reloadLocationGuardHandle = _compat.installLocationGuard({
+      id: 'reload-guard',
+      isActive: function () { return _reloadGuardActive; }
+    });
   }
 
   function _removeReloadGuard() {
@@ -8653,21 +8607,9 @@
     _origXHROpen = null;
     _origXHRSend = null;
 
-    if (_origLocationReload) {
-      try { Object.defineProperty(location, 'reload', { configurable: true, value: _origLocationReload }); } catch (e) { }
-      _origLocationReload = null;
-    }
-    if (_origLocationAssign) {
-      try { Object.defineProperty(location, 'assign', { configurable: true, value: _origLocationAssign }); } catch (e) { }
-      _origLocationAssign = null;
-    }
-    if (_origLocationReplace) {
-      try { Object.defineProperty(location, 'replace', { configurable: true, value: _origLocationReplace }); } catch (e) { }
-      _origLocationReplace = null;
-    }
-    if (_origLocationHrefDesc) {
-      try { Object.defineProperty(location, 'href', _origLocationHrefDesc); } catch (e) { }
-      _origLocationHrefDesc = null;
+    if (_reloadLocationGuardHandle) {
+      _reloadLocationGuardHandle.remove();
+      _reloadLocationGuardHandle = null;
     }
   }
 
@@ -8699,55 +8641,13 @@
       return _fmgOrigXHRSend.apply(this, arguments);
     };
 
-    function _fmgLocationIntercept() {
-      if (_reloadGuardActive || _userActionInProgress) return;
-      _onExternalRebuild();
-    }
-
-    try {
-      _fmgOrigLocationReload = location.reload.bind(location);
-      Object.defineProperty(location, 'reload', {
-        configurable: true,
-        value: function () {
-          if (_focusModeGuardActive) { _fmgLocationIntercept(); return; }
-          return _fmgOrigLocationReload();
-        }
-      });
-    } catch (e) { _fmgOrigLocationReload = null; }
-    try {
-      _fmgOrigLocationAssign = location.assign.bind(location);
-      Object.defineProperty(location, 'assign', {
-        configurable: true,
-        value: function (url) {
-          if (_focusModeGuardActive) { _fmgLocationIntercept(); return; }
-          return _fmgOrigLocationAssign(url);
-        }
-      });
-    } catch (e) { _fmgOrigLocationAssign = null; }
-    try {
-      _fmgOrigLocationReplace = location.replace.bind(location);
-      Object.defineProperty(location, 'replace', {
-        configurable: true,
-        value: function (url) {
-          if (_focusModeGuardActive) { _fmgLocationIntercept(); return; }
-          return _fmgOrigLocationReplace(url);
-        }
-      });
-    } catch (e) { _fmgOrigLocationReplace = null; }
-    try {
-      _fmgOrigLocationHrefDesc = Object.getOwnPropertyDescriptor(Location.prototype, 'href') ||
-        Object.getOwnPropertyDescriptor(location, 'href');
-      if (_fmgOrigLocationHrefDesc && _fmgOrigLocationHrefDesc.set) {
-        Object.defineProperty(location, 'href', {
-          configurable: true,
-          get: _fmgOrigLocationHrefDesc.get ? _fmgOrigLocationHrefDesc.get.bind(location) : function () { return location.toString(); },
-          set: function (v) {
-            if (_focusModeGuardActive) { _fmgLocationIntercept(); return; }
-            _fmgOrigLocationHrefDesc.set.call(location, v);
-          }
-        });
+    _focusModeLocationGuardHandle = _compat.installLocationGuard({
+      id: 'focus-mode',
+      isActive: function () { return _focusModeGuardActive; },
+      onIntercept: function () {
+        if (!_reloadGuardActive && !_userActionInProgress) _onExternalRebuild();
       }
-    } catch (e) { _fmgOrigLocationHrefDesc = null; }
+    });
 
     _startFocusModeRebuildPoller();
   }
@@ -8767,21 +8667,9 @@
     _fmgOrigXHROpen = null;
     _fmgOrigXHRSend = null;
 
-    if (_fmgOrigLocationReload) {
-      try { Object.defineProperty(location, 'reload', { configurable: true, value: _fmgOrigLocationReload }); } catch (e) { }
-      _fmgOrigLocationReload = null;
-    }
-    if (_fmgOrigLocationAssign) {
-      try { Object.defineProperty(location, 'assign', { configurable: true, value: _fmgOrigLocationAssign }); } catch (e) { }
-      _fmgOrigLocationAssign = null;
-    }
-    if (_fmgOrigLocationReplace) {
-      try { Object.defineProperty(location, 'replace', { configurable: true, value: _fmgOrigLocationReplace }); } catch (e) { }
-      _fmgOrigLocationReplace = null;
-    }
-    if (_fmgOrigLocationHrefDesc) {
-      try { Object.defineProperty(location, 'href', _fmgOrigLocationHrefDesc); } catch (e) { }
-      _fmgOrigLocationHrefDesc = null;
+    if (_focusModeLocationGuardHandle) {
+      _focusModeLocationGuardHandle.remove();
+      _focusModeLocationGuardHandle = null;
     }
   }
 
@@ -19794,6 +19682,9 @@
           sel.removeAllRanges();
           sel.addRange(range);
           restored = true;
+          if (_compat.engine === 'webkit' && sel.rangeCount === 0) {
+            restored = false;
+          }
         }
       } catch (e) { /* node moved or offset invalid */ }
     }
@@ -20858,6 +20749,8 @@
     }
 
     document.addEventListener('keydown', function _globalKeydownRouter(e) {
+      if (_compat.isComposing(e)) return;
+
       var dialogOpen = !!document.querySelector('.live-wysiwyg-nav-dialog') ||
                        !!document.querySelector('.live-wysiwyg-nav-settings-dropdown');
 
@@ -21421,6 +21314,7 @@
         });
         ma.addEventListener('keydown', function (e) {
           if (wysiwygEditor.currentMode !== 'markdown') return;
+          if (_compat.isComposing(e)) return;
           if (e.key === ' ' || e.key === 'Enter' || /^[.,;:!?\-=+(){}[\]<>\/\\|@#$%^&*~`"']$/.test(e.key)) {
             _scheduleHistoryCapture(true);
           }
@@ -21835,12 +21729,12 @@
         ea.addEventListener('paste', function (e) {
           var sel = window.getSelection();
           if (!sel || sel.isCollapsed || !sel.rangeCount) return;
-          var pasted = (e.clipboardData || window.clipboardData).getData('text');
+          var pasted = _compat.getClipboardData(e, 'text');
           if (!pasted || !urlRe.test(pasted.trim())) return;
           _flushHistoryCapture();
           e.preventDefault();
           var url = pasted.trim();
-          document.execCommand('createLink', false, url);
+          _compat.exec('createLink', false, url);
           if (wysiwygEditor._finalizeUpdate) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);
           }
@@ -21857,7 +21751,7 @@
           if (wysiwygEditor.currentMode !== 'wysiwyg') return;
           var sel = window.getSelection();
           if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
-          var pasted = (e.clipboardData || window.clipboardData).getData('text');
+          var pasted = _compat.getClipboardData(e, 'text');
           if (!pasted) return;
           _flushHistoryCapture();
           var url = pasted.trim();
@@ -22286,12 +22180,11 @@
               }
             }
             if (between.length >= 2 && /^[a-z0-9_+-]+$/i.test(between)) {
-              var r = node.getBoundingClientRect ? node.getBoundingClientRect() : ea.getBoundingClientRect();
               var range = sel.getRangeAt(0);
-              try {
-                var cr = range.getBoundingClientRect();
-                if (cr) r = cr;
-              } catch (err) {}
+              var r = _compat.getRangeRect(range);
+              if (!r || (r.width === 0 && r.height === 0)) {
+                r = node.getBoundingClientRect ? node.getBoundingClientRect() : ea.getBoundingClientRect();
+              }
               var anchorRect = { left: r.left, bottom: r.bottom };
               if (autocompleteState && autocompleteState.pop.parentNode) {
                 autocompleteState.pop.parentNode.removeChild(autocompleteState.pop);
@@ -22335,11 +22228,10 @@
               if (anc2.nodeName === "PRE" || anc2.nodeName === "CODE") return;
               anc2 = anc2.parentNode;
             }
-            var r = ea.getBoundingClientRect();
-            try {
-              var cr = sel.getRangeAt(0).getBoundingClientRect();
-              if (cr) r = cr;
-            } catch (err) {}
+            var r = _compat.getRangeRect(sel.getRangeAt(0));
+            if (!r || (r.width === 0 && r.height === 0)) {
+              r = ea.getBoundingClientRect();
+            }
             var anchorRect = { left: r.left, bottom: r.bottom };
             if (autocompleteState && autocompleteState.pop.parentNode) {
               autocompleteState.pop.parentNode.removeChild(autocompleteState.pop);
@@ -22395,7 +22287,7 @@
             return;
           }
           if (!autocompleteState || !autocompleteState.pop.parentNode) return;
-          if (autocompleteState.openedByCtrlSpace && (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey || e.key === "Backspace")) {
+          if (autocompleteState.openedByCtrlSpace && (_compat.isPrintableKey(e) || e.key === "Backspace")) {
             e.preventDefault();
             if (e.key === "Backspace") {
               autocompleteState.filterPrefix = autocompleteState.filterPrefix.slice(0, -1);
@@ -22705,7 +22597,7 @@
           block = p;
         }
         placeCursorIn(block, sel, true);
-        document.execCommand(listType === 'ul' ? 'insertUnorderedList' : 'insertOrderedList', false, null);
+        _compat.exec(listType === 'ul' ? 'insertUnorderedList' : 'insertOrderedList', false, null);
         var node = (sel.anchorNode && sel.anchorNode.nodeType === 3) ? sel.anchorNode.parentNode : sel.anchorNode;
         var list = node && (node.closest ? node.closest('ul, ol') : (function (n) { while (n && n !== ea) { if (n.nodeName === 'UL' || n.nodeName === 'OL') return n; n = n.parentNode; } return null; })(node));
         if (list && literal) list.setAttribute('data-md-literal', literal);
@@ -25637,6 +25529,7 @@
 
       ea.addEventListener('keydown', function _editorKeydownRouter(e) {
         if (_navEditMode) return;
+        if (_compat.isComposing(e)) return;
         if (_ekh.inlineCodeClear) _ekh.inlineCodeClear(e);
         if (_ekh.checklistCursorNorm) _ekh.checklistCursorNorm(e);
 
@@ -25760,7 +25653,7 @@
         var imgClone = img.cloneNode(true);
         var tempP = document.createElement('p');
         tempP.appendChild(imgClone);
-        e.clipboardData.setData('text/html', tempP.outerHTML);
+        _compat.setClipboardData(e, 'text/html', tempP.outerHTML);
         var tempDiv = document.createElement('div');
         tempDiv.appendChild(imgClone.cloneNode(true));
         var plainText = '';
@@ -25771,7 +25664,7 @@
           var src = img.getAttribute('data-orig-src') || img.getAttribute('src') || '';
           plainText = '![' + alt + '](' + src + ')';
         }
-        e.clipboardData.setData('text/plain', plainText);
+        _compat.setClipboardData(e, 'text/plain', plainText);
       }
 
       function _removeSelectedImage() {
@@ -25831,13 +25724,13 @@
         if (block.type === 'list-item') {
           var wrapList = _wrapLiInList(block.node);
           var wrapperHtml = '<div ' + BLOCK_ATTR + '="list">' + wrapList.outerHTML + '</div>';
-          e.clipboardData.setData('text/html', wrapperHtml);
+          _compat.setClipboardData(e, 'text/html', wrapperHtml);
           var tempDiv = document.createElement('div');
           tempDiv.appendChild(wrapList.cloneNode(true));
           var plainText = '';
           try { plainText = wysiwygEditor._htmlToMarkdown(tempDiv); }
           catch (ex) { plainText = block.node.textContent || ''; }
-          e.clipboardData.setData('text/plain', plainText);
+          _compat.setClipboardData(e, 'text/plain', plainText);
 
           var parentList = block.node.parentNode;
           var nextLi = block.node.nextElementSibling;
@@ -25876,7 +25769,7 @@
         stripCodeUIFromClone(clone);
 
         var wrapperHtml = '<div ' + BLOCK_ATTR + '="' + block.type + '">' + clone.outerHTML + '</div>';
-        e.clipboardData.setData('text/html', wrapperHtml);
+        _compat.setClipboardData(e, 'text/html', wrapperHtml);
 
         var tempDiv = document.createElement('div');
         tempDiv.appendChild(clone.cloneNode(true));
@@ -25886,7 +25779,7 @@
         } catch (ex) {
           plainText = block.node.textContent || '';
         }
-        e.clipboardData.setData('text/plain', plainText);
+        _compat.setClipboardData(e, 'text/plain', plainText);
 
         var parent = block.node.parentNode;
         parent.removeChild(block.node);
@@ -25942,13 +25835,13 @@
         if (block.type === 'list-item') {
           var wrapList = _wrapLiInList(block.node);
           var wrapperHtml = '<div ' + BLOCK_ATTR + '="list">' + wrapList.outerHTML + '</div>';
-          e.clipboardData.setData('text/html', wrapperHtml);
+          _compat.setClipboardData(e, 'text/html', wrapperHtml);
           var tempDiv = document.createElement('div');
           tempDiv.appendChild(wrapList.cloneNode(true));
           var plainText = '';
           try { plainText = wysiwygEditor._htmlToMarkdown(tempDiv); }
           catch (ex) { plainText = block.node.textContent || ''; }
-          e.clipboardData.setData('text/plain', plainText);
+          _compat.setClipboardData(e, 'text/plain', plainText);
           return;
         }
 
@@ -25956,7 +25849,7 @@
         stripCodeUIFromClone(clone);
 
         var wrapperHtml = '<div ' + BLOCK_ATTR + '="' + block.type + '">' + clone.outerHTML + '</div>';
-        e.clipboardData.setData('text/html', wrapperHtml);
+        _compat.setClipboardData(e, 'text/html', wrapperHtml);
 
         var tempDiv = document.createElement('div');
         tempDiv.appendChild(clone.cloneNode(true));
@@ -25966,7 +25859,7 @@
         } catch (ex) {
           plainText = block.node.textContent || '';
         }
-        e.clipboardData.setData('text/plain', plainText);
+        _compat.setClipboardData(e, 'text/plain', plainText);
       }, true);
 
       function findPasteContext(sel) {
@@ -26302,7 +26195,7 @@
 
       ea.addEventListener('paste', function (e) {
         if (wysiwygEditor.currentMode !== 'wysiwyg') return;
-        var clipHtml = (e.clipboardData || window.clipboardData).getData('text/html');
+        var clipHtml = _compat.getClipboardData(e, 'text/html');
         if (!clipHtml) return;
         _flushHistoryCapture();
 

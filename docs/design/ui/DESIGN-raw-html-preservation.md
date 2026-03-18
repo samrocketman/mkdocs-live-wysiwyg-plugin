@@ -2,7 +2,7 @@
 
 ## Problem
 
-Markdown documents may contain raw HTML tags and HTML comments that the WYSIWYG editor must preserve perfectly. Current behavior: `marked.parse()` passes raw HTML through to the WYSIWYG DOM, but the `_htmlToMarkdown` serializer does not recognize those elements and reconstructs them incorrectly (losing attributes, indentation, tag structure). HTML comments are stripped entirely by the browser's DOM parser (`innerHTML` discards comments).
+Markdown documents may contain raw HTML tags and HTML comments that the WYSIWYG editor must preserve perfectly. Current behavior: `marked.parse()` passes raw HTML through to the WYSIWYG DOM, but the `_htmlToMarkdown` serializer does not recognize those elements and reconstructs them incorrectly (losing attributes, indentation, tag structure). HTML comments are stripped entirely by the browser's DOM parser (`innerHTML` discards comments). The `btoa`/`atob` Latin1 workaround for UTF-8 encoding and other browser-specific behavior is documented in [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md).
 
 A further complication: `marked` processes content inside HTML blocks (started by tags like `<div>`) as markdown after blank lines. This means fenced code blocks, inline code, and other markdown syntax inside a `<div>` get converted to HTML elements by `marked`, then enhanced by the WYSIWYG's JavaScript (adding settings buttons, code block UI, etc.). The serializer then outputs this modified DOM, causing complete page corruption.
 

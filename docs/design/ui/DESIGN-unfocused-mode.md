@@ -45,7 +45,7 @@ The editing surfaces use negative horizontal margins (`margin-left: -10px; margi
 - `.live-edit-controls.live-edit-editing .live-edit-source`
 - `.live-edit-controls.live-edit-editing .live-edit-wysiwyg-wrapper`
 
-See `editor-width-alignment.mdc` and `DESIGN-theme-detection.md` for full details.
+See `layout.mdc` and `DESIGN-theme-detection.md` for full details.
 
 ## Transition to Focus Mode
 

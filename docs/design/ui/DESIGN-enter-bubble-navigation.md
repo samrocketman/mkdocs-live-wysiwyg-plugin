@@ -1,10 +1,12 @@
 # Enter Bubble Navigation
 
+> **Handler registration model:** The handler registration model has been updated to use the centralized keyboard router architecture described in [DESIGN-centralized-keyboard.md](DESIGN-centralized-keyboard.md). The individual handler functions (reverse bubble, list exit, admonition exit, blockquote exit, heading enter, hidden-title admonition, code block exit) still exist but are registered through the `_ekh.*` handler map and dispatched by `_editorKeydownRouter` rather than through individual `addEventListener` calls and dataset flags like `liveWysiwygReverseBubbleAttached`, `liveWysiwygListEnterExitAttached`, etc.
+
 ## Problem
 
 The WYSIWYG editor uses `contenteditable` for rich text editing. Block containers -- blockquotes, admonitions, and code blocks -- can nest arbitrarily. Users need a way to navigate **out** of these containers in both directions (forward from the end, backward from the start) using only the Enter key, and to cancel that behavior with Shift+Enter when they want a plain newline.
 
-Without bubble navigation, the browser's default Enter behavior traps the cursor inside the container, forcing the user to click outside it with the mouse.
+Without bubble navigation, the browser's default Enter behavior traps the cursor inside the container, forcing the user to click outside it with the mouse. Cross-browser contenteditable differences are documented in [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md).
 
 ## Terminology
 

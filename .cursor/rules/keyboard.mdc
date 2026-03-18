@@ -15,7 +15,7 @@ The Keyboard subsystem routes all keyboard handling through three centralized ro
 
 3. **Tier 2 (Global):** `_globalKeydownRouter` — document, capture phase, registered once. Handles Ctrl+S, Ctrl+., nav edit arrows, content/nav undo, period shortcut.
 
-4. **Tier 3 (Editor):** `_setupEditorKeyboard` — editable area, capture phase, registered once. Handles Enter bubble chain, Backspace revert, Space auto-convert, checklist arrows, emoji autocomplete.
+4. **Tier 3 (Editor):** `_setupEditorKeyboard` — editable area and markdown area, capture phase, registered once. Contains two routers: `_editorKeydownRouter` (on `ea`) handles Enter bubble chain, Backspace revert, Space auto-convert, checklist arrows, emoji autocomplete, Ctrl+B/I formatting, Ctrl+A select-all, and Tab indent/table/spaces. `_markdownKeydownRouter` (on `ma`) handles Tab indent, Ctrl+B bold wrapping, and Ctrl+I italic wrapping in markdown mode.
 
 5. **Handlers return true/false in Tier 3.** The router stops dispatching on the first `true`.
 
@@ -33,7 +33,7 @@ The Keyboard subsystem routes all keyboard handling through three centralized ro
 
 - `_attachDialogKeyboard` — Tier 1, per-dialog attachment
 - `_globalKeydownRouter` — Tier 2, document-level
-- `_setupEditorKeyboard`, `_editorKeydownRouter` — Tier 3, editor-level
+- `_setupEditorKeyboard`, `_editorKeydownRouter`, `_markdownKeydownRouter` — Tier 3, editor-level
 
 ## Design Document
 

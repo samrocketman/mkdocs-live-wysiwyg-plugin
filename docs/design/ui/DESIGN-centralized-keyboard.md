@@ -30,6 +30,9 @@ flowchart TD
         EKR --> ArrowGroup["Arrows: checklist nav"]
         EKR --> EmojiGroup["Emoji: autocomplete"]
         EKR --> SelectAll["Ctrl+A: progressive"]
+        EKR --> BoldItalic["Ctrl+B/I: formatting"]
+        EKR --> TabGroup["Tab: indent/table/spaces"]
+        EKR --> MarkdownRouter["_markdownKeydownRouter"]
     end
 ```
 
@@ -37,7 +40,8 @@ flowchart TD
 |------|----------|--------|-------|-------------|
 | 1 | `_attachDialogKeyboard(container, opts)` | Dialog/popup/dropdown element | Bubble | Called per-dialog; one handler per container |
 | 2 | `_globalKeydownRouter(e)` | `document` | Capture | Registered once at startup |
-| 3 | `_setupEditorKeyboard(ea, ...)` | `ea` (editable area) | Capture | Called once per editor initialization |
+| 3 | `_editorKeydownRouter(e)` | `ea` (editable area) | Capture | Called once per editor initialization |
+| 3 | `_markdownKeydownRouter(e)` | `ma` (markdown area) | Capture | Called once per editor initialization |
 
 ## Tier 1: `_attachDialogKeyboard(container, opts)`
 
@@ -261,8 +265,35 @@ Reverse bubble **must** be first. This was previously enforced by handler regist
 | Delete | `_handleMarkdownAutoConvert` — Delete selected image (inside `_ekh.mdAuto`) |
 | ArrowLeft/Right | `_handleChecklistArrows` — Cursor normalization around checkboxes |
 | Ctrl+A | `_handleSelectAllInBlock` — Progressive select-all |
+| Ctrl+B | Bold — `_compat.exec('bold')` + `_finalizeUpdate` |
+| Ctrl+I | Italic — `_compat.exec('italic')` + `_finalizeUpdate` |
+| Tab | Context-dependent: list indent/outdent (via `_listIndentOutdentByDOM`), table cell navigation, or insert 4 spaces |
+| Shift+Tab | List outdent or previous table cell |
 | Emoji keys | `_handleEmojiKey` — Ctrl+Space, arrows, Enter/Tab, Backspace, printable (when autocomplete visible) |
 | All keys | `_ekh.inlineCodeClear` — Invoked on every keydown; clears pending backtick state when key is Escape, Enter, arrows, Home, End, or PageUp/PageDown |
+
+### Markdown Area Handler (`_markdownKeydownRouter`)
+
+A second capture-phase keydown handler registered on `wysiwygEditor.markdownArea` inside the same `_setupEditorKeyboard` IIFE. Handles shortcuts that apply in markdown editing mode.
+
+| Key | Handler |
+|-----|---------|
+| Tab | List indent or insert 4 spaces (delegates to `_applyMarkdownListIndentInternal`) |
+| Shift+Tab | List outdent (delegates to `_applyMarkdownListOutdentInternal`) |
+| Ctrl+B | Bold — wraps selection in `**` via `_applyMarkdownFormatting(boldCfg)` |
+| Ctrl+I | Italic — wraps selection in `*` via `_applyMarkdownFormatting(italicCfg)` |
+
+All handlers call `_flushHistoryCapture()` before changes and `_finalizeUpdate(ma.value)` after, matching the WYSIWYG router pattern. The `_navEditMode` and `_compat.isComposing(e)` guards are checked at the top.
+
+### Vendor `_handleKeyDownShared` Suppression
+
+The vendor `editor.js` previously handled Tab and Cmd+Z/Y in its own bubble-phase `_handleKeyDownShared` method. This is now patched to a no-op from the integration layer:
+
+```javascript
+proto._handleKeyDownShared = function () {};
+```
+
+The vendor's `_onAreaKeyDown` wrapper still runs `setTimeout(() => updateToolbarFn(), 0)` on every keydown, which keeps toolbar active-state updates intact. Only the shortcut dispatch is suppressed.
 
 ### Dataset Guard
 

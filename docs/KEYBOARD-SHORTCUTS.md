@@ -8,15 +8,16 @@ All keyboard shortcuts available in the WYSIWYG editor, organized by mode.
 |----------|--------|-------|
 | Cmd+S / Ctrl+S | Save page | Triggers upstream save |
 | Cmd+. / Ctrl+. | Toggle WYSIWYG / Markdown mode | Works in both modes |
-| Cmd+Z / Ctrl+Z | Undo | Editor undo stack |
+| Cmd+Z / Ctrl+Z | Undo | DAG content undo |
 | Cmd+Y / Ctrl+Y | Redo | Also Cmd+Shift+Z / Ctrl+Shift+Z |
 | Cmd+B / Ctrl+B | Bold | Toggle bold on selection |
 | Cmd+I / Ctrl+I | Italic | Toggle italic on selection |
+| Cmd+A / Ctrl+A | Select all | Progressive: block, then full document |
 | Enter | New paragraph / bubble exit | See enter-bubble-navigation rules |
 | Shift+Enter | Line break | Bypasses bubble behavior |
 | Backspace | Delete / revert markdown element | See targeted-markdown-revert rules |
-| Tab | Indent in lists | List items only |
-| Shift+Tab | Outdent in lists | List items only |
+| Tab | Indent list / next table cell / insert 4 spaces | Context-dependent |
+| Shift+Tab | Outdent list / previous table cell | Context-dependent |
 
 ## Normal Edit Mode (Markdown)
 
@@ -24,8 +25,12 @@ All keyboard shortcuts available in the WYSIWYG editor, organized by mode.
 |----------|--------|-------|
 | Cmd+S / Ctrl+S | Save page | Triggers upstream save |
 | Cmd+. / Ctrl+. | Toggle WYSIWYG / Markdown mode | Works in both modes |
-| Cmd+Z / Ctrl+Z | Undo | Standard textarea undo |
+| Cmd+Z / Ctrl+Z | Undo | DAG content undo |
 | Cmd+Y / Ctrl+Y | Redo | Also Cmd+Shift+Z / Ctrl+Shift+Z |
+| Cmd+B / Ctrl+B | Bold | Wraps selection in `**` |
+| Cmd+I / Ctrl+I | Italic | Wraps selection in `*` |
+| Tab | Indent list / insert 4 spaces | Context-dependent |
+| Shift+Tab | Outdent list | List items only |
 | Standard text shortcuts | Cut, Copy, Paste, Select All | Browser defaults |
 
 ## Focus Mode (WYSIWYG)
@@ -68,7 +73,7 @@ When nav edit mode is active, content is read-only. These shortcuts apply:
 | Shift+Arrow Down | Move into first level of section below | Enters next section; requires focused item |
 | Shift+Arrow Right | Always prompt for new/choose folder | Even when adjacent folders exist; requires focused item |
 
-**Suppressed shortcuts** (no-op during nav edit mode): Enter bubble, Backspace revert, Bold, Italic, and all content-editing shortcuts.
+**Suppressed shortcuts** (no-op during nav edit mode): Enter bubble, Backspace revert, Bold, Italic, Tab, and all content-editing shortcuts.
 
 ### Mouse — Nav Menu Items
 

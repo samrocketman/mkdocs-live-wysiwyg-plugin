@@ -107,6 +107,16 @@ Firefox-specific: `e.key === 'Dead'` and `e.key === 'Process'` are handled by `i
 
 Safari executes the native contenteditable undo/redo action before the `keydown` event fires. A `keydown`-only interception of Cmd+Z arrives too late — Safari has already applied its native undo to the DOM. The fix is a `beforeinput` event listener on the editable area that intercepts `inputType === 'historyUndo'` and `inputType === 'historyRedo'`. The `beforeinput` event fires before the native action on all browsers. A flag (`_undoViaBeforeinput`) prevents the subsequent `keydown` handler from double-dispatching. See `DESIGN-unified-content-undo.md`.
 
+### Formatting Shortcuts (Safari/Firefox)
+
+Cmd+B (bold) and Cmd+I (italic) previously relied on the browser's native `contenteditable` keyboard handling with no explicit JavaScript handler. This failed in Safari and Firefox because:
+
+- **Firefox**: Cmd+B opens the Bookmarks sidebar; the browser-level shortcut can intercept the key before `contenteditable` processes it.
+- **Safari/Firefox**: The global `document.execCommand` patch may interfere with the browser's internal Cmd+B/I dispatch path.
+- **All browsers**: Native handling bypasses `_finalizeUpdate()` (editor state is not updated) and `_compat.exec()` (Gecko `<b>`→`<strong>` normalization does not run).
+
+**Fix**: Explicit keyboard shortcut handlers in the Tier 3 `_editorKeydownRouter` (WYSIWYG) and `_markdownKeydownRouter` (Markdown) call `e.preventDefault()` to suppress any conflicting browser shortcut, then route through `_compat.exec('bold'/'italic')` for proper cross-browser normalization. Tab/Shift+Tab were also extracted from the vendor `editor.js` into the keyboard subsystem for the same reasons.
+
 ### Clipboard API Differences
 
 - **Safari**: Enforces strict user-gesture timing for `navigator.clipboard.readText()`. The `cacheClipboardForGesture()` method pre-reads clipboard text synchronously within the click handler before `requestAnimationFrame`.

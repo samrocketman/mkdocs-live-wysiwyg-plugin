@@ -8690,16 +8690,18 @@
     if (typeof liveWysiwygLinkCheckPort === 'undefined' || !liveWysiwygLinkCheckPort) return;
     if (_focusModePollerTimer) { clearTimeout(_focusModePollerTimer); _focusModePollerTimer = null; }
 
-    var host = window.location.hostname || '127.0.0.1';
-    var epochUrl = 'http://' + host + ':' + liveWysiwygLinkCheckPort + '/build-epoch';
+    var consecutiveFailures = 0;
 
     function poll() {
       if (!_focusModeGuardActive) return;
+      var host = window.location.hostname || '127.0.0.1';
+      var epochUrl = 'http://' + host + ':' + liveWysiwygLinkCheckPort + '/build-epoch';
       fetch(epochUrl, { cache: 'no-store' }).then(function (resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.json();
       }).then(function (data) {
         if (!_focusModeGuardActive) return;
+        consecutiveFailures = 0;
         var serverEpoch = data.epoch;
         if (_focusModeBuildEpoch === null) {
           _focusModeBuildEpoch = serverEpoch;
@@ -8717,7 +8719,16 @@
         }
         _onExternalRebuild();
       }).catch(function () {
-        if (_focusModeGuardActive) _focusModePollerTimer = setTimeout(poll, 2000);
+        if (!_focusModeGuardActive) return;
+        consecutiveFailures++;
+        var delay = Math.min(2000 * Math.pow(2, consecutiveFailures - 1), 30000);
+        if (consecutiveFailures >= 3) {
+          _refreshLinkCheckPort().then(function () {
+            _focusModePollerTimer = setTimeout(poll, delay);
+          });
+        } else {
+          _focusModePollerTimer = setTimeout(poll, delay);
+        }
       });
     }
     _focusModePollerTimer = setTimeout(poll, 2000);

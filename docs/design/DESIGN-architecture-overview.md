@@ -89,6 +89,46 @@ flowchart LR
 
 ## Subsystem Directory
 
+### Hierarchy Overview
+
+```
+UI Subsystem
+  |-- Modes of Operation
+  |     |-- Readonly Mode
+  |     |-- Unfocused Mode
+  |     |-- Focus Mode
+  |-- Toolbars
+  |-- Content Editing
+  |     |-- Editor Core
+  |     |-- Cursor & Selection
+  |     |-- Content History
+  |     |-- Keyboard
+  |     |-- Dialog UX
+  |     |-- Table of Contents
+  |-- Nav Menu
+  |     |-- Navigation Menu (data model, snapshots, batch editing)
+  |     |-- Nav Renderer (exclusive DOM update authority)
+  |     |-- File & Page Management
+  |     |-- Nav Migration
+  |-- Theming & Layout
+  |     |-- Theme
+  |     |-- Layout
+  |-- Browser Compatibility
+
+Backend Subsystem
+  |-- Save Pipeline (= Declarative Save Planner)
+  |     |-- Snapshot Diff
+  |     |-- Write Planner
+  |     |-- Content Refactoring
+  |-- Content Scanning
+  |-- Cautions
+  |-- API Server (wysiwyg plugin REST API)
+  |-- WebSocket Server (upstream live-edit-plugin)
+  |-- Application Storage
+
+Development Workflow (project conventions)
+```
+
 ### UI Subsystem
 
 #### Modes of Operation

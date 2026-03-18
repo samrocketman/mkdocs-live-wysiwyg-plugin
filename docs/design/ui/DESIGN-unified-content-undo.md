@@ -176,10 +176,20 @@ On restore (`_restoreHistoryCursor(cursor, diff, mdContent, isRedo)`):
 
 ## Keyboard Integration
 
-In `_globalKeydownRouter`, all `Cmd+Z` / `Cmd+Shift+Z` / `Cmd+Y` handling is unified in a single dispatch block that runs regardless of `_navEditMode` state:
+Undo/redo is intercepted at two levels to ensure cross-browser compatibility:
+
+### `beforeinput` listener (WYSIWYG mode — primary for Safari)
+
+A `beforeinput` listener on the editable area intercepts `inputType === 'historyUndo'` and `inputType === 'historyRedo'`. This fires **before** the browser applies the native contenteditable undo/redo action, which is critical for Safari where the native undo executes before the `keydown` event fires. The listener calls `e.preventDefault()` and dispatches to `_contentUndo()` / `_contentRedo()`. A flag (`_undoViaBeforeinput`) prevents the subsequent `keydown` handler from double-dispatching.
+
+### `keydown` handler (Tier 2 — all modes)
+
+In `_globalKeydownRouter`, all `Cmd+Z` / `Cmd+Shift+Z` / `Cmd+Y` handling is unified in a single dispatch block that runs regardless of `_navEditMode` state. If the `beforeinput` listener already handled the event, the `keydown` handler skips dispatch and only calls `preventDefault()` + `stopImmediatePropagation()`.
 
 1. **Content focus** (`TEXTAREA`, `INPUT`, or `contentEditable`): always dispatches to `_contentUndo()` / `_contentRedo()`. This works in both nav edit mode and normal mode, and is not gated by `dialogOpen` (so it works even when a link edit dialog is open).
 2. **No content focus, no dialog open**: dispatches to `_navUndo()` / `_navRedo()` for nav snapshot undo.
+
+The `keydown` handler remains necessary for markdown mode (textarea does not fire `beforeinput` with `historyUndo`) and as a fallback for browsers that do not support `beforeinput` input types.
 
 ## Lifecycle
 

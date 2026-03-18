@@ -9069,6 +9069,7 @@
   var _historyTimer = null;
   var _historyLastMd = null;
   var _historyMaxNodes = 200;
+  var _undoViaBeforeinput = false;
 
   function _historyReset(markdown) {
     _historyNodes = {};
@@ -20824,6 +20825,10 @@
       }
 
       if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'y')) {
+        if (_undoViaBeforeinput) {
+          _undoViaBeforeinput = false;
+          e.preventDefault(); e.stopImmediatePropagation(); return;
+        }
         var _undoEl = document.activeElement;
         var _undoInContent = _undoEl && (_undoEl.tagName === 'TEXTAREA' || _undoEl.tagName === 'INPUT' || _undoEl.isContentEditable);
         if (_undoInContent) {
@@ -25526,6 +25531,18 @@
       var ea = wysiwygEditor.editableArea;
       if (!ea || ea.dataset.liveWysiwygKeyboardRouterAttached) return;
       ea.dataset.liveWysiwygKeyboardRouterAttached = '1';
+
+      ea.addEventListener('beforeinput', function (e) {
+        if (e.inputType === 'historyUndo') {
+          e.preventDefault();
+          _undoViaBeforeinput = true;
+          _contentUndo();
+        } else if (e.inputType === 'historyRedo') {
+          e.preventDefault();
+          _undoViaBeforeinput = true;
+          _contentRedo();
+        }
+      });
 
       ea.addEventListener('keydown', function _editorKeydownRouter(e) {
         if (_navEditMode) return;

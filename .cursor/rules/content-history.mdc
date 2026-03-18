@@ -17,7 +17,7 @@ The Content History subsystem provides DAG-based undo/redo for document content.
 
 4. **Never clear the DAG on save.** Only clear on page navigation (`_loadContent` with new document).
 
-5. **Cmd+Z in content editor always dispatches to content undo.** When content has focus, `Cmd+Z` must be routed to `_contentUndo()`. Browser native undo must never fire.
+5. **Cmd+Z in content editor always dispatches to content undo.** When content has focus, `Cmd+Z` must be routed to `_contentUndo()`. Browser native undo must never fire. In WYSIWYG mode, a `beforeinput` listener intercepts `historyUndo`/`historyRedo` input types before the native action (required for Safari, where native undo fires before `keydown`). The `keydown` handler in Tier 2 remains as fallback for markdown mode and browsers without `beforeinput` support.
 
 6. **Skip capture on double-render corruption detection.** If `_doubleRenderCheck()` fails, skip the capture and log. Do not store a diff that could produce corrupted content on restore.
 

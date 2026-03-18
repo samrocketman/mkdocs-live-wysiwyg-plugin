@@ -103,6 +103,10 @@ All three keyboard routers check `_compat.isComposing(e)` at the top:
 
 Firefox-specific: `e.key === 'Dead'` and `e.key === 'Process'` are handled by `isPrintableKey()` returning `false`.
 
+### Native Undo Timing (Safari)
+
+Safari executes the native contenteditable undo/redo action before the `keydown` event fires. A `keydown`-only interception of Cmd+Z arrives too late — Safari has already applied its native undo to the DOM. The fix is a `beforeinput` event listener on the editable area that intercepts `inputType === 'historyUndo'` and `inputType === 'historyRedo'`. The `beforeinput` event fires before the native action on all browsers. A flag (`_undoViaBeforeinput`) prevents the subsequent `keydown` handler from double-dispatching. See `DESIGN-unified-content-undo.md`.
+
 ### Clipboard API Differences
 
 - **Safari**: Enforces strict user-gesture timing for `navigator.clipboard.readText()`. The `cacheClipboardForGesture()` method pre-reads clipboard text synchronously within the click handler before `requestAnimationFrame`.

@@ -103,6 +103,7 @@ UI Subsystem
   |     |-- Cursor & Selection
   |     |-- Content History
   |     |-- Keyboard
+  |     |-- Progressive Select All
   |     |-- Dialog UX
   |     |-- Table of Contents
   |-- Nav Menu
@@ -150,6 +151,7 @@ Development Workflow (project conventions)
 - [DESIGN-readonly-selection-heuristics.md](ui/DESIGN-readonly-selection-heuristics.md) -- Read-only to edit mode text selection.
 - [DESIGN-unified-content-undo.md](ui/DESIGN-unified-content-undo.md) -- DAG-based content undo/redo.
 - [DESIGN-centralized-keyboard.md](ui/DESIGN-centralized-keyboard.md) -- Three-tier keyboard handling.
+- [DESIGN-progressive-select-all.md](ui/DESIGN-progressive-select-all.md) -- Progressive Ctrl+A selection and cut/copy auto-expansion.
 - [DESIGN-popup-dialog-ux.md](ui/DESIGN-popup-dialog-ux.md) -- Unified dialog interaction model.
 - [DESIGN-table-of-contents.md](ui/DESIGN-table-of-contents.md) -- Right sidebar TOC panel.
 

@@ -1,0 +1,31 @@
+# Progressive Select All
+
+Context-aware Ctrl+A / Cmd+A that expands the selection through a hierarchy from innermost scope to entire document. Also provides cut/copy auto-expansion to prevent document corruption from partial block selections.
+
+## Rules
+
+1. **`targetRanges` must be ordered smallest to largest.** The array is built in a fixed order: admonition body, ancestor selectable targets (innermost to outermost), current heading section, parent heading sections (ascending), full document. The first uncovered range wins. Do not reorder.
+
+2. **`_isSelectableTarget` must stay in sync with `classifyBlock`.** `_isSelectableTarget` determines which nodes are scope boundaries for progressive selection. `classifyBlock` in `blockCutPasteHandler` determines which nodes are recognized for block cut/copy. If a new block type is added to one, it must be added to the other. Otherwise progressive select-all may expand to a scope that `findSelectedBlock` cannot classify, breaking the auto-expansion chain.
+
+3. **`_buildProgressiveRanges` is the single source of truth for the range hierarchy.** Both `_ekh.progressiveSelectAll` (Ctrl+A handler) and the cut/copy auto-expansion in `blockCutPasteHandler` must use `_buildProgressiveRanges` to build their target ranges. Do not duplicate the range-building logic.
+
+4. **Cut/copy auto-expansion fires only on non-collapsed selections.** When `findSelectedBlock` returns null and `sel.isCollapsed` is false, the cut/copy handler expands the selection via `_buildProgressiveRanges` and re-checks. Collapsed selections (no text selected) must not trigger expansion.
+
+5. **Auto-expansion finds the smallest containing range.** The cut/copy handler walks `targetRanges` and selects the first range that fully contains the current selection (target starts at or before current start, target ends at or after current end). It then re-runs `findSelectedBlock`. If still null, it continues to the next larger range.
+
+6. **Native fallthrough is the final fallback.** If no block is found even after expanding to the document level, the cut/copy handler allows native browser behavior (no `preventDefault`). This preserves normal clipboard operations on plain text selections.
+
+7. **Only WYSIWYG mode.** Progressive select-all and cut/copy auto-expansion only apply in WYSIWYG mode (`wysiwygEditor.currentMode === 'wysiwyg'`). Markdown mode uses native textarea selection.
+
+## Key Functions
+
+- `_buildProgressiveRanges(sel, ea)` — builds ordered target ranges array
+- `_ekh.progressiveSelectAll(e)` — Ctrl+A handler, applies first uncovered range
+- `_isSelectableTarget(node, ea)` — scope boundary classification
+- `_buildTargetRange`, `_buildAdmonitionBodyRange`, `_buildHeadingSectionRange` — range builders
+- `_selectionCoversRange` — checks if selection fully covers a range
+
+## Design Document
+
+See `docs/design/ui/DESIGN-progressive-select-all.md`.

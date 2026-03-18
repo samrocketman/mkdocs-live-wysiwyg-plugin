@@ -797,6 +797,65 @@
  color: #fff;
 }
 
+/* Copy button on basic (unwrapped) PRE blocks */
+.md-editable-area pre .md-code-copy-btn {
+ position: absolute;
+ top: 4px;
+ right: 78px;
+ background: rgba(0,0,0,0.35);
+ color: #c9d1d9;
+ border: 1px solid rgba(255,255,255,0.12);
+ border-radius: 3px;
+ font-size: 0.65em;
+ padding: 2px 4px;
+ cursor: pointer;
+ opacity: 0;
+ transition: opacity 0.15s;
+ z-index: 5;
+ line-height: 1;
+ display: flex;
+ align-items: center;
+ justify-content: center;
+}
+
+.md-editable-area pre:hover .md-code-copy-btn,
+.md-editable-area pre:focus-within .md-code-copy-btn {
+ opacity: 1;
+}
+
+.md-editable-area pre .md-code-copy-btn:hover {
+ background: rgba(0,0,0,0.55);
+ color: #fff;
+}
+
+.md-editable-area pre .md-code-copy-btn--copied {
+ color: #4caf50;
+}
+
+/* Copy button inside advanced button group */
+.md-editable-area .md-code-block .md-code-copy-btn {
+ background: rgba(0,0,0,0.35);
+ color: #c9d1d9;
+ border: 1px solid rgba(255,255,255,0.12);
+ border-radius: 3px;
+ font-size: 0.65em;
+ padding: 2px 4px;
+ cursor: pointer;
+ line-height: 1;
+ display: flex;
+ align-items: center;
+ justify-content: center;
+}
+
+.md-editable-area .md-code-block .md-code-copy-btn:hover {
+ background: rgba(0,0,0,0.55);
+ color: #fff;
+}
+
+.md-editable-area .md-code-block .md-code-copy-btn.md-code-copy-btn--copied {
+ color: #4caf50;
+}
+
 /* Settings gear button on advanced (wrapped) code blocks */
 .md-editable-area .md-code-block .md-code-settings-btn-advanced {
  background: rgba(0,0,0,0.35);

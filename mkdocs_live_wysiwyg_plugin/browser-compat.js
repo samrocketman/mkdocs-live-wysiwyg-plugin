@@ -230,6 +230,16 @@
     catch (err) { /* untrusted event or restricted context */ }
   }
 
+  function writeClipboardText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        return navigator.clipboard.writeText(text).then(function () { return true; })
+          .catch(function () { return false; });
+      } catch (e) { return Promise.resolve(false); }
+    }
+    return Promise.resolve(false);
+  }
+
   // ── Location Guard ───────────────────────────────────────────────────
   //
   // Centralizes the Object.defineProperty(location, ...) try/catch pattern
@@ -404,6 +414,7 @@
     isPrintableKey: isPrintableKey,
 
     readClipboardText: readClipboardText,
+    writeClipboardText: writeClipboardText,
     cacheClipboardForGesture: cacheClipboardForGesture,
     getClipboardData: getClipboardData,
     setClipboardData: setClipboardData,

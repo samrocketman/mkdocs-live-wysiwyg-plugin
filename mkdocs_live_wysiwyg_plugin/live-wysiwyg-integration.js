@@ -2658,6 +2658,35 @@
     };
   })();
 
+  // --- Ctrl/Cmd+hover overlay link (state hoisted for keyboard router access) ---
+  var _ctrlLinkOverlay = null;
+  var _ctrlHeld = false;
+
+  function _showCtrlLinkOverlay(anchorEl) {
+    _hideCtrlLinkOverlay();
+    var href = anchorEl.getAttribute('href');
+    if (!href) return;
+    var rect = anchorEl.getBoundingClientRect();
+    var overlay = document.createElement('a');
+    overlay.href = href;
+    overlay.target = '_blank';
+    overlay.rel = 'noopener';
+    overlay.setAttribute('contenteditable', 'false');
+    overlay.style.cssText = 'position:fixed;display:block;opacity:0;cursor:pointer;z-index:99997;' +
+      'top:' + rect.top + 'px;left:' + rect.left + 'px;width:' + rect.width + 'px;height:' + rect.height + 'px;';
+    overlay.addEventListener('mouseleave', function () { _hideCtrlLinkOverlay(); });
+    var host = _focusOverlay || document.body;
+    host.appendChild(overlay);
+    _ctrlLinkOverlay = overlay;
+  }
+
+  function _hideCtrlLinkOverlay() {
+    if (_ctrlLinkOverlay && _ctrlLinkOverlay.parentNode) {
+      _ctrlLinkOverlay.parentNode.removeChild(_ctrlLinkOverlay);
+    }
+    _ctrlLinkOverlay = null;
+  }
+
   (function patchInsertLink() {
     var proto = MarkdownWYSIWYG.prototype;
     var origInsertLink = proto._insertLink;
@@ -3045,6 +3074,19 @@
         } else if (_linkChainEl) {
           _hideLinkChain();
         }
+      });
+
+      editableArea.addEventListener('mouseover', function (e) {
+        if (!_ctrlHeld) return;
+        var node = e.target;
+        while (node && node !== editableArea) {
+          if (node.nodeName === 'A' && node.getAttribute('href')) {
+            _showCtrlLinkOverlay(node);
+            return;
+          }
+          node = node.parentNode;
+        }
+        _hideCtrlLinkOverlay();
       });
     }
 
@@ -20984,7 +21026,30 @@
       if (e.key === '.') {
         _handlePeriodEdit(e);
       }
+
+      if (e.key === 'Meta' || e.key === 'Control') {
+        _ctrlHeld = true;
+        var _ea = wysiwygEditor && wysiwygEditor.editableArea;
+        if (_ea) {
+          var anchors = _ea.querySelectorAll('a[href]');
+          for (var ai = 0; ai < anchors.length; ai++) {
+            if (anchors[ai].matches(':hover')) { _showCtrlLinkOverlay(anchors[ai]); break; }
+          }
+        }
+      }
     }, true);
+
+    document.addEventListener('keyup', function (e) {
+      if (e.key === 'Meta' || e.key === 'Control') {
+        _ctrlHeld = false;
+        _hideCtrlLinkOverlay();
+      }
+    }, true);
+
+    window.addEventListener('blur', function () {
+      _ctrlHeld = false;
+      _hideCtrlLinkOverlay();
+    });
   })();
 
   function getControlsElement(textarea) {

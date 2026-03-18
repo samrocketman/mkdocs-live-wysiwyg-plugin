@@ -60,9 +60,9 @@ Every z-index value in the codebase. New z-index values must be added here befor
 | `99990` | `.live-wysiwyg-focus-overlay`, `.live-wysiwyg-nav-transition-overlay` | `_getFocusModeCSS` |
 | `99993` | `.live-wysiwyg-dead-link-panel` | `_getFocusModeCSS` |
 | `99995` | `.live-wysiwyg-focus-settings-dropdown`, `.live-wysiwyg-page-submenu` | `_getFocusModeCSS` |
-| `99996` | `.live-wysiwyg-nav-popup` | `_getFocusModeCSS` |
+| `99996` | `.live-wysiwyg-nav-popup`, `.live-wysiwyg-asset-preview-popup` | `_getFocusModeCSS` |
 | `99998` | `.md-link-chain-indicator` | JS inline style |
-| `99999` | `.md-table-grid-selector`, `.md-contextual-table-toolbar`, `.md-code-lang-dropdown`, `.md-code-settings-dropdown`, `.md-admonition-settings-dropdown`, `.md-link-settings-dropdown`, `.md-image-insert-dropdown`, `.md-image-gear-dropdown`, `.live-wysiwyg-nav-dialog`, `.live-wysiwyg-selection-edit-popup`, `.live-wysiwyg-emoji-autocomplete`, `.md-admonition-dropdown`, `.live-wysiwyg-nav-review-popup` | `editor.css`, `_getFocusModeCSS`, JS inline styles |
+| `99999` | `.md-table-grid-selector`, `.md-contextual-table-toolbar`, `.md-code-lang-dropdown`, `.md-code-settings-dropdown`, `.md-admonition-settings-dropdown`, `.md-link-settings-dropdown`, `.md-image-insert-dropdown`, `.md-image-gear-dropdown`, `.live-wysiwyg-nav-dialog`, `.live-wysiwyg-selection-edit-popup`, `.live-wysiwyg-emoji-autocomplete`, `.md-admonition-dropdown`, `.live-wysiwyg-nav-review-popup`, `.live-wysiwyg-asset-lightbox` | `editor.css`, `_getFocusModeCSS`, JS inline styles |
 | `100000` | `.live-wysiwyg-toast` | `_getFocusModeCSS` |
 | `100001` | `#live-wysiwyg-pipeline-progress` | JS inline style |
 | `100002` | `#live-wysiwyg-post-save-notifications` | JS inline style |

@@ -390,6 +390,23 @@
     return rect;
   }
 
+  // ── Caret Position from Point ───────────────────────────────────────
+
+  function caretRangeFromPoint(x, y) {
+    if (document.caretRangeFromPoint) {
+      return document.caretRangeFromPoint(x, y);
+    }
+    if (document.caretPositionFromPoint) {
+      var pos = document.caretPositionFromPoint(x, y);
+      if (!pos) return null;
+      var range = document.createRange();
+      range.setStart(pos.offsetNode, pos.offset);
+      range.collapse(true);
+      return range;
+    }
+    return null;
+  }
+
   // ── Fullscreen Helpers ───────────────────────────────────────────────
 
   var _fullscreenEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange'];
@@ -422,6 +439,7 @@
     installLocationGuard: installLocationGuard,
 
     getRangeRect: getRangeRect,
+    caretRangeFromPoint: caretRangeFromPoint,
 
     fullscreenElement: fullscreenElement,
     fullscreenEvents: _fullscreenEvents

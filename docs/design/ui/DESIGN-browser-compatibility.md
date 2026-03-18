@@ -72,6 +72,7 @@ Self-executing IIFE that:
 | Method | Description |
 |---|---|
 | `getRangeRect(range)` | `getBoundingClientRect()` wrapper that handles Safari/Firefox zero-rect for collapsed ranges via temporary span insertion |
+| `caretRangeFromPoint(x, y)` | Returns a `Range` at the given viewport coordinates. Blink/WebKit: delegates to `document.caretRangeFromPoint`. Gecko: uses `document.caretPositionFromPoint` and converts the `CaretPosition` to a `Range` |
 
 ### Fullscreen
 
@@ -189,6 +190,34 @@ Nav menu items in Firefox render with inconsistent vertical spacing across item 
 - Reduce nested list `padding-bottom` to `.25rem`
 
 See [DESIGN-layout.md](DESIGN-layout.md) "Browser-Specific Layout Normalization" section for the full pattern and override table.
+
+### `caretRangeFromPoint` vs `caretPositionFromPoint` (Gecko)
+
+Blink and WebKit provide `document.caretRangeFromPoint(x, y)` which returns a `Range`. Gecko provides only `document.caretPositionFromPoint(x, y)` which returns a `CaretPosition` object with `offsetNode` and `offset` properties — `caretRangeFromPoint` does not exist in Firefox. The compat method normalizes both to a `Range`:
+
+- Blink/WebKit: return `document.caretRangeFromPoint(x, y)` directly
+- Gecko: call `document.caretPositionFromPoint(x, y)`, create a `Range`, call `setStart(pos.offsetNode, pos.offset)`, collapse to start
+
+Used by the nav menu drag-and-drop image insertion to determine where to insert the `<img>` element at the drop coordinates.
+
+### DataTransfer Protected Mode During Drag Events
+
+During `dragover`, `dragenter`, and `dragleave` events, the drag data store is in "protected mode" per the HTML spec. The `dataTransfer.types` array is accessible, but `dataTransfer.getData()` returns an empty string.
+
+- Blink/WebKit/Edge: follow the spec strictly — `getData()` returns `''`
+- Gecko: non-standard — allows `getData()` during drag events
+
+The integration code must only use `e.dataTransfer.types.includes(mimeType)` in `dragover`/`dragenter` handlers. `getData()` is only called in the `drop` handler. Never rely on Firefox's non-standard early data access.
+
+### Safari Custom MIME Type Same-Origin Restriction
+
+Safari stores custom MIME types (non-standard types like `application/x-live-wysiwyg-asset`) in a WebKit-internal UTI (`com.apple.WebKit.custom-pasteboard-data`) and restricts access to same-origin contexts. Standard types (`text/plain`, `text/html`, `text/uri-list`) are unrestricted.
+
+Since the nav menu drag source and the editable area drop target are on the same page, the same-origin restriction does not affect this feature. The `text/plain` fallback data set in `dragstart` is accessible even in cross-origin scenarios.
+
+### `DataTransfer.items` Unreliable in Safari
+
+Safari does not always populate `DataTransfer.items` during drag events. All type-checking during `dragover`/`dragenter` must use `e.dataTransfer.types` (a `DOMStringList`), never `e.dataTransfer.items`. Actual data retrieval uses `e.dataTransfer.getData()` in the `drop` handler only.
 
 ## Cross-References
 

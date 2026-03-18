@@ -116,6 +116,7 @@ Grouping only applies when an entire construct appears or disappears in one diff
 | Nav edit mode entry | `_enterNavEditMode` |
 | Paste | `ea.addEventListener('paste', ...)` handlers |
 | Toolbar format commands | `_handleToolbarClick`, `_insertCodeBlock`, `_wrapSelectionInBlockquote`, etc. |
+| Nav menu drag-and-drop | `ea.addEventListener('drop', ...)` handler |
 
 ### Corruption Guard
 

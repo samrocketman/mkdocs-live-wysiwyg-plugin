@@ -77,6 +77,7 @@ Any function that loads markdown content into the WYSIWYG editable area must:
 | `setValue` (initial load) | Yes (`patchSetValueAndSwitchToModeForLinkPrePost`) | Yes (`patchSetValueAndGetValueForFrontmatter`) | Two patch layers |
 | `switchToMode('wysiwyg')` | Yes (`patchSetValueAndSwitchToModeForLinkPrePost`) | Yes (`patchSetValueAndGetValueForFrontmatter`) | Markdown-to-WYSIWYG toggle |
 | `_historyApplyContent` | Yes | Yes | Undo/redo content restore |
+| Nav menu drag-and-drop | No | `enhanceImages` only | Single image inserted; only image enhancement needed |
 
 ## `data-*` Attribute Bridge
 

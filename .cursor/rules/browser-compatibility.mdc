@@ -31,13 +31,17 @@ The `browser-compat.js` file is the single authority for all browser-specific de
 
 11. **Use `_compat.isPrintableKey(e)` instead of `e.key.length === 1` checks.** The `isPrintableKey` method excludes dead keys (`'Dead'`), process keys (`'Process'`), and modifier combos, preventing false positives on Firefox during IME input.
 
-12. **Document browser quirks centrally.** Browser-specific workarounds and known quirks must be documented in `docs/design/ui/DESIGN-browser-compatibility.md`. New browser-specific code should add an entry to that catalog.
+12. **Use `_compat.caretRangeFromPoint(x, y)` for drop-position detection.** Never call `document.caretRangeFromPoint` or `document.caretPositionFromPoint` directly. The compat method normalizes Blink/WebKit (`caretRangeFromPoint` returns `Range`) and Gecko (`caretPositionFromPoint` returns `CaretPosition`, converted to `Range`).
 
-13. **`vendor/editor.js` must not be modified.** The global `document.execCommand` and `document.queryCommandState` patches in `browser-compat.js` intercept all calls from the vendor file transparently. Any vendor-level normalization must be implemented in the compat layer's global patches.
+13. **Drag-and-drop handlers must respect DataTransfer protected mode.** During `dragover`/`dragenter`/`dragleave`, only `e.dataTransfer.types` is accessible. `getData()` must only be called in the `drop` handler. Never rely on Firefox's non-standard early data access. Use `e.dataTransfer.types` (not `e.dataTransfer.items`) for type detection during drag events — `items` is unreliable in Safari.
 
-14. **Compat layer DOM operations must preserve the browser Selection.** Any function in `browser-compat.js` that modifies live DOM nodes (e.g., `_normalizeTagName` replacing `<b>` with `<strong>`) must save the Selection Range before modification and restore it after. This is required by the Cursor/Selection Preservation cardinal rule (`cursor-selection-preservation.mdc`). The Keyboard subsystem (`keyboard.mdc`) relies on `_compat.exec()` to return with the selection intact so that formatting shortcuts do not lose the user's selection.
+14. **Document browser quirks centrally.** Browser-specific workarounds and known quirks must be documented in `docs/design/ui/DESIGN-browser-compatibility.md`. New browser-specific code should add an entry to that catalog.
 
-15. **Engine detection is available for CSS layout normalization.** `_compat.engine` (`'blink'|'gecko'|'webkit'`) can be used to conditionally inject engine-specific CSS overrides in `_getFocusModeCSS()` and other CSS-building functions. This is the designated mechanism for fixing cross-browser layout rendering differences. Layout-specific fixes are documented in `DESIGN-layout.md` and cross-referenced from `DESIGN-browser-compatibility.md`. See `layout.mdc` for layout authority rules.
+15. **`vendor/editor.js` must not be modified.** The global `document.execCommand` and `document.queryCommandState` patches in `browser-compat.js` intercept all calls from the vendor file transparently. Any vendor-level normalization must be implemented in the compat layer's global patches.
+
+16. **Compat layer DOM operations must preserve the browser Selection.** Any function in `browser-compat.js` that modifies live DOM nodes (e.g., `_normalizeTagName` replacing `<b>` with `<strong>`) must save the Selection Range before modification and restore it after. This is required by the Cursor/Selection Preservation cardinal rule (`cursor-selection-preservation.mdc`). The Keyboard subsystem (`keyboard.mdc`) relies on `_compat.exec()` to return with the selection intact so that formatting shortcuts do not lose the user's selection.
+
+17. **Engine detection is available for CSS layout normalization.** `_compat.engine` (`'blink'|'gecko'|'webkit'`) can be used to conditionally inject engine-specific CSS overrides in `_getFocusModeCSS()` and other CSS-building functions. This is the designated mechanism for fixing cross-browser layout rendering differences. Layout-specific fixes are documented in `DESIGN-layout.md` and cross-referenced from `DESIGN-browser-compatibility.md`. See `layout.mdc` for layout authority rules.
 
 ## Design Document
 

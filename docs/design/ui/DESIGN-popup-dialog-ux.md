@@ -201,6 +201,8 @@ Triggered on the Insert click or URL blur when alt is empty and a URL has been t
 | Caution Popup | `_showCautionPopup` | Resolve btn | ESC only |
 | Review Changes | `_showReviewChangesPopup` | first element | Already has ESC |
 | Dead Link Panel | `_showDeadLinkPanel` | close btn | ESC to dismiss |
+| Asset Preview | `_showAssetPreviewPopup` | Expand btn | Small preview with expand; ESC + Enter |
+| Asset Lightbox | `_showAssetLightbox` | Close btn | Modal image/text viewer; ESC to dismiss, click-outside backdrop |
 
 ### Excluded (No Changes)
 

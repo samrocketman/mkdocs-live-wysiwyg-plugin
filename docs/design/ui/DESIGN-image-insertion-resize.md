@@ -25,6 +25,18 @@ resolved absolute → pathname − parentDir pathname → relative path
 
 This ensures the path round-trips correctly through `resolveImageSrc` / `data-orig-src`.
 
+## Nav Menu Drag-and-Drop Insertion
+
+Dragging an image asset from the focus mode nav sidebar into the editable area inserts an image, equivalent to the "Insert Image" toolbar action.
+
+- **Drag source**: `draggable="true"` on the asset `<span>` in `_buildNavItems`. The `dragstart` handler sets a custom MIME type (`application/x-live-wysiwyg-asset`) containing the asset's `_uid`, `src_path`, `extension`, and `title`. A `text/plain` fallback is also set with the `src_path`.
+- **Drop handler**: Uses `_compat.caretRangeFromPoint(e.clientX, e.clientY)` to determine the insertion position. Resolves the asset's disk path from snapshot 0 (`_navSnapshots[0].navData`) by `_uid` lookup, then computes a relative path via `computeRelativeImagePath(_getCurrentSrcPath(), diskSrcPath)` and a display URL via `resolveImageSrc(relativePath)`.
+- **Image element**: `<img>` with `src`, `alt` (derived from filename), `data-orig-src` (relative path), and `data-size-syntax` (from user setting). Wrapped in `<p>` with a trailing `<p>` containing a zero-width space.
+- **Post-insertion**: `enhanceImages(ea)` adds resize handles and gear. `_finalizeUpdate` syncs editor state.
+- **Guard conditions**: WYSIWYG mode only. Only image assets (identified by the custom MIME type). Not available when group selection is active (`_hasAnyNavSelected()`). Snapshot 0 is the source of truth for disk paths.
+- **`data-md-literal` is NOT set** — this is a toolbar-equivalent creation path. Backspace on a drag-dropped image deletes it rather than reverting to markdown.
+- **History**: `_flushHistoryCapture()` is called before insertion to capture the pre-drop content state.
+
 ## `resolveImageSrc` and `data-orig-src` Round-Trip
 
 - `resolveImageSrc(href)` resolves relative image paths via `new URL('..', document.baseURI)` to match MkDocs' directory-URL convention.

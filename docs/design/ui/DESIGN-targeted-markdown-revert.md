@@ -53,6 +53,7 @@ All inline markdown typing handlers set `data-md-literal` on the created element
 - `execCommand('formatBlock')` (toolbar headings, blockquotes)
 - `execCommand('insertHorizontalRule')` (toolbar HR)
 - `_markdownToHtml` / `marked.parse()` (document load, mode switch)
+- Nav menu drag-and-drop image insertion (drop handler in editableArea)
 
 All `execCommand` calls in the integration script use the compat layer. See [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md) for cross-browser contenteditable and execCommand behavior.
 

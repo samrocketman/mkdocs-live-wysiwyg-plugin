@@ -118,6 +118,8 @@ New dropdowns must follow this contract. The `z-index` must be `99999` (matching
 |---|---|---|---|---|
 | Toolbar drawer | `max-height` (via `--_toolbar-h`) | `0.3s` | `ease-in-out` | Hamburger toggle |
 | Focus grid (sync) | `min-height` | `0.3s` | `ease-in-out` | Drawer open/close (via `--_panel-h`) |
+| Toolbar wrap (mode switch) | `maxHeight`, `padding`, `opacity` | `150ms` | `ease-in-out` | WYSIWYG/Markdown toggle (JS-driven via `_slideToolbarWrap`) |
+| Content area crossfade | `opacity` | `80ms` out + `80ms` in | `ease-in` / `ease-out` | WYSIWYG/Markdown toggle (JS-driven via `_crossfadeContentSwitch`) |
 | Left sidebar (markdown mode collapse) | `transform`, `opacity`, `width`, `margin` | `0.3s` | `ease-in-out` | WYSIWYG/Markdown toggle |
 | Right sidebar / TOC (markdown mode collapse) | `transform`, `opacity`, `width`, `margin` | `0.3s` | `ease-in-out` | WYSIWYG/Markdown toggle |
 | Nav sidebar (WYSIWYG mode) | `transform`, `opacity` | `0.3s` | `ease-in-out` | Nav toggle |
@@ -131,6 +133,8 @@ New dropdowns must follow this contract. The `z-index` must be `99999` (matching
 New animations must use existing durations and easing values where possible. Introducing new timing requires documenting it here.
 
 Toolbar drawer animation details are also referenced from [DESIGN-toolbars.md](DESIGN-toolbars.md). The Toolbar subsystem describes the hamburger toggle behavior; this document defines the animation timing. `.3s ease-in-out` is the standard duration for all slide transitions in the focus overlay.
+
+The mode-switch animations (toolbar wrap slide and content crossfade) use shorter durations than the standard `.3s` because they are direct responses to user mode toggle actions where perceived responsiveness is critical. Both use the Web Animations API and run on the compositor thread, starting immediately on click before `switchToMode()` content conversion. See [DESIGN-toolbars.md](DESIGN-toolbars.md) "Mode Switch Animations" for the full flow.
 
 ## Scroll Container Management
 

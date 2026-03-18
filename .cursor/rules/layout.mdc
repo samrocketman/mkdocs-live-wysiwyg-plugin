@@ -48,7 +48,7 @@ Affected selectors:
 
 11. **All dialogs must support auto-expansion of text fields.** Use `_attachContainerExpandBehavior` or equivalent. Input fields in dropdowns must not clip or overflow — they must grow to accommodate the content.
 
-12. **Animation durations and easing are Layout contracts.** Toolbar drawer: `0.3s ease-in-out`. Sidebar collapse: `0.3s ease-in-out`. All focus overlay slide transitions use `0.3s ease-in-out`. New animations must use existing durations where possible. Introducing new timing requires documenting it in `DESIGN-layout.md`.
+12. **Animation durations and easing are Layout contracts.** Toolbar drawer: `0.3s ease-in-out`. Sidebar collapse: `0.3s ease-in-out`. All focus overlay slide transitions use `0.3s ease-in-out`. Mode-switch animations use shorter durations for responsiveness: toolbar wrap slide `150ms ease-in-out`, content crossfade `80ms ease-in` + `80ms ease-out`. New animations must use existing durations where possible. Introducing new timing requires documenting it in `DESIGN-layout.md`.
 
 13. **Scroll containers are mode-dependent.** Normal mode: `editableArea`. Focus mode: `.live-wysiwyg-focus-main`. All scroll operations must target the correct container. `scrollToCenterCursor` auto-detects focus mode. TOC active heading tracking uses `.live-wysiwyg-focus-main`, not `window` or `editableArea`.
 
@@ -69,3 +69,5 @@ Affected selectors:
 21. **Markdown mode vertical fill is scoped via `.focus-mode-markdown`.** All overrides that eliminate vertical gaps in markdown mode (grid `margin-top: 0`, content `padding-top: 0`, markdown container `flex: 1 1 0`) are scoped to `.focus-mode-markdown` and must not affect WYSIWYG mode layout.
 
 22. **Toolbar drawer animation is governed by Layout.** The drawer's `max-height` transition (`0.3s ease-in-out`, using `var(--_toolbar-h, 260px)`) and the grid's synchronized `min-height` transition (`0.3s ease-in-out`) are Layout contracts. `0.3s ease-in-out` is the standard duration for all slide transitions in the focus overlay. See `toolbars.mdc` for what the drawer contains; this subsystem defines how it animates.
+
+23. **Mode-switch animations use the Web Animations API.** Toolbar wrap slide (`_slideToolbarWrap`, `150ms`) and content crossfade (`_crossfadeContentSwitch`, `80ms` + `80ms`) are JS-driven via `element.animate()`. They run on the compositor and start immediately on click, before the main-thread `switchToMode()` content conversion. These shorter durations are exceptions to the standard `0.3s` — justified by the need for instant visual feedback on user-initiated mode toggles.

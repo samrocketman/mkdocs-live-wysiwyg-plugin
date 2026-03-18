@@ -13,8 +13,14 @@ alwaysApply: true
 
 3. **Mode toggle reflects reality.** The WYSIWYG/Markdown toggle in the drawer must reflect the current editor mode on focus mode entry and immediately after each mode switch.
 
-4. **Toolbar hidden in Markdown mode.** When Markdown mode is active, the toolbar wrap section is hidden (`display:none`). The mode toggle, save, discard, and settings controls remain visible.
+4. **Toolbar hidden in Markdown mode.** When Markdown mode is active, the toolbar wrap section is hidden (`display:none` as resting state). The mode toggle, save, discard, and settings controls remain visible.
 
 5. **New buttons automatically available in focus mode.** Because the toolbar is reparented rather than duplicated, any new buttons added to the toolbar are automatically available in focus mode without additional wiring.
 
 6. **Layout contracts apply.** Toolbar reparenting order, drawer animation timing (`0.3s ease-in-out`), and flex-wrap layout are governed by `layout.mdc` and `DESIGN-layout.md`. The toolbar drawer's `max-height` transition uses `var(--_toolbar-h, 260px)` for the exact drawer height. The focus grid's `min-height` transitions in sync at the same duration. Layout defines the animation timing; Toolbars defines what animates.
+
+7. **Mode switch animations start before content conversion.** `_slideToolbarWrap` (150ms) and `_crossfadeContentSwitch` (80ms+80ms) are fired immediately on mode toggle click, before `switchToMode()` runs. The Web Animations API runs on the compositor, so animations begin even while the main thread converts content.
+
+8. **`_updateToolbarHeight` must be called after every mode switch.** The toolbar wrap visibility change alters the drawer's content height. Failure to recalculate `--_toolbar-h` causes the drawer's `max-height` to clip the toolbar buttons.
+
+9. **Content crossfade wraps the mode switch.** `_crossfadeContentSwitch` fades `.md-editor-content-area` to opacity 0, runs `switchToMode()` + `syncModeToggle()` while invisible, then fades back in. The `scrollToCenterCursor` call runs in the fade-in completion callback.

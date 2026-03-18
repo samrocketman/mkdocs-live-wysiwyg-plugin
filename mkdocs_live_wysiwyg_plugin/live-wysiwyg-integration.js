@@ -20062,6 +20062,26 @@
       }
     }
 
+    function _crossfadeContentSwitch(el, switchFn, cb) {
+      if (!el) { switchFn(); if (cb) cb(); return; }
+      if (el._crossfadeAnim) { el._crossfadeAnim.cancel(); el._crossfadeAnim = null; }
+      var fadeOut = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 80, easing: 'ease-in', fill: 'forwards' });
+      el._crossfadeAnim = fadeOut;
+      fadeOut.onfinish = function () {
+        fadeOut.cancel();
+        el.style.opacity = '0';
+        switchFn();
+        var fadeIn = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 80, easing: 'ease-out', fill: 'forwards' });
+        el._crossfadeAnim = fadeIn;
+        fadeIn.onfinish = function () {
+          fadeIn.cancel();
+          el._crossfadeAnim = null;
+          el.style.removeProperty('opacity');
+          if (cb) cb();
+        };
+      };
+    }
+
     function syncModeToggle(mode) {
       if (mode === 'wysiwyg') {
         wysBtn.classList.add('active');
@@ -20119,9 +20139,10 @@
         _slideToolbarWrap(toolbarWrap, true, function () {
           _updateToolbarHeight(overlay, drawer);
         });
-        wysiwygEditor.switchToMode('wysiwyg');
-        syncModeToggle('wysiwyg');
-        requestAnimationFrame(function () {
+        _crossfadeContentSwitch(wysiwygEditor.contentAreaContainer, function () {
+          wysiwygEditor.switchToMode('wysiwyg');
+          syncModeToggle('wysiwyg');
+        }, function () {
           scrollToCenterCursor(wysiwygEditor.editableArea, false);
         });
       }
@@ -20131,9 +20152,10 @@
         _slideToolbarWrap(toolbarWrap, false, function () {
           _updateToolbarHeight(overlay, drawer);
         });
-        wysiwygEditor.switchToMode('markdown');
-        syncModeToggle('markdown');
-        requestAnimationFrame(function () {
+        _crossfadeContentSwitch(wysiwygEditor.contentAreaContainer, function () {
+          wysiwygEditor.switchToMode('markdown');
+          syncModeToggle('markdown');
+        }, function () {
           if (wysiwygEditor.markdownArea) {
             scrollToCenterCursor(wysiwygEditor.markdownArea, true, wysiwygEditor.markdownArea.selectionStart, wysiwygEditor.markdownEditorContainer);
           }

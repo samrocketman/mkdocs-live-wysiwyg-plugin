@@ -31,10 +31,24 @@ The toolbar is the same DOM element moved between containers. On enter focus mod
 
 - Reflects the current mode on focus mode entry
 - Updates immediately when clicked
-- Hides the toolbar wrap section in Markdown mode (`display:none`) since WYSIWYG buttons do not apply
+- Hides the toolbar wrap section in Markdown mode (`display:none` as resting state) since WYSIWYG buttons do not apply
 - Toggle, save, discard, and settings remain visible in Markdown mode
 - Keyboard shortcut: Ctrl+. (Cmd+. on Mac)
 - When Markdown mode is active, the overlay gains `focus-mode-markdown` for width-collapsing transitions on sidebars
+
+### Mode Switch Animations
+
+Two JS-driven animations run in parallel when the user clicks a mode toggle button:
+
+**Toolbar wrap slide** (`_slideToolbarWrap`): The toolbar wrap slides out (WYSIWYG to Markdown) or slides in (Markdown to WYSIWYG) using the Web Animations API. Duration: `150ms`, easing: `ease-in-out`. Animates `maxHeight`, `paddingTop`, `paddingBottom`, and `opacity`. The CSS `display:none` class (`focus-markdown-mode`) is applied as the resting state only after the slide-out animation finishes, and removed before the slide-in animation starts.
+
+**Content area crossfade** (`_crossfadeContentSwitch`): The content area (`.md-editor-content-area`) fades out over `80ms` (`ease-in`), the mode switch runs at opacity 0 (hiding the content conversion), then fades in over `80ms` (`ease-out`). Total: `160ms`.
+
+Both animations start immediately on button click — before `switchToMode()` runs — so the user sees instant visual feedback. The toolbar slide is fire-and-forget (runs on the compositor). The crossfade wraps `switchToMode()` + `syncModeToggle()` so the heavy content conversion is invisible.
+
+`_updateToolbarHeight` is called after each mode switch to recalculate `--_toolbar-h`, since the toolbar wrap visibility change alters the drawer's content height.
+
+Initial focus mode entry uses instant `display:none` (no animation) when entering in Markdown mode.
 
 ## Save and Discard
 
@@ -79,6 +93,8 @@ In the drawer controls, a "Page Management" button appears only when the Materia
 3. New toolbar buttons are automatically available in focus mode
 4. In Markdown mode, the toolbar wrap section is hidden; drawer controls remain visible
 5. Mode toggle reflects the current editor mode on entry and after each switch
+6. Mode switch animations (toolbar slide + content crossfade) start immediately on click, before content conversion
+7. `_updateToolbarHeight` must be called after every mode switch to keep `--_toolbar-h` accurate
 
 ## Three-Column Spacing Balance
 

@@ -202,6 +202,32 @@ The vendor stylesheet (`mkdocs_live_wysiwyg_plugin/vendor/editor.css`) contains 
 
 Colors in `editor.css` are owned by the Theme subsystem. Layout owns only the structural properties (display, position, width, height, margin, padding, flex, grid, overflow, z-index).
 
+## Browser-Specific Layout Normalization
+
+When layout rendering differs across browser engines, the fix is implemented as engine-conditional CSS in `_getFocusModeCSS()`, gated by `_compat.engine`. The Browser Compatibility subsystem (`browser-compat.js`) provides the engine detection; Layout owns the CSS rules.
+
+### Pattern
+
+```javascript
+var css = '' + /* ... base CSS ... */ '';
+
+if (_compat.engine === 'gecko') {
+  css += /* Gecko-specific overrides */;
+}
+
+return css;
+```
+
+### Current Engine-Specific Overrides
+
+| Engine | Target | Override | Reason |
+|---|---|---|---|
+| Gecko | `.md-nav__link` | `margin-top:9px` (replaces `.625em`) | `em`-based margins produce different subpixel values in Gecko at nested font-size inheritance depths |
+| Gecko | `.md-nav__item--nested>.md-nav` | `min-height:0` | Gecko may contribute residual height to grid items with `visibility:collapse` even when `grid-template-rows:0fr` |
+| Gecko | `.md-nav__item--nested>.md-nav>.md-nav__list` | `padding-bottom:.25rem` (replaces `.4rem`) | Normalizes gap between last child of expanded section and next sibling item |
+
+See [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md) for the full workaround catalog and the "Gecko Nav Menu Item Spacing" entry.
+
 ## Cross-References
 
 - [DESIGN-focus-mode.md](DESIGN-focus-mode.md) — focus mode grid, scroll, reparenting, sidebar collapse
@@ -213,3 +239,4 @@ Colors in `editor.css` are owned by the Theme subsystem. Layout owns only the st
 - [DESIGN-unfocused-mode.md](DESIGN-unfocused-mode.md) — width alignment
 - [DESIGN-snapshot-nav-architecture.md](DESIGN-snapshot-nav-architecture.md) — notification positioning
 - [DESIGN-theme-detection.md](DESIGN-theme-detection.md) — overlay inline styles (layout aspect)
+- [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md) — engine detection for layout normalization

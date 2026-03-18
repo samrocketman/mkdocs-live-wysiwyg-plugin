@@ -18506,7 +18506,7 @@
   }
 
   function _getFocusModeCSS() {
-    return '' +
+    var css = '' +
       ':root{--live-wysiwyg-caution:#d9534f;--live-wysiwyg-caution-hover:#c9302c;}' +
       '[data-md-color-scheme="slate"]{--live-wysiwyg-caution:#f0ad4e;--live-wysiwyg-caution-hover:#ec971f;}' +
       '.live-wysiwyg-focus-overlay{' +
@@ -19475,6 +19475,21 @@
       '}' +
 
       '';
+
+    if (_compat.engine === 'gecko') {
+      css +=
+        '.live-wysiwyg-focus-sidebar-left .md-nav__link{' +
+          'margin-top:9px;' +
+        '}' +
+        '.live-wysiwyg-focus-sidebar-left .md-nav__item--nested>.md-nav{' +
+          'min-height:0;' +
+        '}' +
+        '.live-wysiwyg-focus-sidebar-left .md-nav__item--nested>.md-nav>.md-nav__list{' +
+          'padding-bottom:.25rem;' +
+        '}';
+    }
+
+    return css;
   }
 
   function buildFocusToc(editableArea, tocListEl) {

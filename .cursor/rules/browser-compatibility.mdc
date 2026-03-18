@@ -37,6 +37,8 @@ The `browser-compat.js` file is the single authority for all browser-specific de
 
 14. **Compat layer DOM operations must preserve the browser Selection.** Any function in `browser-compat.js` that modifies live DOM nodes (e.g., `_normalizeTagName` replacing `<b>` with `<strong>`) must save the Selection Range before modification and restore it after. This is required by the Cursor/Selection Preservation cardinal rule (`cursor-selection-preservation.mdc`). The Keyboard subsystem (`keyboard.mdc`) relies on `_compat.exec()` to return with the selection intact so that formatting shortcuts do not lose the user's selection.
 
+15. **Engine detection is available for CSS layout normalization.** `_compat.engine` (`'blink'|'gecko'|'webkit'`) can be used to conditionally inject engine-specific CSS overrides in `_getFocusModeCSS()` and other CSS-building functions. This is the designated mechanism for fixing cross-browser layout rendering differences. Layout-specific fixes are documented in `DESIGN-layout.md` and cross-referenced from `DESIGN-browser-compatibility.md`. See `layout.mdc` for layout authority rules.
+
 ## Design Document
 
 See `docs/design/ui/DESIGN-browser-compatibility.md`.

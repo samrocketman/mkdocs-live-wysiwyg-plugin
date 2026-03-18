@@ -175,12 +175,28 @@ Three event names (`fullscreenchange`, `webkitfullscreenchange`, `mozfullscreenc
 
 `scrollIntoView({ behavior: 'smooth' })` is used in focus mode and TOC navigation. Behavior is consistent across modern Blink/Gecko/WebKit. No workaround needed for currently supported browser versions.
 
+### Gecko Nav Menu Item Spacing
+
+Nav menu items in Firefox render with inconsistent vertical spacing across item types (index pages, regular pages, collapsed folders, expanded folders) while Chrome and Safari render evenly. Three factors contribute:
+
+1. **`em`-based margins**: `margin-top: .625em` on `.md-nav__link` produces different subpixel values in Gecko due to font-size inheritance at different nesting depths.
+2. **`visibility: collapse` on non-table elements**: Gecko has historically treated `visibility: collapse` differently from Blink on grid items, potentially contributing residual height even when `grid-template-rows: 0fr`.
+3. **Nested list padding**: `.md-nav__list` bottom padding (`.4rem`) combined with item `margin-top` creates uneven gaps between sections.
+
+**Fix**: Engine-conditional CSS in `_getFocusModeCSS()`, gated by `_compat.engine === 'gecko'`:
+- Override `margin-top` to `9px` (fixed pixel value instead of `em`)
+- Add `min-height: 0` on collapsed section child navs
+- Reduce nested list `padding-bottom` to `.25rem`
+
+See [DESIGN-layout.md](DESIGN-layout.md) "Browser-Specific Layout Normalization" section for the full pattern and override table.
+
 ## Cross-References
 
 - `browser-compatibility.mdc` — Rule file with coding standards for using the compat layer
 - `cursor-selection-preservation.mdc` — Cardinal rule: compat layer DOM operations must preserve the browser Selection
 - `upstream-websocket-wrapper.mdc` — WebSocket redirect suppression
 - `DESIGN-centralized-keyboard.md` — Keyboard routing architecture (Tier 1/2/3); selection preservation contract for formatting shortcuts
+- `DESIGN-layout.md` — Browser-specific layout normalization section; engine-conditional CSS pattern for fixing cross-browser rendering differences
 - `DESIGN-raw-html-preservation.md` — `innerHTML` comment stripping, `btoa`/`atob` workaround
 - `DESIGN-application-storage.md` — `localStorage` quota handling
 - `DESIGN-focus-mode.md` — Selection preservation across DOM reparenting

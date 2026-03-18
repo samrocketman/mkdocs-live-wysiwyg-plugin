@@ -25544,38 +25544,156 @@
       } catch (ex) { return false; }
     }
 
+    function _isSelectableTarget(node, ea) {
+      if (node === ea) return true;
+      if (node.nodeType !== 1) return false;
+      var name = node.nodeName;
+      var cl = node.classList;
+      if (name === 'CODE' && !node.closest('pre')) return true;
+      if (cl && (cl.contains('md-code-title') || cl.contains('md-code-lang'))) return true;
+      if (name === 'PRE') return true;
+      if (cl && cl.contains('md-code-block')) return true;
+      if (cl && cl.contains('admonition')) return true;
+      if (/^(P|H[1-6]|LI|TD|TH)$/.test(name)) return true;
+      if (/^(UL|OL|TABLE|BLOCKQUOTE)$/.test(name)) return true;
+      return false;
+    }
+
+    var _HEADING_RE = /^H[1-6]$/;
+
+    function _buildHeadingSectionRange(siblings, startIdx, endIdx) {
+      var range = document.createRange();
+      range.setStartBefore(siblings[startIdx]);
+      range.setEndAfter(siblings[endIdx]);
+      return range;
+    }
+
+    function _buildProgressiveRanges(sel, ea) {
+      var targetRanges = [];
+      var node = sel.anchorNode;
+      var r = sel.rangeCount ? sel.getRangeAt(0) : null;
+
+      if (node === ea && r) {
+        if (r.startContainer === ea) {
+          for (var ri = r.startOffset; ri < ea.childNodes.length; ri++) {
+            if (ea.childNodes[ri].nodeType === 1) { node = ea.childNodes[ri]; break; }
+          }
+        } else {
+          node = r.startContainer;
+        }
+      } else if (node && node.nodeType === 3 && r && /^\s*$/.test(node.textContent)) {
+        var sc = r.startContainer;
+        if (sc === ea) {
+          for (var ri = r.startOffset; ri < ea.childNodes.length; ri++) {
+            if (ea.childNodes[ri].nodeType === 1) { node = ea.childNodes[ri]; break; }
+          }
+          if (!node || node.nodeType !== 1) {
+            for (var ri = r.startOffset - 1; ri >= 0; ri--) {
+              if (ea.childNodes[ri].nodeType === 1) { node = ea.childNodes[ri]; break; }
+            }
+          }
+        } else if (sc && sc.nodeType === 3) {
+          node = sc.parentNode;
+          if (node === ea) {
+            var idx = -1;
+            for (var i = 0; i < ea.childNodes.length; i++) {
+              if (ea.childNodes[i] === sc) { idx = i; break; }
+            }
+            if (idx >= 0) {
+              for (var ri = idx + 1; ri < ea.childNodes.length; ri++) {
+                if (ea.childNodes[ri].nodeType === 1) { node = ea.childNodes[ri]; break; }
+              }
+              if (!node || node.nodeType !== 1) {
+                for (var ri = idx - 1; ri >= 0; ri--) {
+                  if (ea.childNodes[ri].nodeType === 1) { node = ea.childNodes[ri]; break; }
+                }
+              }
+            }
+          }
+        } else if (sc && sc.nodeType === 1) {
+          node = sc;
+        }
+      }
+
+      var elCur = (node && node.nodeType === 3) ? node.parentNode : node;
+      while (elCur && elCur !== ea) {
+        if (_isSelectableTarget(elCur, ea)) {
+          if (elCur.classList && elCur.classList.contains('admonition')) {
+            var inTitle = false;
+            var titleEl = elCur.querySelector('.admonition-title');
+            var check = (node && node.nodeType === 3) ? node.parentNode : node;
+            while (check && check !== elCur) {
+              if (check === titleEl) { inTitle = true; break; }
+              check = check.parentNode;
+            }
+            if (!inTitle) {
+              targetRanges.push(_buildAdmonitionBodyRange(elCur));
+            }
+          }
+          targetRanges.push(_buildTargetRange(elCur));
+        }
+        elCur = elCur.parentNode;
+      }
+
+      var topChild = (node && node.nodeType === 3) ? node.parentNode : node;
+      while (topChild && topChild !== ea && topChild.parentNode !== ea) {
+        topChild = topChild.parentNode;
+      }
+      if (topChild && topChild.parentNode === ea) {
+        var siblings = ea.childNodes;
+        var topIdx = -1;
+        for (var ti = 0; ti < siblings.length; ti++) {
+          if (siblings[ti] === topChild) { topIdx = ti; break; }
+        }
+        if (topIdx >= 0) {
+          if (topChild.nodeType === 1 && _HEADING_RE.test(topChild.nodeName)) {
+            var ownLevel = parseInt(topChild.nodeName.charAt(1));
+            var ownEnd = siblings.length - 1;
+            for (var oi = topIdx + 1; oi < siblings.length; oi++) {
+              var os = siblings[oi];
+              if (os.nodeType === 1 && _HEADING_RE.test(os.nodeName) && parseInt(os.nodeName.charAt(1)) <= ownLevel) {
+                ownEnd = oi - 1;
+                break;
+              }
+            }
+            if (ownEnd >= topIdx + 1) {
+              targetRanges.push(_buildHeadingSectionRange(siblings, topIdx, ownEnd));
+            }
+          }
+
+          var curLevel = (topChild.nodeType === 1 && _HEADING_RE.test(topChild.nodeName))
+            ? parseInt(topChild.nodeName.charAt(1))
+            : 7;
+
+          for (var hi = topIdx - 1; hi >= 0; hi--) {
+            var sib = siblings[hi];
+            if (sib.nodeType !== 1 || !_HEADING_RE.test(sib.nodeName)) continue;
+            var hLevel = parseInt(sib.nodeName.charAt(1));
+            if (hLevel >= curLevel) continue;
+            var secStart = hi + 1;
+            var secEnd = siblings.length - 1;
+            for (var si = hi + 1; si < siblings.length; si++) {
+              var ss = siblings[si];
+              if (ss.nodeType === 1 && _HEADING_RE.test(ss.nodeName) && parseInt(ss.nodeName.charAt(1)) <= hLevel) {
+                secEnd = si - 1;
+                break;
+              }
+            }
+            if (secStart <= secEnd) {
+              targetRanges.push(_buildHeadingSectionRange(siblings, hi, secEnd));
+            }
+            curLevel = hLevel;
+          }
+        }
+      }
+
+      targetRanges.push(_buildTargetRange(ea));
+      return targetRanges;
+    }
+
     (function () {
       var ea = wysiwygEditor.editableArea;
       if (!ea) return;
-
-        var isCodeUINode = _isCodeUINode;
-        var buildTargetRange = _buildTargetRange;
-        var buildAdmonitionBodyRange = _buildAdmonitionBodyRange;
-        var selectionCoversRange = _selectionCoversRange;
-
-        function isSelectableTarget(node) {
-          if (node === ea) return true;
-          if (node.nodeType !== 1) return false;
-          var name = node.nodeName;
-          var cl = node.classList;
-          if (name === 'CODE' && !node.closest('pre')) return true;
-          if (cl && (cl.contains('md-code-title') || cl.contains('md-code-lang'))) return true;
-          if (name === 'PRE') return true;
-          if (cl && cl.contains('md-code-block')) return true;
-          if (cl && cl.contains('admonition')) return true;
-          if (/^(P|H[1-6]|LI|TD|TH)$/.test(name)) return true;
-          if (/^(UL|OL|TABLE|BLOCKQUOTE)$/.test(name)) return true;
-          return false;
-        }
-
-        var HEADING_RE = /^H[1-6]$/;
-
-        function buildHeadingSectionRange(siblings, startIdx, endIdx) {
-          var range = document.createRange();
-          range.setStartBefore(siblings[startIdx]);
-          range.setEndAfter(siblings[endIdx]);
-          return range;
-        }
 
         _ekh.progressiveSelectAll = function (e) {
           if (!(e.key === 'a' && (e.metaKey || e.ctrlKey))) return;
@@ -25583,128 +25701,10 @@
           var sel = window.getSelection();
           if (!sel || !sel.rangeCount) return;
 
-          var targetRanges = [];
-          var node = sel.anchorNode;
-          var r = sel.rangeCount ? sel.getRangeAt(0) : null;
-
-          if (node === ea && r) {
-            if (r.startContainer === ea) {
-              for (var ri = r.startOffset; ri < ea.childNodes.length; ri++) {
-                if (ea.childNodes[ri].nodeType === 1) { node = ea.childNodes[ri]; break; }
-              }
-            } else {
-              node = r.startContainer;
-            }
-          } else if (node && node.nodeType === 3 && r && /^\s*$/.test(node.textContent)) {
-            var sc = r.startContainer;
-            if (sc === ea) {
-              for (var ri = r.startOffset; ri < ea.childNodes.length; ri++) {
-                if (ea.childNodes[ri].nodeType === 1) { node = ea.childNodes[ri]; break; }
-              }
-              if (!node || node.nodeType !== 1) {
-                for (var ri = r.startOffset - 1; ri >= 0; ri--) {
-                  if (ea.childNodes[ri].nodeType === 1) { node = ea.childNodes[ri]; break; }
-                }
-              }
-            } else if (sc && sc.nodeType === 3) {
-              node = sc.parentNode;
-              if (node === ea) {
-                var idx = -1;
-                for (var i = 0; i < ea.childNodes.length; i++) {
-                  if (ea.childNodes[i] === sc) { idx = i; break; }
-                }
-                if (idx >= 0) {
-                  for (var ri = idx + 1; ri < ea.childNodes.length; ri++) {
-                    if (ea.childNodes[ri].nodeType === 1) { node = ea.childNodes[ri]; break; }
-                  }
-                  if (!node || node.nodeType !== 1) {
-                    for (var ri = idx - 1; ri >= 0; ri--) {
-                      if (ea.childNodes[ri].nodeType === 1) { node = ea.childNodes[ri]; break; }
-                    }
-                  }
-                }
-              }
-            } else if (sc && sc.nodeType === 1) {
-              node = sc;
-            }
-          }
-
-          var elCur = (node && node.nodeType === 3) ? node.parentNode : node;
-          while (elCur && elCur !== ea) {
-            if (isSelectableTarget(elCur)) {
-              if (elCur.classList && elCur.classList.contains('admonition')) {
-                var inTitle = false;
-                var titleEl = elCur.querySelector('.admonition-title');
-                var check = (node && node.nodeType === 3) ? node.parentNode : node;
-                while (check && check !== elCur) {
-                  if (check === titleEl) { inTitle = true; break; }
-                  check = check.parentNode;
-                }
-                if (!inTitle) {
-                  targetRanges.push(buildAdmonitionBodyRange(elCur));
-                }
-              }
-              targetRanges.push(buildTargetRange(elCur));
-            }
-            elCur = elCur.parentNode;
-          }
-
-          var topChild = (node && node.nodeType === 3) ? node.parentNode : node;
-          while (topChild && topChild !== ea && topChild.parentNode !== ea) {
-            topChild = topChild.parentNode;
-          }
-          if (topChild && topChild.parentNode === ea) {
-            var siblings = ea.childNodes;
-            var topIdx = -1;
-            for (var ti = 0; ti < siblings.length; ti++) {
-              if (siblings[ti] === topChild) { topIdx = ti; break; }
-            }
-            if (topIdx >= 0) {
-              if (topChild.nodeType === 1 && HEADING_RE.test(topChild.nodeName)) {
-                var ownLevel = parseInt(topChild.nodeName.charAt(1));
-                var ownEnd = siblings.length - 1;
-                for (var oi = topIdx + 1; oi < siblings.length; oi++) {
-                  var os = siblings[oi];
-                  if (os.nodeType === 1 && HEADING_RE.test(os.nodeName) && parseInt(os.nodeName.charAt(1)) <= ownLevel) {
-                    ownEnd = oi - 1;
-                    break;
-                  }
-                }
-                if (ownEnd >= topIdx + 1) {
-                  targetRanges.push(buildHeadingSectionRange(siblings, topIdx, ownEnd));
-                }
-              }
-
-              var curLevel = (topChild.nodeType === 1 && HEADING_RE.test(topChild.nodeName))
-                ? parseInt(topChild.nodeName.charAt(1))
-                : 7;
-
-              for (var hi = topIdx - 1; hi >= 0; hi--) {
-                var sib = siblings[hi];
-                if (sib.nodeType !== 1 || !HEADING_RE.test(sib.nodeName)) continue;
-                var hLevel = parseInt(sib.nodeName.charAt(1));
-                if (hLevel >= curLevel) continue;
-                var secStart = hi + 1;
-                var secEnd = siblings.length - 1;
-                for (var si = hi + 1; si < siblings.length; si++) {
-                  var ss = siblings[si];
-                  if (ss.nodeType === 1 && HEADING_RE.test(ss.nodeName) && parseInt(ss.nodeName.charAt(1)) <= hLevel) {
-                    secEnd = si - 1;
-                    break;
-                  }
-                }
-                if (secStart <= secEnd) {
-                  targetRanges.push(buildHeadingSectionRange(siblings, hi, secEnd));
-                }
-                curLevel = hLevel;
-              }
-            }
-          }
-
-          targetRanges.push(buildTargetRange(ea));
+          var targetRanges = _buildProgressiveRanges(sel, ea);
 
           for (var i = 0; i < targetRanges.length; i++) {
-            if (!selectionCoversRange(sel, targetRanges[i])) {
+            if (!_selectionCoversRange(sel, targetRanges[i])) {
               e.preventDefault();
               sel.removeAllRanges();
               sel.addRange(targetRanges[i]);
@@ -26035,6 +26035,23 @@
 
         var sel = window.getSelection();
         var block = findSelectedBlock(sel);
+        if (!block && sel && !sel.isCollapsed) {
+          var ranges = _buildProgressiveRanges(sel, ea);
+          var cur = sel.rangeCount ? sel.getRangeAt(0) : null;
+          if (cur) {
+            for (var pi = 0; pi < ranges.length; pi++) {
+              try {
+                if (ranges[pi].compareBoundaryPoints(Range.START_TO_START, cur) <= 0 &&
+                    ranges[pi].compareBoundaryPoints(Range.END_TO_END, cur) >= 0) {
+                  sel.removeAllRanges();
+                  sel.addRange(ranges[pi]);
+                  block = findSelectedBlock(sel);
+                  if (block) break;
+                }
+              } catch (ex) { /* different document roots */ }
+            }
+          }
+        }
         if (!block) return;
 
         e.preventDefault();
@@ -26148,6 +26165,23 @@
 
         var sel = window.getSelection();
         var block = findSelectedBlock(sel);
+        if (!block && sel && !sel.isCollapsed) {
+          var ranges = _buildProgressiveRanges(sel, ea);
+          var cur = sel.rangeCount ? sel.getRangeAt(0) : null;
+          if (cur) {
+            for (var pi = 0; pi < ranges.length; pi++) {
+              try {
+                if (ranges[pi].compareBoundaryPoints(Range.START_TO_START, cur) <= 0 &&
+                    ranges[pi].compareBoundaryPoints(Range.END_TO_END, cur) >= 0) {
+                  sel.removeAllRanges();
+                  sel.addRange(ranges[pi]);
+                  block = findSelectedBlock(sel);
+                  if (block) break;
+                }
+              } catch (ex) { /* different document roots */ }
+            }
+          }
+        }
         if (!block) return;
 
         e.preventDefault();

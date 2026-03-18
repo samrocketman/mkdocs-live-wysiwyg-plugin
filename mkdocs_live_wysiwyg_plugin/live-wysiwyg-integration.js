@@ -18823,6 +18823,7 @@
       '}' +
       '.live-wysiwyg-focus-drawer-toolbar-wrap{' +
         'padding:4px 16px 8px;display:flex;justify-content:center;' +
+        'overflow:hidden;' +
       '}' +
       '.live-wysiwyg-focus-drawer-toolbar-wrap.focus-markdown-mode{' +
         'display:none;' +
@@ -18926,6 +18927,13 @@
       '}' +
       '.focus-mode-markdown .live-wysiwyg-focus-content{' +
         'padding-top:0;margin-top:0;margin-bottom:0;' +
+        'display:flex;flex-direction:column;' +
+      '}' +
+      '.focus-mode-markdown .live-wysiwyg-focus-content .md-wysiwyg-editor-wrapper{' +
+        'flex:1;display:flex;flex-direction:column;' +
+      '}' +
+      '.focus-mode-markdown .live-wysiwyg-focus-content .md-editor-content-area{' +
+        'flex:1;' +
       '}' +
       '.focus-mode-markdown .live-wysiwyg-focus-content .md-markdown-editor-container{' +
         'height:auto!important;flex:1 1 0!important;min-height:0;' +
@@ -20018,18 +20026,53 @@
 
     var _focusTocList = null;
 
+    function _slideToolbarWrap(wrap, show, cb) {
+      if (!wrap) { if (cb) cb(); return; }
+      if (wrap._slideAnim) { wrap._slideAnim.cancel(); wrap._slideAnim = null; }
+      if (show) {
+        wrap.classList.remove('focus-markdown-mode');
+        wrap.style.display = 'flex';
+        var h = wrap.scrollHeight;
+        var anim = wrap.animate(
+          [{ maxHeight: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0 },
+           { maxHeight: h + 'px', paddingTop: '4px', paddingBottom: '8px', opacity: 1 }],
+          { duration: 150, easing: 'ease-in-out', fill: 'forwards' }
+        );
+        wrap._slideAnim = anim;
+        anim.onfinish = function () {
+          wrap._slideAnim = null;
+          wrap.style.removeProperty('display');
+          anim.cancel();
+          if (cb) cb();
+        };
+      } else {
+        var h = wrap.scrollHeight;
+        var anim = wrap.animate(
+          [{ maxHeight: h + 'px', paddingTop: '4px', paddingBottom: '8px', opacity: 1 },
+           { maxHeight: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0 }],
+          { duration: 150, easing: 'ease-in-out', fill: 'forwards' }
+        );
+        wrap._slideAnim = anim;
+        anim.onfinish = function () {
+          wrap._slideAnim = null;
+          wrap.classList.add('focus-markdown-mode');
+          anim.cancel();
+          if (cb) cb();
+        };
+      }
+    }
+
     function syncModeToggle(mode) {
       if (mode === 'wysiwyg') {
         wysBtn.classList.add('active');
         mdBtn.classList.remove('active');
-        if (toolbarWrap) toolbarWrap.classList.remove('focus-markdown-mode');
         overlay.classList.remove('focus-mode-markdown');
       } else {
         mdBtn.classList.add('active');
         wysBtn.classList.remove('active');
-        if (toolbarWrap) toolbarWrap.classList.add('focus-markdown-mode');
         overlay.classList.add('focus-mode-markdown');
       }
+      _updateToolbarHeight(overlay, drawer);
       if (_focusTocList && wysiwygEditor) {
         buildFocusToc(wysiwygEditor.editableArea, _focusTocList);
       }
@@ -20073,6 +20116,9 @@
 
     wysBtn.addEventListener('click', function () {
       if (wysiwygEditor && wysiwygEditor.currentMode !== 'wysiwyg') {
+        _slideToolbarWrap(toolbarWrap, true, function () {
+          _updateToolbarHeight(overlay, drawer);
+        });
         wysiwygEditor.switchToMode('wysiwyg');
         syncModeToggle('wysiwyg');
         requestAnimationFrame(function () {
@@ -20082,6 +20128,9 @@
     });
     mdBtn.addEventListener('click', function () {
       if (wysiwygEditor && wysiwygEditor.currentMode !== 'markdown') {
+        _slideToolbarWrap(toolbarWrap, false, function () {
+          _updateToolbarHeight(overlay, drawer);
+        });
         wysiwygEditor.switchToMode('markdown');
         syncModeToggle('markdown');
         requestAnimationFrame(function () {
@@ -21453,9 +21502,22 @@
       textarea.value = markdown;
       var parsed = parseFrontmatter(markdown);
       wysiwygEditor._liveWysiwygFrontmatter = parsed.frontmatter;
+      var bodyForPreprocess = extractRefDefsFromCommentBlocks(parsed.body);
+      wysiwygEditor._liveWysiwygLinkData = preprocessMarkdownLinks(bodyForPreprocess);
+      wysiwygEditor._liveWysiwygListMarkerData = preprocessListMarkers(bodyForPreprocess);
+      wysiwygEditor._liveWysiwygTableSepData = preprocessTableSeparators(bodyForPreprocess);
+      wysiwygEditor._liveWysiwygCodeBlockData = preprocessCodeBlocks(bodyForPreprocess);
+      wysiwygEditor._liveWysiwygHrData = preprocessHorizontalRules(bodyForPreprocess);
+      wysiwygEditor._liveWysiwygInlineCodeData = preprocessInlineCode(bodyForPreprocess);
       if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor.editableArea) {
         var html = wysiwygEditor._markdownToHtml(parsed.body);
         wysiwygEditor.editableArea.innerHTML = html;
+        populateRawHtmlBlocks(wysiwygEditor.editableArea);
+        enhanceCodeBlocks(wysiwygEditor.editableArea);
+        enhanceBasicPreBlocks(wysiwygEditor.editableArea);
+        enhanceChecklists(wysiwygEditor.editableArea);
+        enhanceAdmonitions(wysiwygEditor.editableArea);
+        enhanceImages(wysiwygEditor.editableArea);
       } else if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
         wysiwygEditor.markdownArea.value = markdown;
         if (wysiwygEditor._updateMarkdownLineNumbers) wysiwygEditor._updateMarkdownLineNumbers();

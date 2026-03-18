@@ -134,7 +134,7 @@ This prevents storing diffs that would produce corrupted content on undo/redo re
 1. If `_historyCurrentId` is the root node, do nothing
 2. Flush any pending capture (so current typing is saved as a node first)
 3. Get current node's diff, reverse-apply to reconstruct parent's markdown
-4. Set editor content via `_loadContent()` (works in whichever mode is active)
+4. Set editor content via `_historyApplyContent()` (works in whichever mode is active). This refreshes all preprocess data stores and runs DOM enhancers per the [Markdown Awareness](DESIGN-markdown-awareness.md) contract.
 5. Restore cursor from parent node's stored cursor
 6. Set `_historyCurrentId = parentId`, update `_historyLastMd` cache
 
@@ -225,6 +225,16 @@ Content undo and nav snapshot undo are completely independent:
 | **Survives nav edit** | Yes (JS array in memory) | N/A (is the nav edit system) |
 
 They never conflict: dispatch is determined solely by whether the active element is a content editor (`TEXTAREA`, `INPUT`, or `contentEditable`). Content focus always wins, regardless of `_navEditMode` state.
+
+## Relationship to Markdown Awareness
+
+`_historyApplyContent` must fulfill the [Markdown Awareness](DESIGN-markdown-awareness.md) content-loading contract. After restoring content:
+
+1. **Preprocess stores are refreshed** from the restored markdown (`extractRefDefsFromCommentBlocks` then all 6 explicit preprocessors). This ensures subsequent `getValue()` calls use postprocessors that match the current content, preserving advanced code block fences, list markers, and other formatting.
+
+2. **DOM enhancers run** in WYSIWYG mode (`populateRawHtmlBlocks`, `enhanceCodeBlocks`, `enhanceBasicPreBlocks`, `enhanceChecklists`, `enhanceAdmonitions`, `enhanceImages`). This ensures code blocks have their `.md-code-block` wrappers, title bars, and line number gutters after undo/redo — matching the same enhanced DOM that `setValue` and `switchToMode` produce.
+
+The double render check (`_doubleRenderCheck`) is the corruption guard that prevents the Markdown Awareness round-trip from storing corrupted diffs. See [DESIGN-markdown-awareness.md](DESIGN-markdown-awareness.md) for the full contract.
 
 ## Rules
 

@@ -18,6 +18,8 @@ Context-aware Ctrl+A / Cmd+A that expands the selection through a hierarchy from
 
 7. **Only WYSIWYG mode.** Progressive select-all and cut/copy auto-expansion only apply in WYSIWYG mode (`wysiwygEditor.currentMode === 'wysiwyg'`). Markdown mode uses native textarea selection.
 
+8. **Depends on Markdown Awareness DOM enhancement.** `_isSelectableTarget` recognizes enhanced wrapper elements (`.md-code-block`, `.admonition`, etc.) created by the DOM enhancer functions. All content-loading paths must run enhancers so that the selection hierarchy works correctly after undo/redo or content reload. See `markdown-awareness.mdc`.
+
 ## Key Functions
 
 - `_buildProgressiveRanges(sel, ea)` — builds ordered target ranges array

@@ -1,0 +1,51 @@
+---
+description: Preprocess/postprocess round-trip and DOM enhancement contract for markdown fidelity
+globs:
+alwaysApply: true
+---
+# Markdown Awareness
+
+The Markdown Awareness subsystem preserves markdown fidelity through the lossy HTML round-trip and ensures all content-loading paths produce a fully enhanced, structurally correct DOM. It has two pillars: the 7 preprocess/postprocess pairs that capture and restore markdown-specific formatting, and the 6 DOM enhancer functions that add interactive UI to raw elements.
+
+## Rules
+
+1. **Every content-loading code path must refresh preprocess data and run DOM enhancers.** If a function sets `editableArea.innerHTML` from markdown, it must update all 7 `_liveWysiwyg*Data` stores and call all 6 enhance functions. Partial loading (setting innerHTML without preprocessing or enhancing) is a bug. Current content-loading paths: `setValue`, `switchToMode`, `_historyApplyContent`.
+
+2. **Preprocess stores must match the current content.** The stores are populated from markdown *before* HTML conversion and consumed by postprocessors *after* HTML-to-markdown conversion. Stale stores cause content-matching failures in postprocessors, which can silently lose formatting (e.g., advanced code block fences degrading to basic fences).
+
+3. **DOM enhancers must run after every `innerHTML` assignment in WYSIWYG mode.** Without enhancement, code blocks lack `.md-code-block` wrappers, checklists lack interactive checkboxes, admonitions lack settings buttons, and images lack resize handles. This degrades both UX and the `_htmlToMarkdown` output (which reads title from `.md-code-title` elements).
+
+4. **`extractRefDefsFromCommentBlocks` must run before preprocessing.** Reference definitions inside HTML comment blocks must be extracted before `preprocessMarkdownLinks` can discover them.
+
+5. **`_liveWysiwygRawHtmlData` is updated inside `_markdownToHtml` automatically.** Unlike the other 6 stores, raw HTML data is populated by the `patchMarkdownToHtmlForRawHtml` wrapper. Code paths that call `_markdownToHtml` get raw HTML data for free. The other 6 stores must be refreshed explicitly.
+
+6. **Progressive Select All depends on enhanced DOM.** `_isSelectableTarget` recognizes `.md-code-block`, `.admonition`, and other enhanced wrappers. If enhancement doesn't run, the selection hierarchy degrades to raw elements and the cut/copy auto-expansion chain can break.
+
+7. **New preprocess/postprocess pairs must be added to all content-loading paths.** If a new pair is introduced, it must be added to `setValue`, `switchToMode`, `_historyApplyContent`, and `getValue`.
+
+## Preprocess/Postprocess Pairs
+
+| Store | Preprocessor | Postprocessor |
+|-------|-------------|---------------|
+| `_liveWysiwygCodeBlockData` | `preprocessCodeBlocks` | `postprocessCodeBlocks` |
+| `_liveWysiwygLinkData` | `preprocessMarkdownLinks` | `postprocessMarkdownLinks` |
+| `_liveWysiwygListMarkerData` | `preprocessListMarkers` | `postprocessListMarkers` |
+| `_liveWysiwygTableSepData` | `preprocessTableSeparators` | `postprocessTableSeparators` |
+| `_liveWysiwygHrData` | `preprocessHorizontalRules` | `postprocessHorizontalRules` |
+| `_liveWysiwygInlineCodeData` | `preprocessInlineCode` | `postprocessInlineCode` |
+| `_liveWysiwygRawHtmlData` | `preprocessRawHtml` | `postprocessRawHtml` |
+
+## DOM Enhancers
+
+| Function | What it adds |
+|----------|-------------|
+| `populateRawHtmlBlocks` | Restores raw HTML content from placeholders |
+| `enhanceCodeBlocks` | `.md-code-block` wrapper, title bar, line numbers, copy button, language dropdown, settings |
+| `enhanceBasicPreBlocks` | Language button on plain `<pre>` without `data-*` attributes |
+| `enhanceChecklists` | Interactive checkbox inputs on list items |
+| `enhanceAdmonitions` | Settings button, collapsible toggle |
+| `enhanceImages` | Resize handles, gear dropdown |
+
+## Design Document
+
+See `docs/design/ui/DESIGN-markdown-awareness.md`.

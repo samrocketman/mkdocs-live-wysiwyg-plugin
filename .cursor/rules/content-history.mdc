@@ -31,6 +31,8 @@ The Content History subsystem provides DAG-based undo/redo for document content.
 
 11. **Content undo is independent of nav snapshot undo.** Dispatch is determined by whether the active element has content focus. Content focus always wins.
 
+12. **`_historyApplyContent` must fulfill the Markdown Awareness contract.** After restoring content, refresh all 7 preprocess stores and run all 6 DOM enhancers. Without this, advanced code blocks degrade to basic fences and enhanced UI elements (title bars, line numbers, checkboxes) are missing after undo/redo. See `markdown-awareness.mdc`.
+
 ## Key Functions
 
 - `_flushHistoryCapture`, `_scheduleHistoryCapture` — capture timing

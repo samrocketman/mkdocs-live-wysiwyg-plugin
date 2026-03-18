@@ -87,8 +87,8 @@ Self-executing IIFE that:
 | Command | Issue | Fix |
 |---|---|---|
 | `formatBlock` | Firefox requires `<H1>` not `H1` | Auto-wrap value in angle brackets when `engine === 'gecko'` |
-| `bold` | Firefox may produce `<b>` instead of `<strong>` | Post-exec: walk editable ancestor and replace `<b>` with `<strong>` |
-| `italic` | Firefox may produce `<i>` instead of `<em>` | Post-exec: walk editable ancestor and replace `<i>` with `<em>` |
+| `bold` | Firefox may produce `<b>` instead of `<strong>` | Post-exec: walk editable ancestor and replace `<b>` with `<strong>` (with selection save/restore) |
+| `italic` | Firefox may produce `<i>` instead of `<em>` | Post-exec: walk editable ancestor and replace `<i>` with `<em>` (with selection save/restore) |
 
 ### `queryCommandState` Normalization (Gecko)
 
@@ -116,6 +116,14 @@ Cmd+B (bold) and Cmd+I (italic) previously relied on the browser's native `conte
 - **All browsers**: Native handling bypasses `_finalizeUpdate()` (editor state is not updated) and `_compat.exec()` (Gecko `<b>`→`<strong>` normalization does not run).
 
 **Fix**: Explicit keyboard shortcut handlers in the Tier 3 `_editorKeydownRouter` (WYSIWYG) and `_markdownKeydownRouter` (Markdown) call `e.preventDefault()` to suppress any conflicting browser shortcut, then route through `_compat.exec('bold'/'italic')` for proper cross-browser normalization. Tab/Shift+Tab were also extracted from the vendor `editor.js` into the keyboard subsystem for the same reasons.
+
+### Gecko Tag Normalization Selection Loss
+
+When `_normalizeTagName` replaces `<b>` with `<strong>` (or `<i>` with `<em>`) after a Gecko `execCommand`, the function moves child nodes from the old element to a newly created replacement element via `appendChild` before inserting it into the DOM with `replaceChild`. During the `appendChild` phase the selected text nodes are temporarily in a detached subtree, which causes Firefox to clear the browser Selection.
+
+**Fix**: `_normalizeTagName` saves the Selection Range data (`startContainer`, `startOffset`, `endContainer`, `endOffset`) before the replacement loop and restores it after. Since `appendChild` moves (not copies) DOM node objects, the saved node references remain valid — they are the same JavaScript objects, now parented under the new element. The restore is wrapped in try/catch so unexpected node invalidation degrades to selection loss rather than an error.
+
+This fix is required by the Cursor & Selection Preservation cardinal rule (`cursor-selection-preservation.mdc`). The Keyboard subsystem (`keyboard.mdc`, `DESIGN-centralized-keyboard.md`) relies on `_compat.exec()` returning with the selection intact for formatting shortcuts (Cmd+B, Cmd+I).
 
 ### Clipboard API Differences
 
@@ -170,8 +178,9 @@ Three event names (`fullscreenchange`, `webkitfullscreenchange`, `mozfullscreenc
 ## Cross-References
 
 - `browser-compatibility.mdc` — Rule file with coding standards for using the compat layer
+- `cursor-selection-preservation.mdc` — Cardinal rule: compat layer DOM operations must preserve the browser Selection
 - `upstream-websocket-wrapper.mdc` — WebSocket redirect suppression
-- `DESIGN-centralized-keyboard.md` — Keyboard routing architecture (Tier 1/2/3)
+- `DESIGN-centralized-keyboard.md` — Keyboard routing architecture (Tier 1/2/3); selection preservation contract for formatting shortcuts
 - `DESIGN-raw-html-preservation.md` — `innerHTML` comment stripping, `btoa`/`atob` workaround
 - `DESIGN-application-storage.md` — `localStorage` quota handling
 - `DESIGN-focus-mode.md` — Selection preservation across DOM reparenting

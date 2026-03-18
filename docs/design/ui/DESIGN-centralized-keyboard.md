@@ -283,7 +283,7 @@ A second capture-phase keydown handler registered on `wysiwygEditor.markdownArea
 | Ctrl+B | Bold — wraps selection in `**` via `_applyMarkdownFormatting(boldCfg)` |
 | Ctrl+I | Italic — wraps selection in `*` via `_applyMarkdownFormatting(italicCfg)` |
 
-All handlers call `_flushHistoryCapture()` before changes and `_finalizeUpdate(ma.value)` after, matching the WYSIWYG router pattern. The `_navEditMode` and `_compat.isComposing(e)` guards are checked at the top.
+All handlers call `_flushHistoryCapture()` before changes. Tab calls `_finalizeUpdate(ma.value)` after; Cmd+B and Cmd+I delegate to `_applyMarkdownFormatting()` which calls `_finalizeUpdate` internally. The `_navEditMode` and `_compat.isComposing(e)` guards are checked at the top.
 
 ### Vendor `_handleKeyDownShared` Suppression
 
@@ -294,6 +294,10 @@ proto._handleKeyDownShared = function () {};
 ```
 
 The vendor's `_onAreaKeyDown` wrapper still runs `setTimeout(() => updateToolbarFn(), 0)` on every keydown, which keeps toolbar active-state updates intact. Only the shortcut dispatch is suppressed.
+
+### Selection Preservation Contract
+
+Tier 3 formatting shortcuts (Cmd+B, Cmd+I) and editing shortcuts (Tab) that modify content must preserve the user's cursor position and text selection. The shortcuts call `_compat.exec()` which is responsible for selection-safe DOM operations — including Gecko tag normalization that replaces `<b>` with `<strong>` and `<i>` with `<em>` (see `DESIGN-browser-compatibility.md`). After `_compat.exec()` returns and `_finalizeUpdate()` completes, the selection must remain as it was before the shortcut (covering the same text, now formatted). See `cursor-selection-preservation.mdc` for the full verification checklist.
 
 ### Dataset Guard
 

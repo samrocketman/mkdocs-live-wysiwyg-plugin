@@ -74,3 +74,7 @@ The "Remain in Focus Mode on Save" checkbox uses the same cookie mechanism: curs
 ## Layout Subsystem Dependency
 
 Scroll position save/restore is part of cursor state. The Layout subsystem (`layout.mdc`, `DESIGN-layout.md`) governs which scroll container is active in each mode. Cursor preservation must target the correct scroll container: `editableArea` in normal mode, `.live-wysiwyg-focus-main` in focus mode.
+
+## Keyboard Subsystem Dependency
+
+Keyboard shortcuts that modify content (Cmd+B, Cmd+I, Tab indent, etc.) must preserve cursor position and text selection. The Keyboard subsystem (`keyboard.mdc`, `DESIGN-centralized-keyboard.md`) dispatches these shortcuts; the Browser Compatibility layer (`browser-compatibility.mdc`, `browser-compat.js`) normalizes the underlying `execCommand` calls and is responsible for selection preservation through any DOM normalization steps (e.g., Gecko tag renaming). If a new formatting shortcut is added to the keyboard subsystem, it must be verified against the Cursor/Selection Preservation verification checklist.

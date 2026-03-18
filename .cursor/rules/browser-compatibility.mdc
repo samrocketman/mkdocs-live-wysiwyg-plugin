@@ -35,6 +35,8 @@ The `browser-compat.js` file is the single authority for all browser-specific de
 
 13. **`vendor/editor.js` must not be modified.** The global `document.execCommand` and `document.queryCommandState` patches in `browser-compat.js` intercept all calls from the vendor file transparently. Any vendor-level normalization must be implemented in the compat layer's global patches.
 
+14. **Compat layer DOM operations must preserve the browser Selection.** Any function in `browser-compat.js` that modifies live DOM nodes (e.g., `_normalizeTagName` replacing `<b>` with `<strong>`) must save the Selection Range before modification and restore it after. This is required by the Cursor/Selection Preservation cardinal rule (`cursor-selection-preservation.mdc`). The Keyboard subsystem (`keyboard.mdc`) relies on `_compat.exec()` to return with the selection intact so that formatting shortcuts do not lose the user's selection.
+
 ## Design Document
 
 See `docs/design/ui/DESIGN-browser-compatibility.md`.

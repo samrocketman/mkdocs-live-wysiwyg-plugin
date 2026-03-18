@@ -25681,7 +25681,6 @@
               if (wysiwygEditor.options.buttons[bi].id === 'bold') { boldCfg = wysiwygEditor.options.buttons[bi]; break; }
             }
             if (boldCfg) wysiwygEditor._applyMarkdownFormatting(boldCfg);
-            wysiwygEditor._finalizeUpdate(ma.value);
           } else if (key === 'i' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
             _flushHistoryCapture();
@@ -25690,7 +25689,6 @@
               if (wysiwygEditor.options.buttons[ii].id === 'italic') { italicCfg = wysiwygEditor.options.buttons[ii]; break; }
             }
             if (italicCfg) wysiwygEditor._applyMarkdownFormatting(italicCfg);
-            wysiwygEditor._finalizeUpdate(ma.value);
           }
         }, true);
       }

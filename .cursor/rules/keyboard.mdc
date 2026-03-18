@@ -29,6 +29,8 @@ The Keyboard subsystem routes all keyboard handling through three centralized ro
 
 10. **Single dataset guard `liveWysiwygKeyboardRouterAttached` replaces individual flags.** One flag indicates the editor keyboard router is attached.
 
+11. **Formatting and editing shortcuts must preserve cursor position and text selection.** Shortcuts that modify content (bold, italic, indent, etc.) must not collapse or clear the user's selection. The Browser Compatibility layer (`browser-compat.js`, `browser-compatibility.mdc`) is responsible for ensuring `_compat.exec()` preserves selection across all engines. See `cursor-selection-preservation.mdc` for the cardinal rule and verification checklist.
+
 ## Key Functions
 
 - `_attachDialogKeyboard` — Tier 1, per-dialog attachment

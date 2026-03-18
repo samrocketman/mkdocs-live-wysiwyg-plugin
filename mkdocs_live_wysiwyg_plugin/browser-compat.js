@@ -52,6 +52,18 @@
     var els = parent.getElementsByTagName(oldTag);
     var arr = [];
     for (var i = 0; i < els.length; i++) arr.push(els[i]);
+    if (arr.length === 0) return;
+
+    var sel = window.getSelection();
+    var saved = null;
+    if (sel && sel.rangeCount > 0) {
+      var r = sel.getRangeAt(0);
+      saved = {
+        sc: r.startContainer, so: r.startOffset,
+        ec: r.endContainer, eo: r.endOffset
+      };
+    }
+
     for (var j = 0; j < arr.length; j++) {
       var el = arr[j];
       var replacement = document.createElement(newTag);
@@ -60,6 +72,16 @@
         replacement.setAttribute(el.attributes[k].name, el.attributes[k].value);
       }
       el.parentNode.replaceChild(replacement, el);
+    }
+
+    if (saved) {
+      try {
+        var nr = document.createRange();
+        nr.setStart(saved.sc, saved.so);
+        nr.setEnd(saved.ec, saved.eo);
+        sel.removeAllRanges();
+        sel.addRange(nr);
+      } catch (ex) { /* nodes invalidated — accept selection loss */ }
     }
   }
 

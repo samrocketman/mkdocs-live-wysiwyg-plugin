@@ -565,10 +565,7 @@ if {
   if [ -z "${site_name:-}" ]; then
     site_name="${PWD##*/}"
   fi
-  if [ -n "${READONLY_MODE:-}" ]; then
-    site_name="RO ${site_name}"
-  fi
-  printf 'site_name: "%s"\ndocs_dir: docs\n' "${PWD##*/}" > mkdocs.yml
+  printf 'site_name: "%s"\ndocs_dir: docs\n' "${site_name}" > mkdocs.yml
   export MKDOCS_YML_AUTO_GENERATED=1
 fi
 if { [ ! -d docs ] || [ -n "${USE_CURRENT_DIR:-}" ]; } && {
@@ -599,6 +596,9 @@ if { [ ! -d docs ] || [ -n "${USE_CURRENT_DIR:-}" ]; } && {
   fi
   export DOCS_DIR_AUTO_GENERATED=1
   export site_name="${PWD##*/}"
+  if [ -n "${READONLY_MODE:-}" ]; then
+    site_name="READONLY ${site_name}"
+  fi
   pushd "${TMP_DIR}" > /dev/null
   if [ -x ~1/"$0" ]; then
     DOCS_DIR_AUTO_GENERATED="" ~1/"$0" || true

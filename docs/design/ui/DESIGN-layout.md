@@ -116,7 +116,8 @@ New dropdowns must follow this contract. The `z-index` must be `99999` (matching
 
 | Element | Property | Duration | Easing | Trigger |
 |---|---|---|---|---|
-| Toolbar drawer | `max-height` | `0.25s` | `ease-in-out` | Hamburger toggle |
+| Toolbar drawer | `max-height` (via `--_toolbar-h`) | `0.3s` | `ease-in-out` | Hamburger toggle |
+| Focus grid (sync) | `min-height` | `0.3s` | `ease-in-out` | Drawer open/close (via `--_panel-h`) |
 | Left sidebar (markdown mode collapse) | `transform`, `opacity`, `width`, `margin` | `0.3s` | `ease-in-out` | WYSIWYG/Markdown toggle |
 | Right sidebar / TOC (markdown mode collapse) | `transform`, `opacity`, `width`, `margin` | `0.3s` | `ease-in-out` | WYSIWYG/Markdown toggle |
 | Nav sidebar (WYSIWYG mode) | `transform`, `opacity` | `0.3s` | `ease-in-out` | Nav toggle |
@@ -128,6 +129,8 @@ New dropdowns must follow this contract. The `z-index` must be `99999` (matching
 | Transition overlay | `opacity` | JS-driven style manipulation | — | Page transitions |
 
 New animations must use existing durations and easing values where possible. Introducing new timing requires documenting it here.
+
+Toolbar drawer animation details are also referenced from [DESIGN-toolbars.md](DESIGN-toolbars.md). The Toolbar subsystem describes the hamburger toggle behavior; this document defines the animation timing. `.3s ease-in-out` is the standard duration for all slide transitions in the focus overlay.
 
 ## Scroll Container Management
 
@@ -201,6 +204,57 @@ The vendor stylesheet (`mkdocs_live_wysiwyg_plugin/vendor/editor.css`) contains 
 - Table grid selector
 
 Colors in `editor.css` are owned by the Theme subsystem. Layout owns only the structural properties (display, position, width, height, margin, padding, flex, grid, overflow, z-index).
+
+## Sidebar Spacing Contract
+
+Both sidebars (nav and TOC) use consistent vertical spacing for item links:
+
+| Property | Nav (`.live-wysiwyg-focus-sidebar-left`) | TOC (`.live-wysiwyg-focus-toc`) |
+|---|---|---|
+| `margin-top` | `.625em` | `.625em` |
+| `line-height` | `1.3` | `1.3` |
+| `font-size` | `.7rem` | `.7rem` |
+| List padding | `padding: 0 .6rem .4rem` | `padding: 0 .6rem .4rem` |
+
+Gecko-specific overrides normalize the nav sidebar (see Browser-Specific Layout Normalization below).
+
+## TOC Width Extension
+
+The TOC sidebar extends rightward beyond the grid's `max-width` to use available screen space:
+
+- `--_toc-extend: clamp(0px, (100vw - 61rem) / 2 - 2em, 10rem)` defined on `.live-wysiwyg-focus-grid`
+- TOC width: `calc(12.1rem + var(--_toc-extend, 0px))`
+- Negative right margin: `calc(-1 * var(--_toc-extend, 0px))` pulls the TOC rightward without affecting flex layout
+
+This mirrors the nav sidebar's `--_nav-extend` pattern for the left side.
+
+## Content Area Gutter
+
+`.live-wysiwyg-focus-content` uses `margin: 0 .2rem 1.2rem` to keep a minimal gap between the content and both sidebars. The `< 76.25em` responsive override uses `margin-left: 1.2rem; margin-right: 1.2rem` when sidebars are hidden.
+
+## Scroll Isolation
+
+When focus mode is active, document-level scrolling is suppressed:
+
+- `overflow: hidden` on both `document.body` and `document.documentElement` (saved/restored on enter/exit)
+- `overscroll-behavior: contain` on `.live-wysiwyg-focus-main` prevents scroll chaining
+
+See [DESIGN-modes-of-operation.md](DESIGN-modes-of-operation.md) for the mode hierarchy suppression contract.
+
+## Markdown Vertical Fill
+
+In markdown mode (`.focus-mode-markdown` class on the overlay), vertical gaps are eliminated so the textarea fills the available space:
+
+| Override | Value | Reason |
+|---|---|---|
+| `.live-wysiwyg-focus-grid` `margin-top` | `0` | Remove top gap between drawer and grid |
+| `.live-wysiwyg-focus-grid` `min-height` | `100%` | Fill entire main area |
+| `.live-wysiwyg-focus-content` `padding-top`, `margin-top`, `margin-bottom` | `0` | Remove internal spacing |
+| `.md-markdown-editor-container` `height` | `auto !important` | Override hardcoded calc |
+| `.md-markdown-editor-container` `flex` | `1 1 0 !important` | Fill remaining vertical space |
+| Sidebar `max-height` | `var(--_panel-h, calc(100vh - 2.4rem))` | Full viewport height (no grid margin subtraction) |
+
+WYSIWYG mode layout is unchanged — all overrides are scoped via `.focus-mode-markdown`.
 
 ## Browser-Specific Layout Normalization
 

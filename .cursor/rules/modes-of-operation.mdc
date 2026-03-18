@@ -23,6 +23,16 @@ Every mode transition that affects the editing surface must preserve cursor posi
 - **Readonly to Unfocused**: `storeSelectionIfReadMode` captures; `readonly_to_edit_mode_text_selection` applies.
 - **Unfocused to Focus / Focus to Unfocused**: `_captureEditorSelection` before reparenting; `_restoreEditorSelection` after.
 
+## Mode Hierarchy
+
+4. **Modes are mutually exclusive.** Only one mode is active at a time. When a mode activates, all lower-layer modes are suppressed. There is no concurrent mode execution.
+
+5. **Mode hierarchy is a layered stack.** Layer 0 = Readonly, Layer 1 = Unfocused, Layer 2 = Focus. Higher layers override lower layers. Future modes must declare their layer position relative to existing layers.
+
+6. **Lower-layer suppression contract.** When Layer N is active, all layers < N must have: scroll disabled (`overflow: hidden` on body/documentElement), keyboard shortcuts suppressed (lower-layer handlers early-return), permanent event handlers guarded (`isFocusModeActive` or equivalent), and UI non-interactive (behind the higher layer's z-index).
+
+7. **All permanent document-level handlers must check the active mode.** Handlers registered on `document` or `window` that are specific to a particular mode must include an early-return guard when that mode is not active. Use `isFocusModeActive`, `isInReadMode()`, or equivalent. This prevents event leaks from lower layers into higher layers.
+
 ## Future Modes
 
 Theme Mode and Mermaid Mode (documented in `DESIGN-modes-of-operation.md`) must follow the same lifecycle pattern:
@@ -30,3 +40,5 @@ Theme Mode and Mermaid Mode (documented in `DESIGN-modes-of-operation.md`) must 
 1. Explicit entry and exit triggers
 2. Cursor/state preservation where applicable
 3. Cleanup on exit (overlays, listeners, injected styles)
+4. Declare layer position in the mode hierarchy
+5. Follow the suppression contract: disable lower layers on entry, resume on exit

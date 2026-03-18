@@ -365,3 +365,13 @@ Called **after** reparenting completes and the overlay/normal layout is settled.
 ## Layout Subsystem
 
 Grid dimensions, reparenting lifecycle, scroll containers, z-index stacking, sidebar widths, responsive breakpoints, and animation timing are governed by the Layout subsystem. See [DESIGN-layout.md](DESIGN-layout.md) for the authoritative contracts.
+
+## Scroll Isolation
+
+When focus mode is active, document-level scrolling is completely suppressed:
+
+- `document.body.style.overflow` and `document.documentElement.style.overflow` are both set to `'hidden'` on entry
+- Both values are saved before entry and restored on exit
+- `.live-wysiwyg-focus-main` uses `overscroll-behavior: contain` to prevent scroll chaining from the focus overlay to the underlying page
+
+This is required by the Mode Hierarchy suppression contract (see [DESIGN-modes-of-operation.md](DESIGN-modes-of-operation.md)). All scroll interactions in focus mode must target `.live-wysiwyg-focus-main`, not `document` or `window`.

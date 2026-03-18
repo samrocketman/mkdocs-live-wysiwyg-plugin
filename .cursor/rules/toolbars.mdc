@@ -17,4 +17,4 @@ alwaysApply: true
 
 5. **New buttons automatically available in focus mode.** Because the toolbar is reparented rather than duplicated, any new buttons added to the toolbar are automatically available in focus mode without additional wiring.
 
-6. **Layout contracts apply.** Toolbar reparenting order, drawer animation timing (`0.25s ease-in-out`), and flex-wrap layout are governed by `layout.mdc` and `DESIGN-layout.md`.
+6. **Layout contracts apply.** Toolbar reparenting order, drawer animation timing (`0.3s ease-in-out`), and flex-wrap layout are governed by `layout.mdc` and `DESIGN-layout.md`. The toolbar drawer's `max-height` transition uses `var(--_toolbar-h, 260px)` for the exact drawer height. The focus grid's `min-height` transitions in sync at the same duration. Layout defines the animation timing; Toolbars defines what animates.

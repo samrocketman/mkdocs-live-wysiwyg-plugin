@@ -12,7 +12,7 @@ The toolbar is the same DOM element moved between containers. On enter focus mod
 
 - **Default state**: Open (toolbar visible on first use; state persisted via `live_wysiwyg_focus_toolbar`)
 - **Toggle**: Hamburger icon button (`.live-wysiwyg-focus-drawer-toggle`) in the header left area
-- **Transition**: `max-height` with `0.25s ease-in-out` (0 when closed, 260px when open)
+- **Transition**: `max-height` with `0.3s ease-in-out` (0 when closed, `var(--_toolbar-h, 260px)` when open)
 - **State class**: `live-wysiwyg-focus-toolbar-open` on the overlay
 - **Contents**: Mode toggle, Page Management button (Material only), save button, discard button, settings gear, and the WYSIWYG toolbar
 - **Height tracking**: `_updateToolbarHeight` sets the `--_toolbar-h` CSS variable from the drawer's `scrollHeight`, which feeds into `--_panel-h` for panel height calculations
@@ -80,6 +80,16 @@ In the drawer controls, a "Page Management" button appears only when the Materia
 4. In Markdown mode, the toolbar wrap section is hidden; drawer controls remain visible
 5. Mode toggle reflects the current editor mode on entry and after each switch
 
-## Layout Subsystem
+## Three-Column Spacing Balance
 
-Toolbar reparenting order, drawer animation timing, and flex-wrap layout are governed by the Layout subsystem. See [DESIGN-layout.md](DESIGN-layout.md) for the authoritative contracts.
+The toolbar drawer sits above the three-column layout (nav sidebar, content, TOC). When the drawer opens or closes, the content area shifts vertically. The toolbar drawer animation (`.3s ease-in-out` on `max-height`) is synchronized with a matching transition on `.live-wysiwyg-focus-grid`'s `min-height` so the content slides smoothly in sync with the drawer.
+
+The `--_toolbar-h` CSS variable (set by `_updateToolbarHeight` from the drawer's `scrollHeight`) flows into `--_panel-h`, which in turn governs sidebar `max-height` and content area `min-height`. This chain ensures all three columns resize together when the drawer state changes.
+
+## Layout Subsystem Dependency
+
+Toolbar reparenting order, drawer animation timing, and flex-wrap layout are governed by the Layout subsystem. The toolbar drawer's open/close animation timing and easing are defined in the Layout subsystem's Animation and Transition Catalog. This document describes *what* animates; [DESIGN-layout.md](DESIGN-layout.md) defines *how* (duration, easing, synchronized transitions).
+
+- Drawer animation: `max-height .3s ease-in-out` (via `--_toolbar-h`)
+- Grid sync: `min-height .3s ease-in-out` on `.live-wysiwyg-focus-grid`
+- Standard focus overlay slide duration: `.3s ease-in-out`

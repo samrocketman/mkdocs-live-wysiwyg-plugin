@@ -48,7 +48,7 @@ Affected selectors:
 
 11. **All dialogs must support auto-expansion of text fields.** Use `_attachContainerExpandBehavior` or equivalent. Input fields in dropdowns must not clip or overflow — they must grow to accommodate the content.
 
-12. **Animation durations and easing are Layout contracts.** Toolbar drawer: `0.25s ease-in-out`. Sidebar collapse: `0.3s ease-in-out`. New animations must use existing durations where possible. Introducing new timing requires documenting it in `DESIGN-layout.md`.
+12. **Animation durations and easing are Layout contracts.** Toolbar drawer: `0.3s ease-in-out`. Sidebar collapse: `0.3s ease-in-out`. All focus overlay slide transitions use `0.3s ease-in-out`. New animations must use existing durations where possible. Introducing new timing requires documenting it in `DESIGN-layout.md`.
 
 13. **Scroll containers are mode-dependent.** Normal mode: `editableArea`. Focus mode: `.live-wysiwyg-focus-main`. All scroll operations must target the correct container. `scrollToCenterCursor` auto-detects focus mode. TOC active heading tracking uses `.live-wysiwyg-focus-main`, not `window` or `editableArea`.
 
@@ -61,3 +61,11 @@ Affected selectors:
 17. **Nav DOM is never modified directly by Layout.** If a layout operation requires changing nav sidebar DOM (adding/removing elements, reordering items, toggling classes that represent persistent state), it must go through the Nav Renderer subsystem contract: mutate `liveWysiwygNavData`, then call `_commitNavSnapshot()`. Layout may only *read* nav DOM for measurement (e.g., `getBoundingClientRect`, `offsetTop`) and *scroll* the nav container. See `nav-rendering-authority.mdc`.
 
 18. **Browser-specific layout normalization is governed by the Browser Compatibility subsystem.** When layout rendering differs across browser engines (e.g., Gecko handling of `visibility: collapse` on grid items, subpixel margin differences), the fix is implemented as engine-conditional CSS in the relevant `_get*CSS()` function, gated by `_compat.engine`. The Browser Compatibility subsystem (`browser-compatibility.mdc`, `browser-compat.js`) provides the engine detection. Layout owns the CSS rules; Browser Compatibility owns the detection mechanism.
+
+19. **Sidebar extension variables use `clamp()` for safe overflow.** Both `--_nav-extend` and `--_toc-extend` use `clamp(0px, (100vw - 61rem) / 2 - 2em, 10rem)` to extend sidebars beyond the grid's `max-width` without exceeding the viewport. The pattern is: wider width via `calc(base + var(--_*-extend, 0px))` and negative margin `calc(-1 * var(--_*-extend, 0px))`.
+
+20. **Focus mode scroll isolation is mandatory.** `overflow: hidden` on both `document.body` and `document.documentElement` when focus mode is active. `overscroll-behavior: contain` on `.live-wysiwyg-focus-main`. Both overflow values are saved before entry and restored on exit. See `modes-of-operation.mdc` for the suppression contract.
+
+21. **Markdown mode vertical fill is scoped via `.focus-mode-markdown`.** All overrides that eliminate vertical gaps in markdown mode (grid `margin-top: 0`, content `padding-top: 0`, markdown container `flex: 1 1 0`) are scoped to `.focus-mode-markdown` and must not affect WYSIWYG mode layout.
+
+22. **Toolbar drawer animation is governed by Layout.** The drawer's `max-height` transition (`0.3s ease-in-out`, using `var(--_toolbar-h, 260px)`) and the grid's synchronized `min-height` transition (`0.3s ease-in-out`) are Layout contracts. `0.3s ease-in-out` is the standard duration for all slide transitions in the focus overlay. See `toolbars.mdc` for what the drawer contains; this subsystem defines how it animates.

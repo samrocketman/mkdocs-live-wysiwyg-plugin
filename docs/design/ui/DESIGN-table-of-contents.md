@@ -75,6 +75,26 @@ The dead link panel auto-expands a collapsed TOC before positioning (`_ensureToc
 3. TOC is rebuilt when switching between WYSIWYG and Markdown mode
 4. TOC is non-interactive during nav edit mode
 
+## Spacing Contract
+
+TOC link spacing matches the nav sidebar for visual balance:
+
+- `.md-nav__link`: `margin-top: .625em; padding: 0 .6rem`
+- `.md-nav__list`: `padding: 0 .6rem .4rem`
+- `.live-wysiwyg-focus-toc`: `line-height: 1.3; font-size: .7rem`
+
+These values mirror the nav sidebar's `.md-nav__link` spacing. See [DESIGN-layout.md](DESIGN-layout.md) "Sidebar Spacing Contract" for the authoritative table.
+
+## Width Extension
+
+The TOC extends rightward beyond the grid's `max-width: 61rem` to use available screen real estate:
+
+- `--_toc-extend: clamp(0px, (100vw - 61rem) / 2 - 2em, 10rem)` (defined on `.live-wysiwyg-focus-grid`)
+- TOC width: `calc(12.1rem + var(--_toc-extend, 0px))`
+- Negative right margin: `calc(-1 * var(--_toc-extend, 0px))`
+
+The left edge of the TOC remains fixed next to the content area. Only the right edge extends outward. This mirrors the nav sidebar's `--_nav-extend` pattern. See [DESIGN-layout.md](DESIGN-layout.md) "TOC Width Extension".
+
 ## Layout Subsystem
 
 TOC sticky positioning, sidebar width (`12.1rem`), scroll container contract (`.live-wysiwyg-focus-main`), and the `< 60em` responsive breakpoint are governed by the Layout subsystem. See [DESIGN-layout.md](DESIGN-layout.md) for the authoritative contracts.

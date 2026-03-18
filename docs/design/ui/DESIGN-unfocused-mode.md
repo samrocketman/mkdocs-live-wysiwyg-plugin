@@ -69,3 +69,9 @@ The WYSIWYG plugin augments the controls bar with the toggle button and replaces
 ## Layout Subsystem
 
 Width alignment via negative margins, controls bar padding constraints, and dynamic style overrides are governed by the Layout subsystem. See [DESIGN-layout.md](DESIGN-layout.md) for the authoritative contracts.
+
+## Scroll Suppression During Focus Mode
+
+When focus mode is active (Layer 2 in the mode hierarchy), unfocused mode's document-level scrolling is disabled via `overflow: hidden` on both `document.body` and `document.documentElement`. Permanent document-level event handlers registered by unfocused mode (e.g., `selectionchange`, `mousedown`, `scroll` in `captureReadModeSelectionOnChange`) include `if (isFocusModeActive) return;` guards to prevent execution during focus mode.
+
+See [DESIGN-modes-of-operation.md](DESIGN-modes-of-operation.md) for the full mode hierarchy and suppression contract.

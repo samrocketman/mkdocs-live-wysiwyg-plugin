@@ -7892,6 +7892,7 @@
   var _focusTocDebounceTimer = null;
   var _focusHeadingScrollHandler = null;
   var _focusSavedBodyOverflow = '';
+  var _focusSavedDocElOverflow = '';
   var _focusSavedContentHeight = '';
   var _focusOriginalToolbarParent = null;
   var _focusMdInputHandler = null;
@@ -18608,12 +18609,12 @@
 
       '.live-wysiwyg-focus-toolbar-drawer{' +
         'max-height:0;overflow:hidden;' +
-        'transition:max-height .25s ease-in-out;' +
+        'transition:max-height .3s ease-in-out;' +
         'background-color:var(--md-default-bg-color--light,#f7f7f7);' +
         'border-bottom:1px solid transparent;flex-shrink:0;' +
       '}' +
       '.live-wysiwyg-focus-toolbar-open .live-wysiwyg-focus-toolbar-drawer{' +
-        'max-height:260px;' +
+        'max-height:var(--_toolbar-h,260px);' +
         'border-bottom-color:var(--md-default-fg-color--lightest,#ddd);' +
       '}' +
       '.live-wysiwyg-focus-drawer-controls{' +
@@ -18709,19 +18710,21 @@
       '}' +
 
       '.live-wysiwyg-focus-main{' +
-        'flex:1;overflow-y:auto;' +
+        'flex:1;overflow-y:auto;overscroll-behavior:contain;' +
       '}' +
       '.live-wysiwyg-focus-grid{' +
         'display:flex;margin-left:auto;margin-right:auto;max-width:61rem;' +
         'margin-top:1.5rem;min-height:calc(var(--_panel-h,calc(100vh - 2.4rem)) - 1.5rem);' +
+        'transition:min-height .3s ease-in-out;' +
         '--_nav-extend:clamp(0px,(100vw - 61rem) / 2 - 2em,10rem);' +
+        '--_toc-extend:clamp(0px,(100vw - 61rem) / 2 - 2em,10rem);' +
       '}' +
       '.live-wysiwyg-focus-sidebar-left{' +
         'width:calc(15.8rem + var(--_nav-extend,0px));flex-shrink:0;' +
       '}' +
       '.live-wysiwyg-focus-content{' +
         'flex-grow:1;min-width:0;' +
-        'margin:0 .8rem 1.2rem;padding-top:.6rem;' +
+        'margin:0 .2rem 1.2rem;padding-top:.6rem;' +
       '}' +
       '.live-wysiwyg-focus-content .md-wysiwyg-editor-wrapper{' +
         'border:none;border-radius:0;' +
@@ -18742,9 +18745,10 @@
       '.live-wysiwyg-focus-content .md-toolbar{display:none;}' +
 
       '.live-wysiwyg-focus-toc{' +
-        'width:12.1rem;flex-shrink:0;align-self:flex-start;' +
+        'width:calc(12.1rem + var(--_toc-extend,0px));flex-shrink:0;align-self:flex-start;' +
+        'margin-right:calc(-1 * var(--_toc-extend,0px));' +
         'position:sticky;top:0;padding:1.2rem 0;' +
-        'font-size:.7rem;overflow-y:auto;max-height:calc(var(--_panel-h,calc(100vh - 2.4rem)) - 1.5rem);' +
+        'font-size:.7rem;line-height:1.3;overflow-y:auto;max-height:calc(var(--_panel-h,calc(100vh - 2.4rem)) - 1.5rem);' +
         'scrollbar-color:var(--md-default-fg-color--lighter,#ccc) transparent;' +
         'scrollbar-width:thin;' +
         'transition:transform .3s ease-in-out,opacity .3s ease-in-out;' +
@@ -18755,11 +18759,11 @@
         'padding:.8rem .6rem .4rem;' +
       '}' +
       '.live-wysiwyg-focus-toc .md-nav__list{' +
-        'list-style:none;margin:0;padding:0;' +
+        'list-style:none;margin:0;padding:0 .6rem .4rem;' +
       '}' +
       '.live-wysiwyg-focus-toc .md-nav__item{padding:0;}' +
       '.live-wysiwyg-focus-toc .md-nav__link{' +
-        'display:block;padding:4px .6rem;' +
+        'display:block;padding:0 .6rem;margin-top:.625em;' +
         'color:var(--md-default-fg-color--light,#999);' +
         'text-decoration:none;cursor:pointer;' +
         'transition:color .15s;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
@@ -18797,6 +18801,23 @@
       '.focus-mode-markdown.live-wysiwyg-focus-toc-collapsed .live-wysiwyg-focus-toc{' +
         'width:0;margin-right:0;padding:0;' +
       '}' +
+
+      '.focus-mode-markdown .live-wysiwyg-focus-grid{' +
+        'margin-top:0;min-height:100%;' +
+      '}' +
+      '.focus-mode-markdown .live-wysiwyg-focus-content{' +
+        'padding-top:0;margin-top:0;margin-bottom:0;' +
+      '}' +
+      '.focus-mode-markdown .live-wysiwyg-focus-content .md-markdown-editor-container{' +
+        'height:auto!important;flex:1 1 0!important;min-height:0;' +
+      '}' +
+      '.focus-mode-markdown .live-wysiwyg-focus-sidebar-left{' +
+        'max-height:var(--_panel-h,calc(100vh - 2.4rem));' +
+      '}' +
+      '.focus-mode-markdown .live-wysiwyg-focus-toc{' +
+        'max-height:var(--_panel-h,calc(100vh - 2.4rem));' +
+      '}' +
+
       '@media screen and (max-width:60em){' +
         '.live-wysiwyg-focus-toc{display:none;}' +
         '.live-wysiwyg-focus-toc-toggle{display:none;}' +
@@ -19730,7 +19751,9 @@
     }
 
     _focusSavedBodyOverflow = document.body.style.overflow;
+    _focusSavedDocElOverflow = document.documentElement.style.overflow;
     document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
 
     var overlay = document.createElement('div');
     overlay.className = 'live-wysiwyg-focus-overlay';
@@ -20410,7 +20433,9 @@
     _focusHeadingScrollHandler = null;
 
     document.body.style.overflow = _focusSavedBodyOverflow;
+    document.documentElement.style.overflow = _focusSavedDocElOverflow;
     _focusSavedBodyOverflow = '';
+    _focusSavedDocElOverflow = '';
 
     var styleEl = document.getElementById(FOCUS_MODE_STYLE_ID);
     if (styleEl && styleEl.parentNode) styleEl.parentNode.removeChild(styleEl);
@@ -20675,15 +20700,20 @@
 
   function captureReadModeSelectionOnChange() {
     document.addEventListener('selectionchange', function () {
+      if (isFocusModeActive) return;
       storeSelectionIfReadMode(window.getSelection());
       updateSelectionEditPopup();
     });
     document.addEventListener('mousedown', function (e) {
+      if (isFocusModeActive) return;
       storeSelectionIfReadMode(window.getSelection());
       if (selectionEditPopup && selectionEditPopup.contains(e.target)) return;
       hideSelectionEditPopup();
     }, true);
-    document.addEventListener('scroll', hideSelectionEditPopup, true);
+    document.addEventListener('scroll', function () {
+      if (isFocusModeActive) return;
+      hideSelectionEditPopup();
+    }, true);
   }
   captureReadModeSelectionOnChange();
 

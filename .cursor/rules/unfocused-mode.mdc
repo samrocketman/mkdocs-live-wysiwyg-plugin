@@ -19,6 +19,10 @@ Editing surfaces use negative horizontal margins (`-10px`) to extend through the
 
 `ensureToggleButton` injects the WYSIWYG/textarea toggle button into the controls bar. It is called from `observeForTextarea` and when the editor activates. The button is inserted before the label's next sibling (or as first child). `removeToggleButton` removes it on destroy.
 
+## Scroll Suppression During Focus Mode
+
+When focus mode is active (Layer 2 in the mode hierarchy), unfocused mode's document-level scrolling is disabled via `overflow: hidden` on both `document.body` and `document.documentElement`. Permanent document-level event handlers from `captureReadModeSelectionOnChange` (`selectionchange`, `mousedown`, `scroll`) include `if (isFocusModeActive) return;` guards to prevent execution during focus mode. See `modes-of-operation.mdc` for the suppression contract.
+
 ## Transition to Focus Mode
 
 The user enters Focus Mode via the Focus Mode toolbar button (expand icon) or browser fullscreen. `enterFocusMode` reparents the toolbar and editor wrapper into the focus overlay. Cursor and selection are captured before reparenting and restored after.

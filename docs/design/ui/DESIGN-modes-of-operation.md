@@ -76,6 +76,53 @@ Browser fullscreen and contenteditable behavior vary across browsers. See [DESIG
 | Unfocused | Controls bar (`.live-edit-controls`) from upstream live-edit-plugin |
 | Focus | Fullscreen overlay (`.live-wysiwyg-focus-overlay`) |
 
+## Mode Hierarchy
+
+### Layered Stack Model
+
+Modes form a layered stack. Only one mode is active at a time. When a higher-layer mode activates, all lower layers are suppressed. When the higher mode exits, the lower mode resumes.
+
+```
+Layer 2:  Focus Mode        (fullscreen overlay, own scroll, own shortcuts)
+Layer 1:  Unfocused Mode    (inline editor, controls bar, page scroll)
+Layer 0:  Readonly Mode     (static HTML, page scroll, no editing)
+
+Future:
+Layer 3+: Theme Mode / Mermaid Mode (override Focus or peer with Focus)
+```
+
+### Suppression Contract
+
+When Layer N is active, all layers < N must have:
+
+| Aspect | Suppression |
+|---|---|
+| **Scroll** | No scroll containers from lower layers respond to user input. `overflow: hidden` on body/documentElement. `overscroll-behavior: contain` on the active layer's scroll container. |
+| **Keyboard shortcuts** | Lower-layer keyboard handlers must early-return or not fire. Handlers registered on `document` must guard with the active mode check. |
+| **Event handlers** | Permanent document-level handlers from lower layers must check `isFocusModeActive` (or equivalent) and return early. |
+| **UI** | Lower-layer overlays and controls are behind the higher layer's z-index. Not interactive. |
+
+### Audit Findings
+
+The following permanent document-level handlers were identified as leaking into focus mode and required guards:
+
+| Handler | Event | Target | Fix |
+|---|---|---|---|
+| Read-mode selection capture | `selectionchange` | `document` | `if (isFocusModeActive) return;` |
+| Read-mode mousedown capture | `mousedown` (capture) | `document` | `if (isFocusModeActive) return;` |
+| Selection edit popup hide | `scroll` (capture) | `document` | `if (isFocusModeActive) return;` |
+
+Already properly isolated (no changes needed): global keydown router (intentional multi-mode branching), editor/markdown keydown (on elements inside overlay), TOC scroll handler (on `.live-wysiwyg-focus-main`), fullscreen handler (has guard), popstate handler (has guard).
+
+### Future Mode Guidance
+
+New modes must:
+
+1. Declare their layer position relative to existing layers
+2. On entry: suppress all lower layers per the suppression contract
+3. On exit: resume the lower layer's functionality
+4. Follow the same lifecycle pattern (explicit triggers, cursor preservation, cleanup)
+
 ## Future Modes
 
 ### Theme Mode

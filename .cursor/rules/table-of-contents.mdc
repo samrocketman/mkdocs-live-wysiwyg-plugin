@@ -20,3 +20,7 @@ alwaysApply: true
 6. **Scroll listener uses focus-main container.** Active heading tracking uses a scroll listener on `.live-wysiwyg-focus-main`, not `editableArea` or the document. See `layout.mdc` for scroll container contracts.
 
 7. **Layout contracts apply.** TOC sticky positioning (`position:sticky; top:0`), sidebar width (`12.1rem`), and the `< 60em` responsive breakpoint that hides the TOC are governed by `layout.mdc` and `DESIGN-layout.md`.
+
+8. **TOC spacing contract.** TOC link spacing mirrors the nav sidebar: `.md-nav__link` uses `margin-top: .625em; padding: 0 .6rem`, list uses `padding: 0 .6rem .4rem`, and the TOC container uses `line-height: 1.3; font-size: .7rem`. These values must remain synchronized with the nav sidebar. See `DESIGN-layout.md` "Sidebar Spacing Contract".
+
+9. **TOC width extension.** The TOC extends rightward beyond the grid's `max-width` via `--_toc-extend: clamp(0px, (100vw - 61rem) / 2 - 2em, 10rem)`. TOC width is `calc(12.1rem + var(--_toc-extend, 0px))` with a negative right margin `calc(-1 * var(--_toc-extend, 0px))`. This mirrors the nav's `--_nav-extend` pattern. The left edge stays fixed next to the content area.

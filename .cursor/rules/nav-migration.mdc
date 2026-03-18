@@ -1,50 +1,91 @@
-# Nav-to-Weight Migration
+# Migration to mkdocs-nav-weight
 
-The WYSIWYG editor migrates sites from `mkdocs.yml` `nav` key to `mkdocs-nav-weight` frontmatter. The migration restructures the filesystem to match the nav hierarchy because `mkdocs-nav-weight` derives section grouping from directories, not from arbitrary nav key groupings.
+The WYSIWYG editor migrates sites to `mkdocs-nav-weight` frontmatter via a unified pipeline. Two scenarios are supported: nav-key migration (restructures filesystem to match nav hierarchy) and alphabetical migration (preserves existing filesystem, adds weights and titles).
 
-## Seven Phases (strict order)
+## Entry Point
+
+`_startMigrationFlow()` is the single entry point for all migration. It is called from the Content submenu ("Migrate to mkdocs-nav-weight") and from the top-level warning action button (`actionId: 'start-migration'`).
+
+## Phase 0: Hard Prerequisite (mandatory, never skipped)
+
+Checks `liveWysiwygNavWeightConfig.installed`. If not installed, shows an informational dialog with pip install instructions and aborts immediately. Migrating without the pip package causes mkdocs to crash on rebuild (unrecoverable).
+
+**HARD RULE**: The `!cfg.installed` check must execute before ANY migration work — before parsing nav structure, before reading files, before showing the confirmation dialog, before mutating navData. Every code path that can trigger migration must flow through `_startMigrationFlow()` which enforces this gate. No migration entry point may bypass Phase 0.
+
+**Phase 0b**: If `cfg.enabled && !hasNavKey`, shows "already active" dialog and aborts.
+
+## Conditional Routing
+
+A `hasNavKey` flag (from `_ymlHasNavKey(_virtualMkdocsYml)`) determines the path:
+- `hasNavKey = true` → `_startMigrationFlowNavKey()` (full 7-phase migration)
+- `hasNavKey = false` → `_startMigrationFlowAlphabetical()` (simpler migration)
+
+## Seven Phases (hasNavKey path, strict order)
 
 1. **Duplicate detection.** Abort with scrollable error dialog if any page path appears more than once in the nav.
-2. **Build relative link index.** Read all markdown files to map every relative link (outbound and resolved). Used by Phases 4 and 7.
-3. **Create directory structure.** Slugify each section title into a directory name. Create `index.md` for sections that lack one. For sections that claim an existing `index.md` child, always split it via `regenerate-index` op: rename the existing content to a slug-based page, create a new thin `index.md` (`retitled: true`, `empty: true`). The section's `index.md` is always a thin template after migration.
-4. **Move documents.** Move every nav-referenced page to its target path derived from the section hierarchy. Rewrite outbound links in moved files. Rewrite inbound links in all files that reference moved files. Uses existing `rename-page` op (delete-then-create + link rewriting).
+2. **Build relative link index.** Read all markdown files to map every relative link. Used by Phases 4 and 7.
+3. **Create directory structure.** Slugify section titles into directory names. Create `index.md` for sections without one. Split content-bearing indexes via `regenerate-index` op.
+4. **Move documents.** Move every nav-referenced page to its target path. Rewrite outbound and inbound links.
 5. **Mark hidden.** Any markdown file not in the nav gets `headless: true`.
-6. **Set titles and weights.** Set `title` + `weight` on all pages per nav order (increments of 100). Section indexes also get `retitled: true`. Root `index.md` gets title only — **never a weight**. Remove the `nav` key from mkdocs.yml (dual-write via `_updateMkdocsYml`).
-7. **Consolidate hidden docs.** Re-scan links. For each hidden doc, if ALL inbound links agree on a single target directory (i.e., the directory that would make every reference a same-directory `filename.md` link), move the hidden doc there and rewrite links. Skip if referencing files disagree on target directory.
+6. **Set titles and weights.** Set `title` + `weight` per nav order (increments of 100). Remove the `nav` key from mkdocs.yml.
+7. **Consolidate hidden docs.** Move hidden docs closer to referencing pages where all inbound links agree.
+
+## Alphabetical Path (!hasNavKey)
+
+Phases 1, 4, 5, 7 are skipped. No files are moved, no pages are marked headless.
+
+- **Phase 3 (split only)**: Splits content-bearing section `index.md` files. Creates thin index (`retitled: true`, `empty: true`) and a content page with the body. No new directories are created.
+- **Phase 6**: Assigns sequential weights (100, 200, 300...) to all pages based on current filesystem order. Titles from existing frontmatter or page title. Root index gets title only, no weight. Enables `mkdocs-nav-weight` in mkdocs.yml via `_stageNavWeightPlugin()`.
+
+## Phase Skip Summary
+
+| Phase | hasNavKey | !hasNavKey |
+|-------|-----------|------------|
+| 0. pip install check | Hard gate | Hard gate |
+| 1. Nav Structure Check | Parse nav, check duplicates | Skip |
+| 2. Build Link Index | Run | Run (scan indexes) |
+| 3. Dir Structure / Index Split | Full: create dirs + split | Split only |
+| 4. Move Documents | Move to target locations | Skip |
+| 5. Set Visibility | Mark hidden as headless | Skip |
+| 6. Titles, Weights, Config | Titles from nav, remove nav key | Titles from FM, enable plugin |
+| 7. Consolidate Hidden | Move headless docs closer | Skip |
 
 ## Rules
 
-1. **Root `index.md` never gets a weight.** It receives only a title (e.g., `Home`). Its position is controlled by the `index_weight` config default.
+1. **Root `index.md` never gets a weight.** It receives only a title. Its position is controlled by the `index_weight` config default.
 
-2. **Weight sequence starts at 100.** Items at each directory level get weights 100, 200, 300... Sections and pages share the same sequence at their level.
+2. **Weight sequence starts at 100.** Items at each directory level get weights 100, 200, 300... Sections and pages share the same sequence.
 
-3. **Section directory names are slugified titles.** Use `_migrationSectionSlug`: lowercase, non-alphanumeric → hyphens, trim leading/trailing hyphens.
+3. **Section directory names are slugified titles.** Use `_migrationSectionSlug`: lowercase, non-alphanumeric to hyphens, trim leading/trailing hyphens.
 
-4. **Existing directories are reused.** If a section slug matches an existing directory, use it — do not create a duplicate.
+4. **Existing directories are reused.** If a section slug matches an existing directory, use it.
 
-5. **Non-index pages named `index.md` must be renamed.** If a page reference points to an `index.md` but it's not the section's own index (e.g., `errors/index.md` listed as a leaf page under a different section), rename it to a slug derived from its title to avoid collisions.
+5. **Non-index pages named `index.md` must be renamed.** Rename to slug derived from title to avoid collisions.
 
-6. **Claimed indexes are always split.** Every section `index.md` becomes `retitled: true`, `empty: true` after migration. Existing content is renamed to a slug-based page via `_generateFilename` and receives its own title + weight in Phase 6. The split uses the `regenerate-index` op type (runs in the earliest batch phase).
+6. **Claimed indexes are always split.** Every section `index.md` becomes `retitled: true`, `empty: true` after migration.
 
-7. **Link rewriting uses existing infrastructure.** `_rewriteLinksInContent` for outbound, `_rewriteInboundLinks` for inbound, `_findExclusionZones` to protect code blocks. Never rewrite links inside fenced code, inline code, or HTML comments.
+7. **Link rewriting uses existing infrastructure.** `_rewriteLinksInContent` for outbound, `_rewriteInboundLinks` for inbound. Never rewrite links inside exclusion zones.
 
-8. **Phase 7 is opportunistic.** Hidden doc consolidation must never break links. If inbound links from different directories disagree on where the hidden doc should live, skip it entirely.
+8. **Phase 7 is opportunistic.** If inbound links disagree on target directory, skip the hidden doc.
 
-9. **All ops go through `_navBatchQueue`.** The migration pushes ops and then the standard batch executor handles phased ordering and sequential execution.
+9. **All ops go through `_navBatchQueue`.** Standard batch executor handles phased ordering.
 
-10. **Duplicate check is mandatory before any filesystem changes.** Phase 1 must run and pass before Phases 2–7 begin. A nav with duplicate entries would cause conflicting moves.
+10. **Phase 0 is mandatory and cannot be bypassed.** Every migration entry point must flow through `_startMigrationFlow()`.
 
-11. **The confirmation dialog shows a summary.** Create count, move count, total nav pages, hidden count, and a note about automatic link rewriting. Use `_showNavDialogHtml` for rich HTML content.
+11. **The confirmation dialog shows a scenario-appropriate summary.** Each path has its own dialog with relevant counts and notes.
 
 ## Key Functions
 
 | Function | Purpose |
 |----------|---------|
-| `_migrationCheckDuplicates` | Phase 1: find duplicate page paths in nav |
-| `_migrationSectionSlug` | Slugify section title → directory name |
-| `_migrationComputeTargetTree` | Compute target paths for all pages and indexes |
-| `_buildMigrationOps` | Generate all batch ops for Phases 3–7 |
-| `_startMigrationFlow` | Orchestrate: parse, validate, confirm, queue |
+| `_startMigrationFlow` | Phase 0 gate, routing to nav-key or alphabetical path |
+| `_startMigrationFlowNavKey` | Phases 1-7 for nav-key migration |
+| `_startMigrationFlowAlphabetical` | Phases 2-6 for alphabetical migration |
+| `_applyMigrationToNavData` | Apply nav-key migration to navData |
+| `_applyAlphabeticalMigration` | Apply alphabetical migration to navData |
+| `_stageNavWeightPlugin` | Stage enabling mkdocs-nav-weight in mkdocs.yml |
+| `_migrationCheckDuplicates` | Phase 1: find duplicate page paths |
+| `_migrationComputeTargetTree` | Compute target paths for pages and indexes |
 | `_showNavDialogHtml` | Dialog with scrollable HTML body |
 
 ## Design Document

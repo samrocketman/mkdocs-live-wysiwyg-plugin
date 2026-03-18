@@ -10522,12 +10522,6 @@
     return !_hasVisibleMdContent(section.children);
   }
 
-  function _isMovableWithoutNormalization(item, itemType) {
-    if (itemType === 'asset') return true;
-    if (item.headless || item.empty) return true;
-    if (itemType === 'section') return true;
-    return false;
-  }
 
   function _buildNavItems(parentUl, items, depth) {
     var currentSrcPath = _getCurrentSrcPath();
@@ -10683,8 +10677,7 @@
         }
         li.appendChild(sectionLabel);
 
-        if ((_navEditMode || isHiddenSection || (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)) &&
-            !_ymlHasNavKey(_virtualMkdocsYml)) {
+        {
           var sectionCtrl = _createNavWeightControls(item, 'section', depth);
           var sectionWrapper = document.createElement('div');
           sectionWrapper.className = 'live-wysiwyg-nav-controls-wrapper live-wysiwyg-nav-controls-section';
@@ -10737,8 +10730,7 @@
       } else if (item.type === 'page') {
         var isActive = item.src_path === currentSrcPath;
 
-        if ((_navEditMode || (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)) &&
-            !_ymlHasNavKey(_virtualMkdocsYml)) {
+        {
           var pageCtrl = _createNavWeightControls(item, 'page', depth);
           var pageWrapper = document.createElement('div');
           pageWrapper.className = 'live-wysiwyg-nav-controls-wrapper';
@@ -10869,8 +10861,7 @@
           li.style.display = 'none';
         }
 
-        if ((_navEditMode || (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)) &&
-            !_ymlHasNavKey(_virtualMkdocsYml)) {
+        {
           var assetCtrl = _createNavWeightControls(item, 'asset', depth);
           var assetWrapper = document.createElement('div');
           assetWrapper.className = 'live-wysiwyg-nav-controls-wrapper';
@@ -11014,11 +11005,6 @@
     gearBtn.textContent = '\u2699';
     gearBtn.title = 'Settings';
     gearBtn.className = 'live-wysiwyg-nav-settings-gear';
-
-    var nwEnabled = typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled;
-    if (!nwEnabled && !_isMovableWithoutNormalization(item, itemType)) {
-      leftBtn.disabled = rightBtn.disabled = upBtn.disabled = downBtn.disabled = true;
-    }
 
     if (_isRootIndex(item)) {
       upBtn.style.display = 'none';
@@ -11660,6 +11646,12 @@
   }
 
   function _handleArrowClick(item, itemType, direction, shiftKey) {
+    if (_ymlHasNavKey(_virtualMkdocsYml)) {
+      _seedNavKeyMigrationWarning();
+      _pushNavKeyItemWarning(item);
+      return;
+    }
+
     if (_hasAnyNavSelected()) {
       if (!_navEditMode) _enterNavEditMode();
       _doGroupArrowMove(direction, shiftKey);
@@ -15412,7 +15404,7 @@
 
     // --- Folder name row (sections) ---
     var folderDir, folderBaseName, renameFolderInput, doFolderRename, folderRenameRef;
-    if (itemType === 'section' && (nwConfig.enabled || noIndexSection) && !isRootIndexItem) {
+    if (itemType === 'section' && !isRootIndexItem) {
       folderDir = _getSectionFolderDir(item);
       if (folderDir) {
         folderBaseName = folderDir.indexOf('/') >= 0 ? folderDir.substring(folderDir.lastIndexOf('/') + 1) : folderDir;
@@ -15454,7 +15446,7 @@
 
     // --- File name row (pages and assets) ---
     var srcPath, fileDisplayName, fileRenameInput, doFileRename, fileRenameRef, isAsset;
-    if ((nwConfig.enabled && itemType === 'page' && !_isRootIndex(item)) || itemType === 'asset') {
+    if ((itemType === 'page' && !_isRootIndex(item)) || itemType === 'asset') {
       srcPath = _getItemSrcPath(item) || '';
       if (srcPath) {
         isAsset = itemType === 'asset';
@@ -16139,28 +16131,6 @@
 
   function _seedNavTopWarnings() {
     _navTopWarnings = [];
-    var cfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
-    if (cfg && !cfg.installed) {
-      _navTopWarnings.push({
-        id: 'nav-weight-not-installed',
-        text: 'pip install mkdocs-nav-weight; managing the nav requires this plugin.',
-        icon: 'caution',
-        title: 'mkdocs-nav-weight not installed'
-      });
-    } else if ((cfg && !cfg.enabled) || _ymlHasNavKey(_virtualMkdocsYml)) {
-      var migText = !cfg.enabled
-        ? 'The mkdocs-nav-weight plugin is not configured. Migrate to enable frontmatter-based nav weight management.'
-        : 'The nav key in mkdocs.yml can cause ordering conflicts. Migrate fully to mkdocs-nav-weight.';
-      _navTopWarnings.push({
-        id: 'nav-coexistence',
-        text: migText,
-        icon: 'warning',
-        title: 'Migrate to mkdocs-nav-weight',
-        actionId: 'start-migration',
-        actionText: 'Migrate to mkdocs-nav-weight'
-      });
-    }
-    if (_navTopWarnings.length) _ensureNavUncollapsed();
   }
 
   function _removeNavTopWarning(id) {
@@ -16174,6 +16144,35 @@
       if (_navTopWarnings[i].id === id) return true;
     }
     return false;
+  }
+
+  function _seedNavKeyMigrationWarning() {
+    if (_hasNavTopWarning('nav-key-blocks-reorder')) return;
+    _navTopWarnings.push({
+      id: 'nav-key-blocks-reorder',
+      text: 'The nav key in mkdocs.yml defines a static navigation structure. File reordering is not available until you migrate to mkdocs-nav-weight. Use Content \u203a Migrate to mkdocs-nav-weight.',
+      icon: 'warning',
+      title: 'Reordering blocked by nav key',
+      actionId: 'start-migration',
+      actionText: 'Migrate to mkdocs-nav-weight'
+    });
+    _ensureNavUncollapsed();
+    _commitNavSnapshot();
+  }
+
+  function _pushNavKeyItemWarning(item) {
+    var itemLi = _navSidebarEl ? _navSidebarEl.querySelector('li[data-uid="' + item._uid + '"]') : null;
+    if (!itemLi) return;
+    var existing = itemLi.querySelector('.live-wysiwyg-nav-key-hint');
+    if (existing) existing.remove();
+    var hint = document.createElement('span');
+    hint.className = 'live-wysiwyg-nav-key-hint';
+    hint.textContent = 'Reordering blocked \u2014 see warning above';
+    hint.style.cssText = 'position:absolute;top:-1.4em;left:0;right:0;font-size:.65rem;color:var(--md-accent-fg-color,#ff6d00);white-space:nowrap;pointer-events:none;opacity:1;transition:opacity .6s ease-out;z-index:1';
+    itemLi.style.position = 'relative';
+    itemLi.appendChild(hint);
+    setTimeout(function () { hint.style.opacity = '0'; }, 1800);
+    setTimeout(function () { if (hint.parentNode) hint.parentNode.removeChild(hint); }, 2500);
   }
 
   // ======================================================================
@@ -17105,89 +17104,324 @@
   function _startMigrationFlow() {
     _prefetchMkdocsYml().then(function () {
       var cfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
-      var pluginJustAdded = !cfg.enabled;
-      var navStructure = _parseYamlNavKey(_virtualMkdocsYml);
-      if (!navStructure || !navStructure.length) {
-        _showNavDialog('No nav structure found in mkdocs.yml. Nothing to migrate.', [{ text: 'OK', value: 'ok' }]);
+
+      // Phase 0: Hard prerequisite — pip install check
+      if (!cfg.installed) {
+        _showNavDialogHtml(
+          '<p style="margin:0 0 12px"><strong>mkdocs-nav-weight is not installed.</strong></p>' +
+          '<p style="margin:0 0 8px">Install it first:</p>' +
+          '<pre style="margin:4px 0 12px;padding:8px;background:rgba(0,0,0,.06);border-radius:4px;font-size:.83rem">pip install mkdocs-nav-weight</pre>' +
+          '<p style="margin:0;font-size:.83rem">Migrating without this package causes mkdocs to crash on rebuild.</p>',
+          [{ text: 'OK', value: 'ok' }]
+        );
         return;
       }
 
-      var dupes = _migrationCheckDuplicates(navStructure);
-      if (dupes.length) {
-        var html = '<p style="margin:0 0 8px"><strong>Cannot migrate:</strong> the nav key contains duplicate page entries.</p>' +
-          '<p style="margin:0 0 8px">Remove duplicates from mkdocs.yml before migrating:</p>' +
-          '<ul style="margin:4px 0;padding-left:20px;font-family:monospace;font-size:.8rem">';
-        for (var d = 0; d < dupes.length; d++) {
-          html += '<li>' + dupes[d].replace(/</g, '&lt;') + '</li>';
+      // Phase 0b: Already-active check
+      var hasNavKey = _ymlHasNavKey(_virtualMkdocsYml);
+      if (cfg.enabled && !hasNavKey) {
+        _showNavDialog('Nav weights are already active. No migration needed.', [{ text: 'OK', value: 'ok' }]);
+        return;
+      }
+
+      var pluginJustAdded = !cfg.enabled;
+
+      if (hasNavKey) {
+        _startMigrationFlowNavKey(cfg, pluginJustAdded);
+      } else {
+        _startMigrationFlowAlphabetical(cfg, pluginJustAdded);
+      }
+    });
+  }
+
+  function _startMigrationFlowNavKey(cfg, pluginJustAdded) {
+    // Phase 1: Parse nav structure, check for duplicates
+    var navStructure = _parseYamlNavKey(_virtualMkdocsYml);
+    if (!navStructure || !navStructure.length) {
+      _showNavDialog('No nav structure found in mkdocs.yml. Nothing to migrate.', [{ text: 'OK', value: 'ok' }]);
+      return;
+    }
+
+    var dupes = _migrationCheckDuplicates(navStructure);
+    if (dupes.length) {
+      var html = '<p style="margin:0 0 8px"><strong>Cannot migrate:</strong> the nav key contains duplicate page entries.</p>' +
+        '<p style="margin:0 0 8px">Remove duplicates from mkdocs.yml before migrating:</p>' +
+        '<ul style="margin:4px 0;padding-left:20px;font-family:monospace;font-size:.8rem">';
+      for (var d = 0; d < dupes.length; d++) {
+        html += '<li>' + dupes[d].replace(/</g, '&lt;') + '</li>';
+      }
+      html += '</ul>';
+      _showNavDialogHtml(html, [{ text: 'OK', value: 'ok' }]);
+      return;
+    }
+
+    // Phase 2: Build link index (scan claimed index content)
+    var tree = _migrationComputeTargetTree(navStructure);
+    _scanClaimedIndexContent(tree.claimedIndexPaths).then(function () {
+
+    // Phase 3/4/5/6/7 summary computation
+    var moveCount = 0;
+    for (var m = 0; m < tree.pages.length; m++) {
+      if (tree.pages[m].oldPath !== tree.pages[m].targetPath) moveCount++;
+    }
+    var splitCount = 0;
+    var createCount = 0;
+    for (var c = 0; c < tree.indexes.length; c++) {
+      if (tree.indexes[c].existingIndexPath) splitCount++;
+      else createCount++;
+    }
+
+    var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
+    var curDefaultWeight = nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 1000;
+    var migMaxWeight = 0;
+    for (var mw = 0; mw < tree.pages.length; mw++) {
+      if (tree.pages[mw].weight != null && tree.pages[mw].weight > migMaxWeight) migMaxWeight = tree.pages[mw].weight;
+    }
+    for (var iw = 0; iw < tree.indexes.length; iw++) {
+      if (tree.indexes[iw].weight != null && tree.indexes[iw].weight > migMaxWeight) migMaxWeight = tree.indexes[iw].weight;
+    }
+    var suggestedWeight = migMaxWeight > curDefaultWeight ? Math.ceil((migMaxWeight + 500) / 1000) * 1000 : 0;
+
+    var summaryHtml = '<p style="margin:0 0 12px">This will migrate your navigation from the mkdocs.yml <code>nav</code> key to mkdocs-nav-weight frontmatter.</p>' +
+      '<p style="margin:0 0 4px"><strong>Summary:</strong></p>' +
+      '<ul style="margin:4px 0 12px;padding-left:20px;font-size:.83rem">';
+    if (pluginJustAdded) summaryHtml += '<li>Add <code>mkdocs-nav-weight</code> plugin to mkdocs.yml</li>';
+    if (splitCount) summaryHtml += '<li>Split ' + splitCount + ' existing index.md file' + (splitCount > 1 ? 's' : '') + ' (content renamed, thin index created)</li>';
+    if (createCount) summaryHtml += '<li>Create ' + createCount + ' new index.md file' + (createCount > 1 ? 's' : '') + ' for sections</li>';
+    if (moveCount) summaryHtml += '<li>Move ' + moveCount + ' document' + (moveCount > 1 ? 's' : '') + ' to match nav structure</li>';
+    summaryHtml += '<li>Set titles and weights on all ' + (Object.keys(tree.inNavPaths).length) + ' nav pages</li>';
+    var hiddenCount = 0;
+    var allPaths = typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [];
+    for (var h = 0; h < allPaths.length; h++) {
+      if (!tree.inNavPaths[allPaths[h]]) hiddenCount++;
+    }
+    if (hiddenCount) summaryHtml += '<li>Mark ' + hiddenCount + ' unlisted page' + (hiddenCount > 1 ? 's' : '') + ' as headless</li>';
+    summaryHtml += '<li>Remove <code>nav</code> key from mkdocs.yml</li>';
+    if (suggestedWeight) summaryHtml += '<li>Update <code>default_page_weight</code> to ' + suggestedWeight + ' in mkdocs.yml (current: ' + curDefaultWeight + ', max assigned: ' + migMaxWeight + ')</li>';
+    if (hiddenCount) summaryHtml += '<li>Consolidate hidden docs into referencing directories where possible</li>';
+    summaryHtml += '</ul>';
+    summaryHtml += '<p style="margin:0 0 12px;font-size:.83rem">Relative links will be updated automatically when documents are moved.</p>';
+    summaryHtml += '<p style="margin:0 0 12px;font-size:.83rem">Would you like to stage a migration of your nav data?</p>';
+
+    return _showNavDialogHtml(summaryHtml, [
+      { text: 'Cancel', value: 'cancel' },
+      { text: 'Stage Migration', value: 'start', className: 'live-wysiwyg-nav-dialog-primary' }
+    ]).then(function (result) {
+      if (result !== 'start') return;
+      if (!_navEditMode) _enterNavEditMode();
+      if (pluginJustAdded) _stageNavWeightPlugin();
+      _applyMigrationToNavData(navStructure, allPaths, suggestedWeight);
+      _navMigrationPending = true;
+      _removeNavTopWarning('nav-coexistence');
+      _removeNavTopWarning('nav-key-blocks-reorder');
+      _addNavBadge({
+        className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-migration-badge',
+        text: 'Pending mkdocs.yml nav migration'
+      });
+      _commitNavSnapshot();
+    });
+    }); // _scanClaimedIndexContent.then
+  }
+
+  function _startMigrationFlowAlphabetical(cfg, pluginJustAdded) {
+    // Phase 2: Scan content-bearing section indexes for splitting
+    var splitCandidates = [];
+    var fmMap = typeof liveWysiwygFrontmatterMap !== 'undefined' ? liveWysiwygFrontmatterMap : {};
+
+    (function scanSections(items) {
+      for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        if (item.type === 'section' && item.children) {
+          var indexPage = null;
+          for (var c = 0; c < item.children.length; c++) {
+            if (item.children[c].type === 'page' && item.children[c].isIndex) {
+              indexPage = item.children[c]; break;
+            }
+          }
+          if (!indexPage && item.src_path) {
+            indexPage = item;
+          }
+          if (indexPage && indexPage._indexContent) {
+            splitCandidates.push({ section: item, indexPage: indexPage });
+          } else if (indexPage && indexPage.src_path) {
+            var pageFm = (indexPage._fm) ? indexPage._fm
+              : (fmMap[indexPage.src_path] ? fmMap[indexPage.src_path] : null);
+            if (pageFm && pageFm.retitled && pageFm.empty) {
+              // Already a thin index, skip
+            } else {
+              splitCandidates.push({ section: item, indexPage: indexPage, needsContentFetch: true });
+            }
+          }
+          scanSections(item.children);
         }
-        html += '</ul>';
-        return _showNavDialogHtml(html, [{ text: 'OK', value: 'ok' }]);
       }
+    })(liveWysiwygNavData);
 
-      var tree = _migrationComputeTargetTree(navStructure);
-      return _scanClaimedIndexContent(tree.claimedIndexPaths).then(function () {
+    var contentFetchPromises = [];
+    for (var fc = 0; fc < splitCandidates.length; fc++) {
+      if (splitCandidates[fc].needsContentFetch) {
+        (function (cand) {
+          contentFetchPromises.push(
+            _wsGetContents(cand.indexPage.src_path).then(function (content) {
+              if (content) {
+                var bodyContent = _stripFrontmatter(content);
+                if (bodyContent && bodyContent.trim()) {
+                  cand.indexPage._indexContent = bodyContent;
+                } else {
+                  cand.skip = true;
+                }
+              } else {
+                cand.skip = true;
+              }
+            }).catch(function () { cand.skip = true; })
+          );
+        })(splitCandidates[fc]);
+      }
+    }
 
-      var moveCount = 0;
-      for (var m = 0; m < tree.pages.length; m++) {
-        if (tree.pages[m].oldPath !== tree.pages[m].targetPath) moveCount++;
-      }
-      var splitCount = 0;
-      var createCount = 0;
-      for (var c = 0; c < tree.indexes.length; c++) {
-        if (tree.indexes[c].existingIndexPath) splitCount++;
-        else createCount++;
-      }
+    Promise.all(contentFetchPromises).then(function () {
+      splitCandidates = splitCandidates.filter(function (c) { return !c.skip; });
 
-      var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
-      var curDefaultWeight = nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 1000;
-      var migMaxWeight = 0;
-      for (var mw = 0; mw < tree.pages.length; mw++) {
-        if (tree.pages[mw].weight != null && tree.pages[mw].weight > migMaxWeight) migMaxWeight = tree.pages[mw].weight;
-      }
-      for (var iw = 0; iw < tree.indexes.length; iw++) {
-        if (tree.indexes[iw].weight != null && tree.indexes[iw].weight > migMaxWeight) migMaxWeight = tree.indexes[iw].weight;
-      }
-      var suggestedWeight = migMaxWeight > curDefaultWeight ? Math.ceil((migMaxWeight + 500) / 1000) * 1000 : 0;
+      // Count all pages for weight assignment
+      var totalPages = 0;
+      (function countPages(items) {
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].type === 'page') totalPages++;
+          if (items[i].children) countPages(items[i].children);
+        }
+      })(liveWysiwygNavData);
 
-      var summaryHtml = '<p style="margin:0 0 12px">This will migrate your navigation from the mkdocs.yml <code>nav</code> key to mkdocs-nav-weight frontmatter.</p>' +
+      var summaryHtml = '<p style="margin:0 0 12px">This will enable mkdocs-nav-weight and assign frontmatter titles and weights to all pages based on their current filesystem order.</p>' +
         '<p style="margin:0 0 4px"><strong>Summary:</strong></p>' +
         '<ul style="margin:4px 0 12px;padding-left:20px;font-size:.83rem">';
-      if (pluginJustAdded) summaryHtml += '<li>Add <code>mkdocs-nav-weight</code> plugin to mkdocs.yml</li>';
-      if (splitCount) summaryHtml += '<li>Split ' + splitCount + ' existing index.md file' + (splitCount > 1 ? 's' : '') + ' (content renamed, thin index created)</li>';
-      if (createCount) summaryHtml += '<li>Create ' + createCount + ' new index.md file' + (createCount > 1 ? 's' : '') + ' for sections</li>';
-      if (moveCount) summaryHtml += '<li>Move ' + moveCount + ' document' + (moveCount > 1 ? 's' : '') + ' to match nav structure</li>';
-      summaryHtml += '<li>Set titles and weights on all ' + (Object.keys(tree.inNavPaths).length) + ' nav pages</li>';
-      var hiddenCount = 0;
-      var allPaths = typeof liveWysiwygAllMdSrcPaths !== 'undefined' ? liveWysiwygAllMdSrcPaths : [];
-      for (var h = 0; h < allPaths.length; h++) {
-        if (!tree.inNavPaths[allPaths[h]]) hiddenCount++;
-      }
-      if (hiddenCount) summaryHtml += '<li>Mark ' + hiddenCount + ' unlisted page' + (hiddenCount > 1 ? 's' : '') + ' as headless</li>';
-      summaryHtml += '<li>Remove <code>nav</code> key from mkdocs.yml</li>';
-      if (suggestedWeight) summaryHtml += '<li>Update <code>default_page_weight</code> to ' + suggestedWeight + ' in mkdocs.yml (current: ' + curDefaultWeight + ', max assigned: ' + migMaxWeight + ')</li>';
-      if (hiddenCount) summaryHtml += '<li>Consolidate hidden docs into referencing directories where possible</li>';
+      if (pluginJustAdded) summaryHtml += '<li>Enable <code>mkdocs-nav-weight</code> plugin in mkdocs.yml</li>';
+      if (splitCandidates.length) summaryHtml += '<li>Split ' + splitCandidates.length + ' content-bearing index.md file' + (splitCandidates.length > 1 ? 's' : '') + '</li>';
+      summaryHtml += '<li>Set titles and weights on ' + totalPages + ' page' + (totalPages > 1 ? 's' : '') + '</li>';
+      summaryHtml += '<li>All pages remain visible (no headless marking)</li>';
+      summaryHtml += '<li>No files will be moved</li>';
       summaryHtml += '</ul>';
-      summaryHtml += '<p style="margin:0 0 12px;font-size:.83rem">Relative links will be updated automatically when documents are moved.</p>';
-      summaryHtml += '<p style="margin:0 0 12px;font-size:.83rem">Would you like to stage a migration of your nav data?</p>';
+      summaryHtml += '<p style="margin:0 0 12px;font-size:.83rem">Would you like to stage this migration?</p>';
 
-      return _showNavDialogHtml(summaryHtml, [
+      _showNavDialogHtml(summaryHtml, [
         { text: 'Cancel', value: 'cancel' },
         { text: 'Stage Migration', value: 'start', className: 'live-wysiwyg-nav-dialog-primary' }
       ]).then(function (result) {
         if (result !== 'start') return;
         if (!_navEditMode) _enterNavEditMode();
         if (pluginJustAdded) _stageNavWeightPlugin();
-        _applyMigrationToNavData(navStructure, allPaths, suggestedWeight);
+        _applyAlphabeticalMigration(splitCandidates);
         _navMigrationPending = true;
-        _removeNavTopWarning('nav-coexistence');
         _addNavBadge({
           className: 'live-wysiwyg-nav-normalize-badge live-wysiwyg-nav-migration-badge',
-          text: 'Pending mkdocs.yml nav migration'
+          text: 'Pending alphabetical migration to mkdocs-nav-weight'
         });
         _commitNavSnapshot();
       });
-      }); // _scanClaimedIndexContent.then
     });
+  }
+
+  function _applyAlphabeticalMigration(splitCandidates) {
+    var fmMap = typeof liveWysiwygFrontmatterMap !== 'undefined' ? liveWysiwygFrontmatterMap : {};
+    _navBatchQueue = [];
+
+    // Phase 3: Split content-bearing section indexes
+    for (var sc = 0; sc < splitCandidates.length; sc++) {
+      var cand = splitCandidates[sc];
+      var section = cand.section;
+      var indexPage = cand.indexPage;
+      var folderDir = _getSectionFolderDir(section);
+      if (!folderDir) continue;
+
+      var contentTitle = indexPage.title || section.title || folderDir.split('/').pop();
+      var contentFilename = _generateFilename(contentTitle);
+      var contentPath = folderDir + '/' + contentFilename;
+
+      var splitFm = (indexPage._fm) ? Object.assign({}, indexPage._fm)
+        : (fmMap[indexPage.src_path] ? Object.assign({}, fmMap[indexPage.src_path]) : {});
+      splitFm.title = contentTitle;
+      delete splitFm.retitled;
+      delete splitFm.empty;
+
+      var splitItem = {
+        type: 'page',
+        src_path: contentPath,
+        title: contentTitle,
+        _fm: splitFm,
+        setContent: indexPage._indexContent,
+        _new: true,
+        _uid: _generateUid()
+      };
+
+      var insertIdx = -1;
+      for (var ci = 0; ci < section.children.length; ci++) {
+        if (section.children[ci] === indexPage || (section.children[ci].isIndex && section.children[ci].src_path === indexPage.src_path)) {
+          insertIdx = ci + 1;
+          break;
+        }
+      }
+      if (insertIdx >= 0) {
+        section.children.splice(insertIdx, 0, splitItem);
+      } else {
+        section.children.push(splitItem);
+      }
+
+      var thinFm = { title: section.title || contentTitle, empty: true, retitled: true };
+      indexPage._fm = thinFm;
+      indexPage.retitled = true;
+      indexPage.empty = true;
+      indexPage._indexContent = null;
+    }
+
+    // Phase 6: Assign titles and weights to all pages
+    (function assignWeights(items) {
+      var weightCounter = 100;
+      for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        if (item.type === 'page') {
+          if (!item._fm) {
+            item._fm = fmMap[item.src_path] ? Object.assign({}, fmMap[item.src_path]) : {};
+          }
+          if (!item._fm.title) {
+            item._fm.title = item.title || '';
+          }
+          if (!item.title) {
+            item.title = item._fm.title;
+          }
+          if (!_isRootIndex(item)) {
+            item._fm.weight = weightCounter;
+            item.weight = weightCounter;
+            weightCounter += 100;
+          }
+        } else if (item.type === 'section') {
+          var indexChild = null;
+          if (item.children) {
+            for (var ci = 0; ci < item.children.length; ci++) {
+              if (item.children[ci].type === 'page' && item.children[ci].isIndex) {
+                indexChild = item.children[ci]; break;
+              }
+            }
+          }
+          if (indexChild) {
+            if (!indexChild._fm) {
+              indexChild._fm = fmMap[indexChild.src_path] ? Object.assign({}, fmMap[indexChild.src_path]) : {};
+            }
+            indexChild._fm.weight = weightCounter;
+            indexChild.weight = weightCounter;
+            if (!item.index_meta) item.index_meta = {};
+            item.index_meta.weight = weightCounter;
+          }
+          weightCounter += 100;
+          if (item.children) assignWeights(item.children);
+        }
+      }
+    })(liveWysiwygNavData);
+  }
+
+  function _stripFrontmatter(content) {
+    if (!content || typeof content !== 'string') return content;
+    var match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+    if (match) return content.substring(match[0].length);
+    return content;
   }
 
   function _insertNavWeightEntry(yml) {
@@ -18439,6 +18673,18 @@
       });
     });
     submenu.appendChild(findDeadLinksBtn);
+
+    var migrateSep = document.createElement('hr');
+    migrateSep.style.cssText = 'border:none;border-top:1px solid rgba(128,128,128,.3);margin:4px 0';
+    submenu.appendChild(migrateSep);
+
+    var migrateBtn = document.createElement('button');
+    migrateBtn.textContent = 'Migrate to mkdocs-nav-weight';
+    migrateBtn.addEventListener('click', function () {
+      _closeSubmenu();
+      _startMigrationFlow();
+    });
+    submenu.appendChild(migrateBtn);
 
     var firstItem = submenu.querySelector('button');
     _attachDialogKeyboard(submenu, {

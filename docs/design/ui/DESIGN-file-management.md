@@ -29,6 +29,16 @@ All movement flows through `_handleArrowClick(item, itemType, direction, shiftKe
 
 `_handleArrowClick` determines the move variant and delegates to `_doArrowMove`, which calls the appropriate movement function.
 
+### Nav-key arrow guard
+
+When `_ymlHasNavKey(_virtualMkdocsYml)` is true (mkdocs.yml has a hand-written `nav:` key), arrow movement is blocked at the top of `_handleArrowClick`:
+
+1. The move is a no-op; no movement function is called
+2. `_seedNavKeyMigrationWarning()` adds a top-level warning (idempotent) to inform the user that manual nav ordering is incompatible with arrow-based movement
+3. `_pushNavKeyItemWarning(item)` shows a transient tooltip on the clicked item
+
+When there is no nav key, arrows work regardless of nav-weight status. Gear operations (rename, delete, create) are not blocked by the nav key and work regardless of nav key or nwConfig status.
+
 ### Movement functions
 
 | Function | Trigger | Effect |
@@ -331,7 +341,7 @@ ASCII renderings use the following notation:
 
 ### Settings Gear Dropdown
 
-Function: `_buildSettingsContent`. Triggered by clicking the gear icon on a nav item. The gear icon is visible when `(_navEditMode || isHidden || nwConfig.enabled) && !_ymlHasNavKey(_virtualMkdocsYml)`.
+Function: `_buildSettingsContent`. Triggered by clicking the gear icon on a nav item. Nav controls (arrows + gear) are always rendered for every nav item regardless of nav-weight status or nav key.
 
 The dropdown has 5 distinct rendering variants based on item type and 2 sub-variants based on `nwConfig.enabled` for the page and section-with-index cases.
 
@@ -368,13 +378,12 @@ File name input is constrained to `[a-z0-9-]`. Changing the file name and clicki
 
 ```
 Title [text area]
----
-Weight [text area]
+File name [text area]
 ---
 (-Delete-) (Apply)
 ```
 
-No File name, Headless, or Normalize Weights.
+No Weight, Headless, or Normalize Weights. File name row is always shown.
 
 #### Section with index (non-root) — `nwConfig.enabled`
 
@@ -399,13 +408,12 @@ Folder name input is constrained to `[a-z0-9-]`. Changing the folder name and cl
 
 ```
 Title [text area]
----
-Weight [text area]
+Folder name [text area]
 ---
 (-Delete-) (Apply)
 ```
 
-No Folder name, Headless, Retitled/Empty, or Normalize Weights.
+No Weight, Headless, Retitled/Empty, or Normalize Weights. Folder name row is always shown.
 
 #### Indexless section (no index.md)
 
@@ -456,11 +464,11 @@ No File name, Weight, Headless, Retitled/Empty, Normalize Weights, or Delete. Th
 
 14. **Title row requires frontmatter.** The Title field is shown when `hasFrontmatter` is true (all pages and sections-with-index, but not assets or indexless sections).
 
-15. **File name row has a compound gate.** Pages: requires `nwConfig.enabled && !_isRootIndex(item)`. Assets: always shown. Not shown for sections.
+15. **File name row is always shown for pages and assets.** Pages: shown when `!_isRootIndex(item)`. Assets: always shown. Not shown for sections.
 
-16. **Folder name row has a compound gate.** Requires `itemType === 'section' && (nwConfig.enabled || noIndexSection) && !isRootIndexItem` and `folderDir` must exist.
+16. **Folder name row is always shown for sections.** Requires `itemType === 'section' && !isRootIndexItem` and `folderDir` must exist. Shown regardless of `nwConfig.enabled` or `noIndexSection`.
 
-17. **Weight row is nwConfig-independent.** Weight is shown for all pages and sections-with-index that are not the root index, regardless of `nwConfig.enabled`. Only Headless, Retitled/Empty, and Normalize Weights require `nwConfig.enabled`.
+17. **Weight row requires nwConfig.** Weight, Headless, Retitled/Empty, and Normalize Weights are shown only when `nwConfig.enabled`. For pages and sections-with-index that are not the root index, these fields are gated behind nav-weight configuration.
 
 18. **Headless layout differs between pages and sections.** For pages, Headless gets its own row below Weight. For sections, Headless is appended to the Weight row. For pages with `headless: true` initially, the Weight row is hidden until the user unchecks Headless.
 
@@ -476,13 +484,13 @@ No File name, Weight, Headless, Retitled/Empty, Normalize Weights, or Delete. Th
 
 ### Arrow Control Rules
 
-Arrow controls (up, down, left, right) are rendered by `_createNavWeightControls` alongside the gear icon. Their visibility and enabled state depend on item type, depth, and configuration.
+Arrow controls (up, down, left, right) are rendered by `_createNavWeightControls` alongside the gear icon. Their visibility and enabled state depend on item type and depth.
 
 24. **Root index hides all arrows.** All four arrow buttons have `display: none`. The root index cannot be moved.
 
 25. **Depth-0 items hide the left arrow.** Items at the top level of the nav tree have no parent to move out of. The left arrow uses `visibility: hidden` (not `display: none`) to preserve layout spacing.
 
-26. **Regular pages are immovable without nwConfig.** When `nwConfig.enabled === false`, `_isMovableWithoutNormalization` returns `false` for regular visible pages (not headless, not empty). All four arrow buttons are disabled. Assets, headless pages, empty pages, and sections are movable without nwConfig.
+26. **All arrows are always enabled.** Arrow buttons are never disabled based on nav-weight status. When `_ymlHasNavKey` is true, movement is blocked at runtime in `_handleArrowClick` (see Nav-key arrow guard); the arrows remain visible and clickable.
 
 27. **Assets hide the target-dot button.** The target-dot icon (used to navigate to the page) is hidden for assets since they are not navigable pages.
 
@@ -603,8 +611,8 @@ Function: `_showReviewChangesPopup`. Triggered by clicking the "Review changes" 
 
 These conditions affect whether nav controls (arrows + gear) render at all, independent of the dialog content rules above.
 
-30. **Explicit `nav:` key suppresses all controls.** When `_ymlHasNavKey(_virtualMkdocsYml)` returns true (the mkdocs.yml has a hand-written `nav:` key), all nav controls (arrows and gear) are hidden across all item types. Manual nav ordering is incompatible with weight-based ordering.
+30. **Nav controls always render.** Arrows and gear are always created for every nav item regardless of nav-weight status or nav key. The `nwConfig.enabled` and `_ymlHasNavKey` gates have been removed from `_buildNavItems`. When `_ymlHasNavKey` is true, arrow movement is blocked at runtime in `_handleArrowClick`; the controls remain visible.
 
-31. **Controls require edit mode, hidden status, or nwConfig.** The controls wrapper is visible only when `_navEditMode || isHidden || nwConfig.enabled`. In readonly mode without nwConfig, no gear or arrows are rendered. Hidden items (headless pages, empty pages, all-hidden sections) show controls even without nwConfig so users can manage hidden content.
+31. **Top warnings are lazily seeded.** The top warning area starts empty on page load. `_seedNavTopWarnings` no longer adds proactive "pip install" or "migrate" warnings. The nav-key migration warning is seeded lazily by `_seedNavKeyMigrationWarning()` on the first arrow attempt when `_ymlHasNavKey` is true.
 
 32. **Deleted items are not rendered.** Items with `_deleted: true` are skipped entirely by `_buildNavItems`. No controls, gear, or caution icons are produced for deleted items.

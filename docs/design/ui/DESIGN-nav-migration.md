@@ -4,17 +4,82 @@
 
 When a site uses the `nav` key in `mkdocs.yml` to define navigation structure, migrating to `mkdocs-nav-weight` (frontmatter-based ordering) requires restructuring the filesystem to match the nav hierarchy. The `nav` key allows arbitrary virtual groupings — pages from any directory can appear under any section heading — but `mkdocs-nav-weight` derives hierarchy from the filesystem. The migration resolves this mismatch by moving files to match the declared nav structure.
 
-## Trigger
+When a site has no `nav` key (alphabetical/default ordering), migration is simpler: split content-bearing section indexes, assign sequential weights from existing structure, and enable the plugin. No files are moved.
 
-The migration is triggered from the focus mode nav menu when both `mkdocs-nav-weight` is enabled and a `nav` key exists in `mkdocs.yml`. A warning icon appears; clicking it offers a "Migrate to mkdocs-nav-weight" button.
+## Entry Point
+
+`_startMigrationFlow()` is the single entry point for all migration. It is called from:
+
+- Content submenu "Migrate to mkdocs-nav-weight" menu item
+- Top-level warning "Migrate" action button (`actionId: 'start-migration'`)
+
+Every code path that can trigger migration must flow through `_startMigrationFlow()`. No migration entry point may bypass it.
+
+## Conditional Routing
+
+A `hasNavKey` flag (from `_ymlHasNavKey(_virtualMkdocsYml)`) determines which path executes:
+
+- `hasNavKey = true` — `_startMigrationFlowNavKey()` — full 7-phase migration
+- `hasNavKey = false` — `_startMigrationFlowAlphabetical()` — simpler migration
+
+## Phase 0: Hard Prerequisite — pip install check
+
+**HARD RULE INVARIANT**: The `!cfg.installed` check must execute before ANY migration work — before parsing nav structure, before reading files, before showing the confirmation dialog, before mutating navData. Every code path that can trigger migration must flow through `_startMigrationFlow()` which enforces this gate.
+
+Phase 0 runs unconditionally, before any other logic:
+
+- Checks `liveWysiwygNavWeightConfig.installed`
+- If `false`: shows informational dialog with pip install instructions, aborts immediately
+- If `true`: continues
+
+Attempting migration without the pip package causes MkDocs to crash (unrecoverable).
+
+## Phase 0b: Already-active check
+
+If `cfg.enabled && !hasNavKey`: the plugin is already active and no nav key exists. Shows "already active" dialog and aborts.
+
+## Phase Skip Summary
+
+| Phase | hasNavKey | !hasNavKey |
+|-------|-----------|------------|
+| 0. pip install check | Hard gate (abort if not installed) | Hard gate (abort if not installed) |
+| 1. Nav Structure Check | Parse nav, check duplicates | Skip |
+| 2. Build Link Index | Run | Run (scan content-bearing indexes) |
+| 3. Dir Structure / Index Split | Full: create dirs + split | Split only (no new dirs) |
+| 4. Move Documents | Move to target locations | Skip (files stay in place) |
+| 5. Set Visibility | Mark hidden as headless | Skip (all pages visible) |
+| 6. Titles, Weights, Config | Titles from nav, remove nav key | Titles from frontmatter/content, enable plugin |
+| 7. Consolidate Hidden | Move headless docs closer | Skip (no hidden docs) |
+
+## Alphabetical Migration Path
+
+When `hasNavKey = false`, `_startMigrationFlowAlphabetical()` runs the simpler path:
+
+- **Phase 3**: Splits content-bearing section `index.md` files. Creates thin index (`retitled: true`, `empty: true`) and a content page with the body.
+- **Phase 6**: `_applyAlphabeticalMigration()` assigns sequential weights (100, 200, 300...) to siblings at each level. Titles come from existing frontmatter or page title. Root index gets title only, no weight. Enables mkdocs-nav-weight in mkdocs.yml via `_stageNavWeightPlugin()`.
+- No files are moved, no pages are marked headless.
+
+## Confirmation Dialogs
+
+Each path has its own summary dialog showing the planned changes. The user sees a preview before committing to the migration.
+
+**Nav-key path dialog** (before full 7-phase migration):
+
+- Number of new index.md files to create
+- Number of documents to move
+- Number of pages that will receive titles/weights
+- Number of unlisted pages to mark headless
+- Number of hidden documents eligible for consolidation
+- Note that the `nav` key will be removed from mkdocs.yml
+- Note that relative links will be updated automatically
 
 ## Data Model
 
 The migration operates entirely on `liveWysiwygNavData` and snapshots. `_applyMigrationToNavData` synchronously mutates the navData tree — it does not query or modify the DOM. The nav menu DOM is rebuilt from the resulting snapshot via `_renderNavFromSnapshot()` after the migration is staged. The save planner (`_computeSavePlan` / `_planDiskOperations`) then diffs snapshots to produce disk operations. No DOM element, attribute, or query result influences migration logic.
 
-## Seven Phases
+---
 
-The migration executes as a batch operation with seven sequential phases. All phases run within a single batch save — the user sees a progress overlay and can review results before the final rebuild.
+## Full 7-Phase Migration (hasNavKey)
 
 ### Phase 1: Duplicate Detection
 
@@ -168,18 +233,6 @@ The migration pushes all ops into `_navBatchQueue`. The existing batch executor 
 
 The migration must push ops in the correct order within each phase group so that dependencies are satisfied (e.g., create a directory's index.md before moving pages into that directory).
 
-## Confirmation Dialog
-
-Before starting, the migration shows a summary dialog:
-
-- Number of new index.md files to create
-- Number of documents to move
-- Number of pages that will receive titles/weights
-- Number of unlisted pages to mark headless
-- Number of hidden documents eligible for consolidation
-- Note that the `nav` key will be removed from mkdocs.yml
-- Note that relative links will be updated automatically
-
 ## Error Handling
 
 - **Duplicate nav entries:** Hard stop before any work. User must fix mkdocs.yml manually.
@@ -191,9 +244,13 @@ Before starting, the migration shows a summary dialog:
 
 | Function | Purpose |
 |----------|---------|
+| `_startMigrationFlow()` | Single entry point; enforces Phase 0, routes to nav-key or alphabetical path |
+| `_startMigrationFlowNavKey()` | Full 7-phase migration when nav key exists |
+| `_startMigrationFlowAlphabetical()` | Simpler migration when no nav key |
+| `_applyAlphabeticalMigration()` | Assigns sequential weights, titles from frontmatter/content, enables plugin |
+| `_stageNavWeightPlugin()` | Enables mkdocs-nav-weight in mkdocs.yml |
 | `_migrationCheckDuplicates(navStructure)` | Phase 1: returns array of duplicate paths |
 | `_migrationSectionSlug(title)` | Slugify section title for directory name |
 | `_migrationComputeTargetTree(navStructure)` | Compute full target tree: pages, indexes, moves |
 | `_buildMigrationOps(navStructure, allMdSrcPaths)` | Generate ordered batch ops for all 7 phases |
-| `_startMigrationFlow()` | Orchestrate: parse nav, check dupes, show dialog, queue ops |
 | `_showNavDialogHtml(htmlContent, buttons)` | Dialog variant accepting HTML for scrollable content |

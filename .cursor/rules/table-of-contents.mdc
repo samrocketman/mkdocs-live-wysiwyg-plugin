@@ -17,4 +17,6 @@ alwaysApply: true
 
 5. **Non-interactive during nav edit mode.** During nav edit mode, the TOC remains visible but is covered by the read-only overlay. TOC links are non-clickable.
 
-6. **Scroll listener uses focus-main container.** Active heading tracking uses a scroll listener on `.live-wysiwyg-focus-main`, not `editableArea` or the document.
+6. **Scroll listener uses focus-main container.** Active heading tracking uses a scroll listener on `.live-wysiwyg-focus-main`, not `editableArea` or the document. See `layout.mdc` for scroll container contracts.
+
+7. **Layout contracts apply.** TOC sticky positioning (`position:sticky; top:0`), sidebar width (`12.1rem`), and the `< 60em` responsive breakpoint that hides the TOC are governed by `layout.mdc` and `DESIGN-layout.md`.

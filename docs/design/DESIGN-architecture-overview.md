@@ -124,6 +124,7 @@ flowchart LR
 #### Theming & Layout
 
 - [DESIGN-theme-detection.md](ui/DESIGN-theme-detection.md) -- Theme detection and CSS variables.
+- [DESIGN-layout.md](ui/DESIGN-layout.md) -- Positioning, animation, scroll, z-index, dropdown dismissal, and reparenting contracts.
 
 #### Browser Compatibility
 

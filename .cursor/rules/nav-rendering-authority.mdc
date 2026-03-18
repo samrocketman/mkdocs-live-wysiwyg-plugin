@@ -71,3 +71,5 @@ All callers must follow: **mutate navData → `_commitNavSnapshot()`**. No inter
 9. **Scroll-to-center is part of rendering.** `_renderNavFromSnapshot` finds the `--focused` `<li>` via `querySelector` after `_buildNavMenu` completes and scrolls it to the center of `_navScrollWrap` in a `requestAnimationFrame`. When no focused item exists, the previous scroll position is preserved.
 
 10. **Cmd/Ctrl+Click enters nav edit mode.** If `_navEditMode` is false when the user Cmd/Ctrl+Clicks, the click handler calls `_enterNavEditMode()` before `_toggleNavGroupItem()`. This allows group selection to start without requiring prior arrow-key interaction.
+
+11. **Layout contracts apply.** Nav sidebar scroll-to-focused positioning is governed by `layout.mdc` and `DESIGN-layout.md`. Layout may only *read* nav DOM for measurement and *scroll* the nav container — it must never modify nav DOM directly (see rule 1 above and `layout.mdc` rule 17).

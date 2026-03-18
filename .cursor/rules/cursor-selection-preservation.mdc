@@ -70,3 +70,7 @@ When modifying any code that touches editor state transitions, verify:
 Cookie-based capture/restore via `live_wysiwyg_nav_edit_cursor`. Captures `{ mode, selectionStart, selectionEnd, scrollTop, semantic }` on entry. Restored on discard or after save-and-reload. Cookie is consumed (deleted) after restoration.
 
 The "Remain in Focus Mode on Save" checkbox uses the same cookie mechanism: cursor is captured before save-and-reload, restored after the page reloads and focus mode is re-established.
+
+## Layout Subsystem Dependency
+
+Scroll position save/restore is part of cursor state. The Layout subsystem (`layout.mdc`, `DESIGN-layout.md`) governs which scroll container is active in each mode. Cursor preservation must target the correct scroll container: `editableArea` in normal mode, `.live-wysiwyg-focus-main` in focus mode.

@@ -24,10 +24,12 @@ Protects the image insertion dropdown, in-WYSIWYG resize, gear settings, and mar
 
 10. **Same-origin URLs are auto-converted to relative.** The image insertion dropdown detects same-origin absolute URLs and converts them to relative paths so they round-trip correctly through `resolveImageSrc`.
 
-11. **Focus mode compatibility.** Image dropdowns and gear dropdowns must use `position:fixed; z-index:10000` to render above the focus mode overlay.
+11. **Focus mode compatibility.** Image dropdowns and gear dropdowns must use `position:fixed; z-index:99999` to render above the focus mode overlay (`z-index:99990`). See `layout.mdc` for the authoritative z-index registry.
 
 12. **Cross-dropdown dismissal.** Opening the image insert dropdown, gear dropdown, link dropdown, admonition settings, or code settings must dismiss any other active dropdown. Switching editor modes must dismiss image selection and all image dropdowns.
 
 13. **`{ width=N }` attr_list parsing.** The `_markdownToHtml` pre-processor regex converts `![alt](src){ width=N }` to `<img ... data-size-syntax="attr">` before `marked` runs. This regex must run before the raw HTML preprocessor.
+
+15. **Layout contracts apply.** Z-index values, `position:fixed` positioning, cross-dropdown dismissal (`_dismissAllDropdowns()`), and resize handle placement are governed by `layout.mdc` and `DESIGN-layout.md`.
 
 14. **In-memory rendering bypass.** During the double rendering check (7I in focus-nav-menu, gated by `_inMemoryRenderMode = true`): `resolveImageSrc` must be skipped — image path rewriting is already handled by the link rewriter. `data-orig-src` must not be consulted or generated. `enhanceImages` (wrappers, gear buttons, resize handles) must be skipped. These are DOM-only UI enhancements that the markdown serializer strips, and their code paths are untested without DOM insertion.

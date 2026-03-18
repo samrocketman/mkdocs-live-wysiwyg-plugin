@@ -43,6 +43,7 @@ The following invariants that were previously in this rule now live in their ded
 - **Link rewriting, exclusion zones, case sensitivity, double rendering check**: See `content-scanning.mdc`
 - **Caution icon scoping and resolution**: See `caution-resolve-scoping.mdc`
 - **Nav DOM rendering authority**: See `nav-rendering-authority.mdc`
+- **Layout contracts (sidebar dimensions, z-index, scroll, positioning)**: See `layout.mdc`
 - **WebSocket limitations and workarounds**: See `upstream-websocket-wrapper.mdc`
 - **Save pipeline (snapshot diff, write planner, content refactoring)**: See `save-pipeline.mdc`
 

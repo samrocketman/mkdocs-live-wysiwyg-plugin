@@ -29,6 +29,10 @@ Runtime theme detection and CSS variable injection. The WYSIWYG plugin owns all 
 
 10. **Material theme is a hard requirement for nav menu.** `_isMaterialThemeDetected()` gates the entire nav subsystem. If a non-Material theme is detected, the nav menu is disabled: left sidebar remains blank, no arrows, no settings gears, no page management submenu, no batch editing, no migration.
 
+## Layout Subsystem Dependency
+
+Focus overlay inline styles set by `_detectThemeColors` include both colors (owned by Theme) and structural properties (owned by Layout). The z-index stacking order and overlay positioning are governed by `layout.mdc` and `DESIGN-layout.md`. Theme owns colors; Layout owns positioning and dimensions.
+
 ## Design Document
 
 See `docs/design/ui/DESIGN-theme-detection.md`

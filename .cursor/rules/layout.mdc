@@ -1,17 +1,17 @@
 ---
-description: Layout subsystem — editor width alignment and editing surface dimensions
+description: Layout subsystem — single authority for all positioning, dimension, animation, scroll, z-index, dropdown dismissal, and DOM reparenting across the WYSIWYG editor
 alwaysApply: true
 ---
 
 # Layout
 
+The Layout subsystem is the **single authority** for all positioning, dimension, animation, scroll, z-index stacking, dropdown dismissal, and DOM reparenting techniques across the WYSIWYG editor. Other subsystems define *what* needs to be positioned; Layout defines *how*. See `docs/design/ui/DESIGN-layout.md` for the full architecture, z-index registry, animation catalog, and scroll contracts.
+
+## Width Alignment (Unfocused Mode)
+
 The WYSIWYG plugin injects CSS overrides (via `<style id="live-wysiwyg-width-overrides">`) so that editing surfaces match the readonly HTML content width. The overrides are injected when the editor is enabled and removed when disabled.
 
-## Intent
-
 The content-editable area (`.md-editable-area`) and the markdown textarea (`.live-edit-source`) should be approximately the same width as the readonly HTML rendered by MkDocs. Without overrides, accumulated horizontal padding and margins from nested containers make the editing area significantly narrower.
-
-## Mechanism: Negative Margins
 
 The upstream `live-edit-plugin` sets `padding: 5px 10px` on `div.live-edit-controls`. Rather than modifying this padding (which would shift all child elements), the editing surfaces use **negative horizontal margins** (`margin-left: -10px; margin-right: -10px`) to extend through the padding and reach the controls border edge.
 
@@ -21,6 +21,8 @@ Affected selectors:
 - `.live-edit-wysiwyg-wrapper` inline style uses `margin: 5px 0` (no horizontal margin)
 
 ## Rules
+
+### Width Alignment Rules (1–6)
 
 1. **Buttons must not move.** The Save, Cancel, Edit, Rename, Delete, New buttons, and the "Live Edit:" label must remain in their original positions when the editor is enabled or disabled. This is why the controls padding is left unchanged and only the editing surfaces use negative margins.
 
@@ -34,4 +36,26 @@ Affected selectors:
 
 6. **Wrapper inline style.** The `.live-edit-wysiwyg-wrapper` container uses `margin: 5px 0` (set inline in JS). The horizontal `0` is intentional — the CSS override provides the negative margin to extend through the controls padding. Do not revert this to `margin: 5px`.
 
-This rule was formerly `editor-width-alignment.mdc`.
+### Layout Authority Rules (7–17)
+
+7. **Layout subsystem is the single authority for all positioning techniques.** Other subsystems define *what* needs to be positioned; Layout defines *how*. All positioning, dimension, animation, scroll, and reparenting techniques must be declared in `DESIGN-layout.md`.
+
+8. **Z-index values must be registered in `DESIGN-layout.md`.** No new z-index value may be introduced without adding it to the z-index registry. The registry is the single source of truth for stacking order.
+
+9. **All dropdowns and popups must use the universal positioning pattern.** `getBoundingClientRect()` on anchor, `position: fixed`, flip above/below if near viewport edge. New dropdown code must follow this contract.
+
+10. **All dropdown openers must call `_dismissAllDropdowns()`.** Every function that opens a dropdown, popup, or autocomplete must dismiss all other active dropdowns first via the centralized function. No ad-hoc dismiss calls. New dropdown types must add their dismiss function to `_dismissAllDropdowns()`.
+
+11. **All dialogs must support auto-expansion of text fields.** Use `_attachContainerExpandBehavior` or equivalent. Input fields in dropdowns must not clip or overflow — they must grow to accommodate the content.
+
+12. **Animation durations and easing are Layout contracts.** Toolbar drawer: `0.25s ease-in-out`. Sidebar collapse: `0.3s ease-in-out`. New animations must use existing durations where possible. Introducing new timing requires documenting it in `DESIGN-layout.md`.
+
+13. **Scroll containers are mode-dependent.** Normal mode: `editableArea`. Focus mode: `.live-wysiwyg-focus-main`. All scroll operations must target the correct container. `scrollToCenterCursor` auto-detects focus mode. TOC active heading tracking uses `.live-wysiwyg-focus-main`, not `window` or `editableArea`.
+
+14. **DOM reparenting order is a Layout invariant.** Enter focus: toolbar first, then editor wrapper. Exit: toolbar first (back into editor wrapper), then editor wrapper (back into original container). Violating the order breaks cursor preservation. Toolbar is always the **same DOM element** — never cloned or recreated. `_captureEditorSelection` must run before reparenting; `_restoreEditorSelection` must run after.
+
+15. **JS-only positioning must be declared in `DESIGN-layout.md`.** When CSS alone cannot achieve positioning (e.g., `getBoundingClientRect`-based dropdown placement, `_alignNavControls`, image resize), the technique must be documented in the Layout design doc.
+
+16. **Responsive breakpoints are Layout contracts.** `< 76.25em`: nav sidebar hidden. `< 60em`: TOC hidden. New responsive behavior must use these breakpoints or declare new ones in `DESIGN-layout.md`.
+
+17. **Nav DOM is never modified directly by Layout.** If a layout operation requires changing nav sidebar DOM (adding/removing elements, reordering items, toggling classes that represent persistent state), it must go through the Nav Renderer subsystem contract: mutate `liveWysiwygNavData`, then call `_commitNavSnapshot()`. Layout may only *read* nav DOM for measurement (e.g., `getBoundingClientRect`, `offsetTop`) and *scroll* the nav container. See `nav-rendering-authority.mdc`.

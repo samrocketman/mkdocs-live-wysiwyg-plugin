@@ -237,3 +237,7 @@ Triggered on the Insert click or URL blur when alt is empty and a URL has been t
 ## Implementation
 
 All dialog keyboard handling is implemented through `_attachDialogKeyboard(container, opts)` — a centralized function that encapsulates the rules above. See [DESIGN-centralized-keyboard.md](DESIGN-centralized-keyboard.md) for the full architecture and function signature.
+
+## Layout Subsystem
+
+Dropdown and popup positioning (z-index, `position:fixed`, viewport flip), cross-dropdown dismissal (`_dismissAllDropdowns()`), and text field auto-expansion are governed by the Layout subsystem. See [DESIGN-layout.md](DESIGN-layout.md) for the authoritative contracts.

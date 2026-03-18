@@ -13,7 +13,7 @@ The controls bar (`.live-edit-controls`) is provided by the upstream `mkdocs-liv
 
 ## Width Alignment
 
-Editing surfaces use negative horizontal margins (`-10px`) to extend through the controls bar padding and align with the readonly content width. The `<style id="live-wysiwyg-width-overrides">` block is injected in `replaceTextareaWithWysiwyg` and removed in the destroy path. Do not remove controls padding; use the negative-margin approach on editing surfaces only.
+Editing surfaces use negative horizontal margins (`-10px`) to extend through the controls bar padding and align with the readonly content width. The `<style id="live-wysiwyg-width-overrides">` block is injected in `replaceTextareaWithWysiwyg` and removed in the destroy path. Do not remove controls padding; use the negative-margin approach on editing surfaces only. See `layout.mdc` for the authoritative width alignment rules.
 
 ## Toggle Button Injection
 

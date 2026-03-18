@@ -41,3 +41,7 @@ The Dialog UX subsystem defines a unified keyboard interaction model for all pop
 ## Design Document
 
 See `docs/design/ui/DESIGN-popup-dialog-ux.md`.
+
+## Layout Subsystem Dependency
+
+Dropdown and popup positioning (z-index, `position:fixed`, viewport flip), cross-dropdown dismissal (`_dismissAllDropdowns()`), and text field auto-expansion are governed by `layout.mdc` and `DESIGN-layout.md`.

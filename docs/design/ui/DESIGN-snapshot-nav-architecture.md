@@ -831,3 +831,7 @@ Key: `live_wysiwyg_post_save_messages` in `localStorage`. Value: JSON array of `
 - A scrollable message list with type-specific icons
 - A "Dismiss" button in the footer
 - Fade-in on appearance; fade-out on dismiss or auto-dismiss
+
+## Layout Subsystem
+
+Notification panel positioning (`z-index:100002`), pipeline progress bar positioning (`z-index:100001`), and toast positioning (`z-index:100000`) are governed by the Layout subsystem z-index registry. See [DESIGN-layout.md](DESIGN-layout.md) for the authoritative contracts.

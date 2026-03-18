@@ -117,4 +117,4 @@ before passing to `marked`. This ensures the DOM has the correct attributes for 
 
 ## Focus Mode Compatibility
 
-Image dropdowns and gear dropdowns use `position: fixed; z-index: 10000` to render above the focus mode overlay (`z-index: 9999`).
+Image dropdowns and gear dropdowns use `position: fixed; z-index: 99999` to render above the focus mode overlay (`z-index: 99990`). See [DESIGN-layout.md](DESIGN-layout.md) for the authoritative z-index registry.

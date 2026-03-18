@@ -65,3 +65,7 @@ Unfocused Mode depends on the upstream `mkdocs-live-edit-plugin` for:
 - The textarea (`.live-edit-source`) that the WYSIWYG plugin replaces
 
 The WYSIWYG plugin augments the controls bar with the toggle button and replaces the textarea with the WYSIWYG editor wrapper when the user enables the editor.
+
+## Layout Subsystem
+
+Width alignment via negative margins, controls bar padding constraints, and dynamic style overrides are governed by the Layout subsystem. See [DESIGN-layout.md](DESIGN-layout.md) for the authoritative contracts.

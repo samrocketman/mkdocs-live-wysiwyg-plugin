@@ -16,3 +16,5 @@ alwaysApply: true
 4. **Toolbar hidden in Markdown mode.** When Markdown mode is active, the toolbar wrap section is hidden (`display:none`). The mode toggle, save, discard, and settings controls remain visible.
 
 5. **New buttons automatically available in focus mode.** Because the toolbar is reparented rather than duplicated, any new buttons added to the toolbar are automatically available in focus mode without additional wiring.
+
+6. **Layout contracts apply.** Toolbar reparenting order, drawer animation timing (`0.25s ease-in-out`), and flex-wrap layout are governed by `layout.mdc` and `DESIGN-layout.md`.

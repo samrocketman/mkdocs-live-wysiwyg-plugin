@@ -79,3 +79,7 @@ In the drawer controls, a "Page Management" button appears only when the Materia
 3. New toolbar buttons are automatically available in focus mode
 4. In Markdown mode, the toolbar wrap section is hidden; drawer controls remain visible
 5. Mode toggle reflects the current editor mode on entry and after each switch
+
+## Layout Subsystem
+
+Toolbar reparenting order, drawer animation timing, and flex-wrap layout are governed by the Layout subsystem. See [DESIGN-layout.md](DESIGN-layout.md) for the authoritative contracts.

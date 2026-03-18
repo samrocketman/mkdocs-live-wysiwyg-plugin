@@ -72,3 +72,7 @@ The dead link panel auto-expands a collapsed TOC before positioning (`_ensureToc
 2. Scroll listener uses `.live-wysiwyg-focus-main` as the scroll container
 3. TOC is rebuilt when switching between WYSIWYG and Markdown mode
 4. TOC is non-interactive during nav edit mode
+
+## Layout Subsystem
+
+TOC sticky positioning, sidebar width (`12.1rem`), scroll container contract (`.live-wysiwyg-focus-main`), and the `< 60em` responsive breakpoint are governed by the Layout subsystem. See [DESIGN-layout.md](DESIGN-layout.md) for the authoritative contracts.

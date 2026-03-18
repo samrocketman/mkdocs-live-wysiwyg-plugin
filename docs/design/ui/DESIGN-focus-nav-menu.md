@@ -272,3 +272,7 @@ Each `set_contents` / `new_file` / `delete_file` triggers a MkDocs rebuild. The 
 - **AJAX save routing**: The `page_path` variable in the live-edit IIFE is not accessible from outside. After AJAX navigation, saves are routed through the WYSIWYG plugin's dedicated WebSocket (`_wsSetContents`) instead.
 
 See `.cursor/rules/focus-nav-menu.mdc` for detailed constraints and future expansion notes.
+
+## Layout Subsystem
+
+Nav sidebar width (`15.8rem` + `--_nav-extend`), controls positioning, section expand/collapse animation, scroll-to-focused, and the `< 76.25em` responsive breakpoint are governed by the Layout subsystem. See [DESIGN-layout.md](DESIGN-layout.md) for the authoritative contracts.

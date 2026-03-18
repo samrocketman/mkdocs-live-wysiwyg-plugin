@@ -2919,7 +2919,7 @@
         selector: '.md-link-settings-input',
         onResize: function () { _repositionLinkDropdown(dropdown); }
       });
-      _compat.cacheClipboardForGesture();
+      if (!existingAnchor) _compat.cacheClipboardForGesture();
       requestAnimationFrame(function () {
         urlInput.focus(); urlInput.select();
         if (!existingAnchor && urlInput.value === 'https://') {

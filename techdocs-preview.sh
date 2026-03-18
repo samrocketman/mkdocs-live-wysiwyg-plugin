@@ -17,9 +17,46 @@ export GITHUB_DOWNLOAD_MIRROR yq_mirror
 
 # set SKIP_NEXUS=1 if you don't want to download from Nexus on VPN.
 TECHDOCS_HOST="${TECHDOCS_HOST:-127.0.0.1}"
-TECHDOCS_PORT="${TECHDOCS_PORT:-8000}"
-TECHDOCS_WEBSOCKET_PORT="${TECHDOCS_WEBSOCKET_PORT:-8484}"
+# if not defined, then TECHDOCS_PORT TECHDOCS_WEBSOCKET_PORT will be determined
 export TECHDOCS_HOST TECHDOCS_PORT TECHDOCS_WEBSOCKET_PORT
+
+# Returns desired port if available, otherwise a random available user-space
+# port (1024-65535).  Exits non-zero on each unavailable attempt so the caller
+# can retry via an until loop.
+available_port() {
+  local port="${1:-}"
+  if [ -z "$port" ]; then
+    port=$(( RANDOM % 64511 + 1024 ))
+  fi
+  if ! nc -z "$TECHDOCS_HOST" "$port" 2>/dev/null; then
+    echo "$port"
+    return 0
+  fi
+  return 1
+}
+
+# Resolve a port: try the desired default, fall back to random available port.
+# Usage: resolve_port <default>
+resolve_port() {
+  local retries=0 port
+  until port="$(available_port "${1:-}")"; do
+    retries=$(( retries + 1 ))
+    if [ "$retries" -ge 100 ]; then
+      echo "ERROR: Could not find an available port after 100 attempts." >&2
+      exit 1
+    fi
+    set -- ""
+    sleep .1
+  done
+  echo "$port"
+}
+
+if [ -z "${TECHDOCS_PORT:-}" ]; then
+  TECHDOCS_PORT="$(resolve_port 8000)"
+fi
+if [ -z "${TECHDOCS_WEBSOCKET_PORT:-}" ]; then
+  TECHDOCS_WEBSOCKET_PORT="$(resolve_port 8484)"
+fi
 
 uv_download_yaml() {
 cat <<'UV_DOWNLOAD_YAML'
@@ -275,12 +312,14 @@ mkdocs_config() {
       use_pymdownx_blocks: true${nav_weight_plugin}
   - live-edit:
       user_docs_dir: \"${PWD}/docs\"
+      websockets_port: ${TECHDOCS_WEBSOCKET_PORT}
   - live-wysiwyg"
   else
     plugins_block="plugins:
   - search${nav_weight_plugin}
   - live-edit:
       user_docs_dir: \"${PWD}/docs\"
+      websockets_port: ${TECHDOCS_WEBSOCKET_PORT}
   - live-wysiwyg"
   fi
 cat > "${TMP_DIR}"/rendered-mkdocs.yml <<EOF

@@ -72,7 +72,7 @@ This reason is registered in the caution reason string inventory alongside dead 
 `_showCautionPopup` renders action buttons for any warning reason registered in `_navCautionActions`. The mermaid config auto-fix is registered as `_navCautionActions[MERMAID_CONFIG_REASON]`. When the user clicks "Auto-fix mkdocs.yml":
 
 1. The popup is dismissed (dismiss-first invocation)
-2. The handler calls `_applyMermaidConfigFix()` which mutates `_virtualMkdocsYml` and `_virtualOriginalMkdocsYml` in-memory — no disk I/O
+2. The handler calls `_applyMermaidConfigFix()` which mutates `_virtualMkdocsYml` in-memory — no disk I/O
 3. Calls `_removeNavWarningReason(navItem, MERMAID_CONFIG_REASON)` to remove only the mermaid reason (respecting caution resolve scoping)
 4. Commits a nav snapshot so the icon update is reflected
 5. Enters edit mode so Save/Discard buttons become visible — the Declarative Save Planner's `mkdocsYmlOps` diff will detect the virtual change and emit `write-mkdocs-yml` ops when the user clicks Save
@@ -117,9 +117,8 @@ Applies the mermaid config fix to the virtual mkdocs.yml state in memory. No dis
 | Step | Action |
 |------|--------|
 | 1 | Apply `_addMermaidSuperfencesConfig` to `_virtualMkdocsYml` |
-| 2 | Apply `_addMermaidSuperfencesConfig` to `_virtualOriginalMkdocsYml` (if not null) |
 
-The save planner's `_computeSavePlan` compares the active snapshot's `mkdocsYml` against the original snapshot's `mkdocsYml`. When they differ, it emits `write-mkdocs-yml` ops for both files. The dual-write to the original mkdocs.yml (techdocs-preview) is handled by the save planner, not by the fix function.
+The save planner's `_computeSavePlan` compares the active snapshot's `mkdocsYml` against the original snapshot's `mkdocsYml`. When they differ, it emits `write-mkdocs-yml` (for `original-mkdocs.yml`) and `merge-mkdocs-yml` (for `../mkdocs.yml`) ops. The dual-write is handled by the save planner, not by the fix function.
 
 ---
 

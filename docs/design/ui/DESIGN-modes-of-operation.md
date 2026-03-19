@@ -103,6 +103,17 @@ Layer 4+: Theme Mode (override Focus or peer with Focus)
 | 2 | Focus | Focus Mode toolbar / fullscreen | X button / Escape | 99990 |
 | 3 | Mermaid | Expand button on mermaid code block (from Focus Mode only) | Close button, ESC, Ctrl+S | 99995 |
 
+### Disk I/O Authority by Layer
+
+| Layer | Disk I/O Pathway |
+|---|---|
+| 0 (Readonly) | None |
+| 1 (Unfocused) | Upstream live-edit-plugin Save button (direct WebSocket) |
+| 2 (Focus) | Declarative Save Planner exclusively (`_runBatchOps`) |
+| 3 (Mermaid) | None (all changes in-memory; persisted when Focus Mode saves) |
+
+In Focus Mode and above, no code path may perform disk writes outside the batch executor pipeline. This is enforced architecturally: all disk-writing functions (`_wsSetContents`, `_wsNewFile`, `_wsDeleteFile`, mutating `_apiPost`) are called only from `_execute*Op` functions dispatched by `_dispatchSingleOp` within `_runBatchOps`. See DESIGN-declarative-save-planner.md Invariant 10.
+
 ### Suppression Contract
 
 When Layer N is active, all layers < N must have:

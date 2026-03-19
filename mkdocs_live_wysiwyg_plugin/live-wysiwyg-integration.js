@@ -8240,7 +8240,6 @@
   var _warningDirectMode = false;
   var _navTopWarnings = [];
   var _virtualMkdocsYml = null;
-  var _virtualOriginalMkdocsYml = null;
 
   function _ymlHasNavKey(yml) {
     if (!yml || typeof yml !== 'string') return false;
@@ -8249,15 +8248,11 @@
 
   function _prefetchMkdocsYml() {
     if (_virtualMkdocsYml != null) return Promise.resolve();
-    return _wsGetContents('../mkdocs.yml').then(function (yml) {
+    var origPath = (typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml)
+      ? liveWysiwygOriginalMkdocsYml : null;
+    var primaryPath = origPath || '../mkdocs.yml';
+    return _wsGetContents(primaryPath).then(function (yml) {
       _virtualMkdocsYml = yml || '';
-      var origPath = (typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml)
-        ? liveWysiwygOriginalMkdocsYml : null;
-      if (origPath) {
-        return _wsGetContents(origPath).then(function (origYml) {
-          _virtualOriginalMkdocsYml = origYml || '';
-        });
-      }
     }).catch(function (err) {
       console.warn('[nav] Failed to pre-fetch mkdocs.yml:', err);
       _virtualMkdocsYml = '';
@@ -9166,9 +9161,19 @@
     return _waitForRebuild().then(function () {
       return _refreshLinkCheckPort();
     }).then(function () {
-      return _getOrCreateBulkWs();
-    }).catch(function (err) {
-      return _getOrCreateBulkWs();
+      var wsAttempts = 0;
+      var wsMaxAttempts = 20;
+      var wsDelay = 1500;
+      function tryConnect() {
+        wsAttempts++;
+        return _getOrCreateBulkWs().catch(function () {
+          if (wsAttempts < wsMaxAttempts) {
+            return new Promise(function (r) { setTimeout(r, wsDelay); }).then(tryConnect);
+          }
+          throw new Error('WebSocket did not recover after ' + wsMaxAttempts + ' attempts');
+        });
+      }
+      return tryConnect();
     });
   }
 
@@ -12992,7 +12997,6 @@
       JSON.stringify(snap.navData, _navContentHashReplacer),
       JSON.stringify(snap.batchQueue),
       snap.mkdocsYml || '',
-      snap.originalMkdocsYml || '',
       snap.migrationPending ? '1' : '0',
       snap.pendingFolderDelete ? JSON.stringify(snap.pendingFolderDelete) : ''
     ];
@@ -13021,7 +13025,6 @@
       focusTarget: _navFocusTarget,
       topWarnings: _navTopWarnings.slice(),
       mkdocsYml: _virtualMkdocsYml,
-      originalMkdocsYml: _virtualOriginalMkdocsYml,
       hasNavKey: _ymlHasNavKey(_virtualMkdocsYml),
       navWeightConfig: { installed: !!cfg.installed, enabled: !!cfg.enabled, default_page_weight: cfg.default_page_weight || 1000, frontmatter_defaults: cfg.frontmatter_defaults || null }
     };
@@ -13043,7 +13046,6 @@
     _navFocusTarget = snapshot.focusTarget;
     _navTopWarnings = snapshot.topWarnings ? snapshot.topWarnings.slice() : [];
     _virtualMkdocsYml = snapshot.mkdocsYml != null ? snapshot.mkdocsYml : null;
-    _virtualOriginalMkdocsYml = snapshot.originalMkdocsYml != null ? snapshot.originalMkdocsYml : null;
     if (snapshot.navWeightConfig) {
       if (typeof liveWysiwygNavWeightConfig !== 'undefined') {
         liveWysiwygNavWeightConfig.installed = snapshot.navWeightConfig.installed;
@@ -13486,7 +13488,9 @@
     function _resolveDesiredDir(suid) {
       if (_sectionDesiredDirCache.hasOwnProperty(suid)) return _sectionDesiredDirCache[suid];
       var cEntry = currFlat[suid];
-      if (!cEntry || !cEntry.folderDir) { _sectionDesiredDirCache[suid] = null; return null; }
+      if (!cEntry || !cEntry.folderDir) {
+        _sectionDesiredDirCache[suid] = null; return null;
+      }
       var baseName = cEntry.folderDir.split('/').pop();
       var effectiveParentDir = '';
       if (cEntry.parentUid && currFlat[cEntry.parentUid] && currFlat[cEntry.parentUid].folderDir) {
@@ -13634,11 +13638,40 @@
       }
     }
 
+    var mkdocsYmlPluginOps = [];
     var mkdocsYmlOps = [];
     if (currentSnap.mkdocsYml != null && currentSnap.mkdocsYml !== originalSnap.mkdocsYml) {
-      mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: currentSnap.mkdocsYml });
-      if (currentSnap.originalMkdocsYml != null && typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml) {
-        mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: liveWysiwygOriginalMkdocsYml, content: currentSnap.originalMkdocsYml });
+      var origHasNav = _ymlHasNavKey(originalSnap.mkdocsYml);
+      var currHasNav = _ymlHasNavKey(currentSnap.mkdocsYml);
+      var navWasRemoved = origHasNav && !currHasNav;
+
+      if (navWasRemoved) {
+        var strippedOrig = _removeNavKeyFromYaml(originalSnap.mkdocsYml);
+        var intermediate = _yamlDeepMerge(strippedOrig, currentSnap.mkdocsYml, originalSnap.mkdocsYml);
+        if (intermediate !== originalSnap.mkdocsYml) {
+          if (typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml) {
+            mkdocsYmlPluginOps.push({ type: 'write-mkdocs-yml', path: liveWysiwygOriginalMkdocsYml, content: intermediate });
+            mkdocsYmlPluginOps.push({ type: 'merge-mkdocs-yml', path: '../mkdocs.yml',
+              base: originalSnap.mkdocsYml, source: intermediate });
+          } else {
+            mkdocsYmlPluginOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: intermediate });
+          }
+        }
+        if (typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml) {
+          mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: liveWysiwygOriginalMkdocsYml, content: currentSnap.mkdocsYml });
+          mkdocsYmlOps.push({ type: 'merge-mkdocs-yml', path: '../mkdocs.yml',
+            base: intermediate, source: currentSnap.mkdocsYml });
+        } else {
+          mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: currentSnap.mkdocsYml });
+        }
+      } else {
+        if (typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml) {
+          mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: liveWysiwygOriginalMkdocsYml, content: currentSnap.mkdocsYml });
+          mkdocsYmlOps.push({ type: 'merge-mkdocs-yml', path: '../mkdocs.yml',
+            base: originalSnap.mkdocsYml, source: currentSnap.mkdocsYml });
+        } else {
+          mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: currentSnap.mkdocsYml });
+        }
       }
     }
 
@@ -13647,6 +13680,7 @@
       sections: sections,
       convertOps: convertOps,
       createFolderOps: createFolderOps,
+      mkdocsYmlPluginOps: mkdocsYmlPluginOps,
       mkdocsYmlOps: mkdocsYmlOps
     };
   }
@@ -13688,6 +13722,13 @@
     var folderRenames = [];
     var coveredByFolderRename = {};
 
+    console.log('[DEBUG-SAVE] dirMoves:', JSON.stringify(Object.keys(dirMoves).map(function(k) {
+      return k + ' → ' + JSON.stringify(Object.keys(dirMoves[k]).map(function(dk) { return dk + '(' + dirMoves[k][dk].length + ')'; }));
+    })));
+    console.log('[DEBUG-SAVE] filesByDiskDir:', JSON.stringify(Object.keys(filesByDiskDir).map(function(k) {
+      return k + '(' + filesByDiskDir[k].length + '): ' + filesByDiskDir[k].map(function(f) { return f.uid + ':' + f.diskPath + '→' + f.desiredPath; }).join(', ');
+    })));
+
     for (var srcDir in dirMoves) {
       if (!dirMoves.hasOwnProperty(srcDir)) continue;
       var destDirs = Object.keys(dirMoves[srcDir]);
@@ -13725,6 +13766,9 @@
     folderRenames.sort(function (a, b) {
       return (b.newFolder.match(/\//g) || []).length - (a.newFolder.match(/\//g) || []).length;
     });
+
+    console.log('[DEBUG-SAVE] folderRenames:', JSON.stringify(folderRenames));
+    console.log('[DEBUG-SAVE] coveredByFolderRename UIDs:', Object.keys(coveredByFolderRename));
 
     var precomputedRenames = {};
     for (var fri = 0; fri < folderRenames.length; fri++) {
@@ -13849,12 +13893,12 @@
       batch2ContentMigration.push({ type: 'rewrite-links', renameMap: allRenames, deletedPaths: deletedPaths });
     }
 
-    var mkdocsYmlOps = desiredState.mkdocsYmlOps || [];
-
-    var _finalBatch2 = [].concat(mkdocsYmlOps, batch2DeleteFiles, batch2MoveFiles, convertOps, createFolderOps, batch2CreateFiles, batch2ContentMigration);
+    var _finalBatch2 = [].concat(batch2DeleteFiles, batch2MoveFiles, convertOps, createFolderOps, batch2CreateFiles, batch2ContentMigration);
     return {
       batch1: batch1,
       batch2: _finalBatch2,
+      mkdocsYmlPluginOps: desiredState.mkdocsYmlPluginOps || [],
+      mkdocsYmlOps: desiredState.mkdocsYmlOps || [],
       precomputedRenames: precomputedRenames
     };
   }
@@ -13878,7 +13922,12 @@
     var plan = _planDiskOperations(desiredState);
 
     var orderedOps = [];
-    if (plan.batch1.length) {
+    if (plan.mkdocsYmlPluginOps.length) {
+      orderedOps = orderedOps.concat(plan.mkdocsYmlPluginOps);
+      orderedOps.push({ type: 'wait-for-rebuild' });
+    }
+    if (plan.mkdocsYmlOps.length || plan.batch1.length) {
+      orderedOps = orderedOps.concat(plan.mkdocsYmlOps);
       orderedOps = orderedOps.concat(plan.batch1);
       orderedOps.push({ type: 'wait-for-rebuild' });
     }
@@ -13906,6 +13955,29 @@
       _setSetting('live_wysiwyg_migration_normalize', '1');
     }
     _persistWarningsFromSnapshot();
+
+    console.log('[DEBUG-SAVE] desiredState items (diskPath→desiredPath):');
+    (desiredState.items || []).forEach(function(it) {
+      if (it.isDeleted) console.log('  DEL', it.uid, it.diskPath);
+      else if (it.isNew) console.log('  NEW', it.uid, it.desiredPath);
+      else if (it.diskPath !== it.desiredPath) console.log('  MOVE', it.uid, it.diskPath, '→', it.desiredPath);
+    });
+    console.log('[DEBUG-SAVE] desiredState sections:');
+    (desiredState.sections || []).forEach(function(s) {
+      console.log('  SEC', s.uid, 'disk:', s.diskDir, 'desired:', s.desiredDir, s.isNew ? 'NEW' : '', s.isDeleted ? 'DEL' : '');
+    });
+    console.log('[DEBUG-SAVE] orderedOps (' + orderedOps.length + '):');
+    orderedOps.forEach(function(op, idx) {
+      if (op.type === 'rename-folder') console.log('  ' + idx + ': rename-folder', op.oldFolder, '→', op.newFolder);
+      else if (op.type === 'rename-page') console.log('  ' + idx + ': rename-page', op.oldPath, '→', op.newPath);
+      else if (op.type === 'create-page') console.log('  ' + idx + ': create-page', op.path);
+      else if (op.type === 'delete-page') console.log('  ' + idx + ': delete-page', op.path);
+      else if (op.type === 'set-frontmatter') console.log('  ' + idx + ': set-frontmatter', op.src_path);
+      else if (op.type === 'rewrite-links') console.log('  ' + idx + ': rewrite-links', Object.keys(op.renameMap || {}).length, 'renames');
+      else console.log('  ' + idx + ':', op.type, op.path || op.folder || '');
+    });
+    console.log('[DEBUG-SAVE] precomputedRenames:', JSON.stringify(plan.precomputedRenames || {}));
+
     _exitNavEditModeDestructive(false);
     _warningDirectMode = true;
     _runBatchOps(contentEl, orderedOps, focusTarget, { precomputedRenames: plan.precomputedRenames });
@@ -14089,6 +14161,12 @@
   }
 
   function _dispatchSingleOp(op) {
+    if (op.type === 'rename-folder') console.log('[DEBUG-EXEC] rename-folder', op.oldFolder, '→', op.newFolder);
+    else if (op.type === 'rename-page') console.log('[DEBUG-EXEC] rename-page', op.oldPath, '→', op.newPath);
+    else if (op.type === 'create-page') console.log('[DEBUG-EXEC] create-page', op.path);
+    else if (op.type === 'delete-page') console.log('[DEBUG-EXEC] delete-page', op.path);
+    else if (op.type === 'set-frontmatter') console.log('[DEBUG-EXEC] set-frontmatter', op.src_path);
+    else console.log('[DEBUG-EXEC]', op.type, op.path || op.folder || op.oldPath || '');
     if (op.type === 'wait-for-rebuild') {
       return _waitForRebuildAndReconnect();
     }
@@ -14110,6 +14188,14 @@
     if (op.type === 'set-headless') return _executeSetHeadlessOp(op);
     if (op.type === 'set-frontmatter') return _executeSetFrontmatterOp(op);
     if (op.type === 'write-mkdocs-yml') return _wsSetContents(op.path, op.content);
+    if (op.type === 'merge-mkdocs-yml') {
+      return _wsGetContents(op.path).then(function (diskContent) {
+        diskContent = diskContent || '';
+        var merged = _yamlDeepMerge(op.base, op.source, diskContent);
+        if (merged === diskContent) return;
+        return _wsSetContents(op.path, merged);
+      });
+    }
     return Promise.resolve();
   }
 
@@ -14173,8 +14259,7 @@
       return chain;
     }).then(function () {
       _updateNavProgress(statusContainer, 99, 'Waiting for rebuild...');
-      _closeBulkWs();
-      return _waitForRebuild();
+      return _waitForRebuildAndReconnect();
     }).then(function () {
       _finishBatchSave(statusContainer, failures, focusTarget, options);
     }).catch(function (err) {
@@ -16930,7 +17015,7 @@
     var existingByPath = {};
     (function collect(items) {
       for (var i = 0; i < items.length; i++) {
-        if (items[i].src_path) existingByPath[items[i].src_path] = items[i];
+        if (items[i].src_path && items[i].type !== 'section') existingByPath[items[i].src_path] = items[i];
         if (items[i].children) collect(items[i].children);
       }
     })(liveWysiwygNavData);
@@ -16958,7 +17043,7 @@
     var existingByPath = {};
     (function collect(items) {
       for (var i = 0; i < items.length; i++) {
-        if (items[i].src_path) existingByPath[items[i].src_path] = items[i];
+        if (items[i].src_path && items[i].type !== 'section') existingByPath[items[i].src_path] = items[i];
         if (items[i].children) collect(items[i].children);
       }
     })(liveWysiwygNavData);
@@ -17235,11 +17320,6 @@
 
     for (var vt = 0; vt < ymlTransforms.length; vt++) {
       _virtualMkdocsYml = ymlTransforms[vt](_virtualMkdocsYml || '');
-    }
-    if (_virtualOriginalMkdocsYml != null) {
-      for (var vo = 0; vo < ymlTransforms.length; vo++) {
-        _virtualOriginalMkdocsYml = ymlTransforms[vo](_virtualOriginalMkdocsYml);
-      }
     }
 
     if (suggestedDefaultWeight) {
@@ -17670,9 +17750,6 @@
       };
     }
     _virtualMkdocsYml = _insertNavWeightEntry(_virtualMkdocsYml || '');
-    if (_virtualOriginalMkdocsYml != null) {
-      _virtualOriginalMkdocsYml = _insertNavWeightEntry(_virtualOriginalMkdocsYml);
-    }
     _removeNavTopWarning('nav-weight-not-installed');
     if (!_navBadges.some(function (b) { return b.text === 'mkdocs-nav-weight plugin staged'; })) {
       _addNavBadge({
@@ -17690,9 +17767,6 @@
 
   function _applyDefaultPageWeight(newWeight) {
     _virtualMkdocsYml = _replaceDefaultPageWeight(_virtualMkdocsYml || '', newWeight);
-    if (_virtualOriginalMkdocsYml != null) {
-      _virtualOriginalMkdocsYml = _replaceDefaultPageWeight(_virtualOriginalMkdocsYml, newWeight);
-    }
     liveWysiwygNavWeightConfig.default_page_weight = newWeight;
     _removeNavTopWarning('weight-exceeds-default');
     _commitNavSnapshot();
@@ -21342,9 +21416,6 @@
     if (maxW <= defWeight) return;
     var suggested = Math.ceil((maxW + 500) / 1000) * 1000;
     _virtualMkdocsYml = _replaceDefaultPageWeight(_virtualMkdocsYml || '', suggested);
-    if (_virtualOriginalMkdocsYml != null) {
-      _virtualOriginalMkdocsYml = _replaceDefaultPageWeight(_virtualOriginalMkdocsYml, suggested);
-    }
     liveWysiwygNavWeightConfig.default_page_weight = suggested;
     _removeNavTopWarning('weight-exceeds-default');
   }
@@ -21732,6 +21803,102 @@
       _PYTHON_NAME_TAG + '$1');
   }
 
+  function _yamlListItemKey(item) {
+    if (typeof item === 'string') return item;
+    if (item && typeof item === 'object') {
+      var keys = Object.keys(item);
+      if (keys.length > 0) return keys[0];
+    }
+    return JSON.stringify(item);
+  }
+
+  function _yamlDeepMerge(base, source, target) {
+    var baseParsed, sourceParsed, targetParsed;
+    try {
+      baseParsed = jsyaml.load(_preProcessYaml(base || '')) || {};
+      sourceParsed = jsyaml.load(_preProcessYaml(source || '')) || {};
+      targetParsed = jsyaml.load(_preProcessYaml(target || '')) || {};
+    } catch (e) {
+      console.warn('[nav] _yamlDeepMerge: YAML parse error, falling back to source:', e);
+      return source;
+    }
+
+    var LIST_KEYS = { plugins: true, markdown_extensions: true };
+
+    function mergeValue(baseVal, sourceVal, targetVal, key) {
+      if (JSON.stringify(baseVal) === JSON.stringify(sourceVal)) return targetVal;
+      if (key && LIST_KEYS[key] && Array.isArray(baseVal) && Array.isArray(sourceVal) && Array.isArray(targetVal)) {
+        return mergeList(baseVal, sourceVal, targetVal);
+      }
+      if (baseVal && sourceVal && typeof baseVal === 'object' && typeof sourceVal === 'object' &&
+          !Array.isArray(baseVal) && !Array.isArray(sourceVal) &&
+          targetVal && typeof targetVal === 'object' && !Array.isArray(targetVal)) {
+        return mergeMap(baseVal, sourceVal, targetVal);
+      }
+      return sourceVal;
+    }
+
+    function mergeMap(baseMap, sourceMap, targetMap) {
+      var result = {};
+      var k;
+      for (k in targetMap) {
+        if (targetMap.hasOwnProperty(k)) result[k] = targetMap[k];
+      }
+      for (k in sourceMap) {
+        if (!sourceMap.hasOwnProperty(k)) continue;
+        if (baseMap.hasOwnProperty(k)) {
+          result[k] = mergeValue(baseMap[k], sourceMap[k], result.hasOwnProperty(k) ? result[k] : sourceMap[k], k);
+        } else {
+          result[k] = sourceMap[k];
+        }
+      }
+      for (k in baseMap) {
+        if (baseMap.hasOwnProperty(k) && !sourceMap.hasOwnProperty(k)) {
+          delete result[k];
+        }
+      }
+      return result;
+    }
+
+    function mergeList(baseList, sourceList, targetList) {
+      var baseKeys = {};
+      for (var bi = 0; bi < baseList.length; bi++) {
+        baseKeys[_yamlListItemKey(baseList[bi])] = baseList[bi];
+      }
+      var sourceKeys = {};
+      for (var si = 0; si < sourceList.length; si++) {
+        sourceKeys[_yamlListItemKey(sourceList[si])] = sourceList[si];
+      }
+      var result = [];
+      for (var ti = 0; ti < targetList.length; ti++) {
+        var tKey = _yamlListItemKey(targetList[ti]);
+        if (baseKeys.hasOwnProperty(tKey) && !sourceKeys.hasOwnProperty(tKey)) {
+          continue;
+        }
+        if (sourceKeys.hasOwnProperty(tKey)) {
+          result.push(sourceKeys[tKey]);
+        } else {
+          result.push(targetList[ti]);
+        }
+      }
+      for (var ai = 0; ai < sourceList.length; ai++) {
+        var aKey = _yamlListItemKey(sourceList[ai]);
+        if (!baseKeys.hasOwnProperty(aKey)) {
+          var alreadyInResult = false;
+          for (var ri = 0; ri < result.length; ri++) {
+            if (_yamlListItemKey(result[ri]) === aKey) { alreadyInResult = true; break; }
+          }
+          if (!alreadyInResult) result.push(sourceList[ai]);
+        }
+      }
+      return result;
+    }
+
+    var merged = mergeMap(baseParsed, sourceParsed, targetParsed);
+    var dumped = jsyaml.dump(merged, { indent: 2, lineWidth: -1, noRefs: true });
+    return _postProcessYaml(dumped);
+  }
+
   function _isMermaidConfiguredInYml(yml) {
     if (!yml) return false;
     try {
@@ -21831,9 +21998,6 @@
   function _applyMermaidConfigFix() {
     if (_virtualMkdocsYml != null) {
       _virtualMkdocsYml = _addMermaidSuperfencesConfig(_virtualMkdocsYml);
-    }
-    if (_virtualOriginalMkdocsYml != null) {
-      _virtualOriginalMkdocsYml = _addMermaidSuperfencesConfig(_virtualOriginalMkdocsYml);
     }
   }
 

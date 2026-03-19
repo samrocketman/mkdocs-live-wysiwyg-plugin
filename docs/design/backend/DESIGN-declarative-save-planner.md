@@ -56,7 +56,7 @@ Both are flattened via `_flattenNavTree` into UID-keyed maps. Each entry contain
   ],
   convertOps: [...],       // pass-through: convert-folder-to-page, regenerate-index
   createFolderOps: [...],  // create-folder ops from batchQueue
-  mkdocsYmlOps: [...]      // write-mkdocs-yml ops if yml changed
+  mkdocsYmlOps: [...]      // write-mkdocs-yml / merge-mkdocs-yml ops if yml changed
 }
 ```
 
@@ -103,13 +103,14 @@ The desired state from Phase 1.
 
 ```
 {
+  mkdocsYmlOps: [...],        // mkdocs.yml writes (must execute before file ops)
   batch1: [...],              // folder-level ops (renames, deletes)
   batch2: [...],              // file-level ops + content migration
   precomputedRenames: {...}   // original path → post-folder-rename path
 }
 ```
 
-This is the same shape the batch executor (`_runBatchOps`) expects. The executor, dispatcher (`_dispatchSingleOp`), and all individual executors are unchanged.
+The executor (`_runBatchOps`), dispatcher (`_dispatchSingleOp`), and all individual executors are unchanged. `_executeNavBatchSave` constructs the ordered ops array: `mkdocsYmlOps` + wait → `batch1` + wait → `batch2`.
 
 ### Folder Rename Detection Algorithm
 
@@ -150,7 +151,7 @@ Asset (binary) file moves are always handled by the API server, never the WebSoc
 
 Folder deletes include a safety check: before emitting a `delete-folder` op, the planner iterates `items[]` to verify no non-deleted items (pages or assets) have `diskPath` or `desiredPath` under the folder prefix. This prevents deleting directories that contain files being moved elsewhere.
 
-After Batch 1, a `wait-for-rebuild` op triggers MkDocs to rebuild and the WebSocket to reconnect before Batch 2 begins.
+Each phase that produces ops gets its own `wait-for-rebuild`: one after mkdocs.yml writes (lets the config reload complete before files move), one after Batch 1 folder ops (lets MkDocs rebuild with the new file layout before Batch 2 WebSocket ops begin).
 
 ### Batch 2: File Operations + Content Migration
 
@@ -158,13 +159,12 @@ Operations are ordered within Batch 2 as follows:
 
 | Sub-phase | Op Types | Source |
 |-----------|----------|--------|
-| 2a | `write-mkdocs-yml` | `mkdocsYmlOps` |
-| 2b | `delete-page`, `delete-file` | Items with `isDeleted: true` (branched by `itemType`) |
-| 2c | `rename-page` | Moved pages NOT covered by folder renames |
-| 2d | `convert-folder-to-page`, `regenerate-index`, `create-folder` | `convertOps` and `createFolderOps` pass-through |
-| 2e | `create-page` | New pages with `createContent` |
-| 2f | `set-frontmatter` | Pages with changed frontmatter or `setContent` |
-| 2f | `rewrite-links` | Aggregated rename map + deleted paths (pages + assets) |
+| 2a | `delete-page`, `delete-file` | Items with `isDeleted: true` (branched by `itemType`) |
+| 2b | `rename-page` | Moved pages NOT covered by folder renames |
+| 2c | `convert-folder-to-page`, `regenerate-index`, `create-folder` | `convertOps` and `createFolderOps` pass-through |
+| 2d | `create-page` | New pages with `createContent` |
+| 2e | `set-frontmatter` | Pages with changed frontmatter or `setContent` |
+| 2e | `rewrite-links` | Aggregated rename map + deleted paths (pages + assets) |
 
 ### Frontmatter Diff Logic
 
@@ -284,3 +284,4 @@ This ensures binary files survive the migration without generating spurious dele
 7. **Headless pages are excluded from weight normalization.** `_applyNormalizeWeightsToNavData`, `_normalizeChildWeightsInMemory`, and `_autoNormalizeSiblingWeights` all skip pages with `item.headless === true`. Headless pages must never receive a weight — they exist outside the ordered navigation.
 8. **Auto-normalize waits for hidden page precomputation.** `_autoNormalizeAfterMigration` polls `_navHiddenPagesPrecomputed` before proceeding. This ensures `_precomputeHiddenPages` has finished adding hidden pages (with `headless: true`) to `liveWysiwygNavData` before weight normalization runs. Without this, a race condition causes headless pages to appear as regular pages and receive weights.
 9. **All planning inputs come from snapshots, never DOM.** Both `_computeSavePlan` and `_planDiskOperations` operate exclusively on navData snapshots flattened via `_flattenNavTree`. No DOM element, attribute, or query result influences the desired state or disk plan. The DOM is rebuilt after save as part of the page reload cycle.
+10. **Exclusive disk I/O in Focus Mode.** In Focus Mode (Layer 2+), the Declarative Save Planner is the sole pathway for all disk-writing operations. No code outside the batch executor (`_runBatchOps` → `_dispatchSingleOp` → `_execute*Op`) may call `_wsSetContents`, `_wsNewFile`, `_wsDeleteFile`, or mutating `_apiPost` endpoints. All user actions — nav edits, document saves, migration, mkdocs.yml changes, mermaid edits — are expressed as in-memory mutations to snapshot state. Disk writes happen only when the user triggers Save, at which point the planner diffs snapshots and the executor runs the resulting ops. This rule does not apply to Unfocused Mode (Layer 1), where the upstream live-edit-plugin's Save button writes directly via its own WebSocket.

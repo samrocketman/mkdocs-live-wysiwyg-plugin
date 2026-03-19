@@ -1,0 +1,11 @@
+# Cardinal Rules Registry
+
+Cardinal rules are cross-cutting constraints that apply across the entire WYSIWYG editor. They are cataloged in the global registry at the top of `docs/design/DESIGN-architecture-overview.md`.
+
+## Rules
+
+1. **Registry must stay in sync.** When you add, update, or remove a cardinal rule in any design document or cursor rule, you must also update the cardinal rules table in `docs/design/DESIGN-architecture-overview.md` to match. This includes adding new rows, updating summaries, and removing obsolete entries.
+
+2. **Cardinal rules are defined in their authoritative source.** The full definition and rationale live in the design document or cursor rule listed in the "Authoritative Source" column. The architecture overview table contains only a summary.
+
+3. **New cardinal rules must have an authoritative source.** Every cardinal rule must be fully defined in exactly one design document or cursor rule. The architecture overview references it; it does not replace the authoritative source.

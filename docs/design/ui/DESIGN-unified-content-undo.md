@@ -114,6 +114,7 @@ Grouping only applies when an entire construct appears or disappears in one diff
 |---------|----------|
 | Mode switch | `proto.switchToMode` in `patchSetValueAndGetValueForFrontmatter` |
 | Nav edit mode entry | `_enterNavEditMode` |
+| Mermaid mode exit (before direct DAG node) | `_applyCodeAndTeardown` in `_exitMermaidModeAsync` |
 | Paste | `ea.addEventListener('paste', ...)` handlers |
 | Toolbar format commands | `_handleToolbarClick`, `_insertCodeBlock`, `_wrapSelectionInBlockquote`, etc. |
 | Nav menu drag-and-drop | `ea.addEventListener('drop', ...)` handler |
@@ -258,3 +259,5 @@ The double render check (`_doubleRenderCheck`) is the corruption guard that prev
 9. **`activeChildId` determines default redo.** `Cmd+Shift+Z` always follows `activeChildId`. A future branch picker can change this via `_switchHistoryBranch`.
 
 10. **Never discard redo branches.** Old children remain in the `children` array when new branches are created. Only pruning (lifecycle cap) removes nodes, and it only removes leaves not on the current path.
+
+11. **Mermaid edits use direct DAG node creation.** `_applyCodeAndTeardown` flushes pending captures, replaces the mermaid fenced code block at the markdown level, and creates a DAG node directly — bypassing `_doubleRenderCheck`. This is safe because the edit is a known-good string replacement inside a fenced code block. `_historySetContent` applies the new markdown via the full content-loading contract. See [DESIGN-mermaid-mode.md](../../mermaid/DESIGN-mermaid-mode.md) § Undo-Redo DAG Integration.

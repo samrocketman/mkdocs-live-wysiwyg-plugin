@@ -51,12 +51,19 @@ resolve_port() {
   echo "$port"
 }
 
-if [ -z "${TECHDOCS_PORT:-}" ]; then
-  TECHDOCS_PORT="$(resolve_port 8000)"
-fi
-if [ -z "${TECHDOCS_WEBSOCKET_PORT:-}" ]; then
-  TECHDOCS_WEBSOCKET_PORT="$(resolve_port 8484)"
-fi
+resolve_ports() {
+  if [ -z "${TECHDOCS_PORT:-}" ]; then
+    TECHDOCS_PORT="$(resolve_port 8000)"
+  fi
+  if [ -z "${TECHDOCS_WEBSOCKET_PORT:-}" ]; then
+    TECHDOCS_WEBSOCKET_PORT="$(resolve_port 8484)"
+  fi
+}
+
+default_ports() {
+  TECHDOCS_PORT="${TECHDOCS_PORT:-8000}"
+  TECHDOCS_WEBSOCKET_PORT="${TECHDOCS_WEBSOCKET_PORT:-8484}"
+}
 
 uv_download_yaml() {
 cat <<'UV_DOWNLOAD_YAML'
@@ -203,6 +210,32 @@ add_markdown_extension_if_missing() {
   }; then
     yq -i '.markdown_extensions = ((.markdown_extensions // []) + ["'"$ext"'"])' "$config"
   fi
+}
+
+# Add pymdownx.superfences with mermaid custom_fences if superfences is not
+# already configured.  If the user already has pymdownx.superfences (as a
+# string or map), their configuration is left untouched — they may have a more
+# advanced custom_fences setup.
+add_superfences_with_mermaid_if_missing() {
+  local config="$1"
+  # If pymdownx.superfences already present (string or map), leave it alone
+  if yq -e 'has("markdown_extensions")' "$config" &>/dev/null && {
+    yq '.markdown_extensions[] | select(. == "pymdownx.superfences" or (tag == "!!map" and has("pymdownx.superfences")))' \
+      "$config" 2>/dev/null | \
+      grep -q .
+  }; then
+    return
+  fi
+  # Write a YAML snippet with the !!python/name tag (cannot be constructed
+  # inline in yq expressions) and load it for the merge.
+  cat > "${TMP_DIR}"/superfences-mermaid.yml <<'SFEOF'
+- pymdownx.superfences:
+    custom_fences:
+      - name: mermaid
+        class: mermaid
+        format: !!python/name:pymdownx.superfences.fence_code_format
+SFEOF
+  yq -i '.markdown_extensions = ((.markdown_extensions // []) + load("'"${TMP_DIR}"'/superfences-mermaid.yml"))' "$config"
 }
 
 # A CSV of plugins to be excluded.
@@ -396,7 +429,7 @@ PYEOF
   fi
   add_markdown_extension_if_missing admonition "${TMP_DIR}"/rendered-mkdocs.yml
   add_markdown_extension_if_missing pymdownx.details "${TMP_DIR}"/rendered-mkdocs.yml
-  add_markdown_extension_if_missing pymdownx.superfences "${TMP_DIR}"/rendered-mkdocs.yml
+  add_superfences_with_mermaid_if_missing "${TMP_DIR}"/rendered-mkdocs.yml
   if [ -f "${TMP_DIR}"/user-plugins.yml ]; then
     merge_user_plugins "${TMP_DIR}"/user-plugins.yml < "${TMP_DIR}"/rendered-mkdocs.yml
   else
@@ -633,6 +666,7 @@ elif [ "${1:-}" = upgrade ]; then
   FORCE_UPDATE=1 install_techdocs
 elif [ "${1:-}" = build ]; then
   shift
+  default_ports
   install_techdocs
   build "$@"
 elif [ "${1:-}" = uninstall ]; then
@@ -644,6 +678,7 @@ else
   if [ "${1:-}" = serve ]; then
     shift
   fi
+  resolve_ports
   install_techdocs
   serve "$@"
 fi

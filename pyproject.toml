@@ -55,6 +55,11 @@ packages = ["mkdocs_live_wysiwyg_plugin"]
 "mkdocs_live_wysiwyg_plugin/vendor/README.md" = "mkdocs_live_wysiwyg_plugin/vendor/README.md"
 "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.marked" = "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.marked"
 "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.editor" = "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.editor"
+"mkdocs_live_wysiwyg_plugin/vendor/mermaid.min.js" = "mkdocs_live_wysiwyg_plugin/vendor/mermaid.min.js"
+"mkdocs_live_wysiwyg_plugin/vendor/LICENSE.mermaid" = "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.mermaid"
+"mkdocs_live_wysiwyg_plugin/vendor/LICENSE.mermaid-live-editor" = "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.mermaid-live-editor"
+"mkdocs_live_wysiwyg_plugin/vendor/NOTICES.mermaid-live-editor" = "mkdocs_live_wysiwyg_plugin/vendor/NOTICES.mermaid-live-editor"
+"mkdocs_live_wysiwyg_plugin/vendor/mermaid-live-editor" = "mkdocs_live_wysiwyg_plugin/vendor/mermaid-live-editor"
 "mkdocs_live_wysiwyg_plugin/wysiwyg.svg" = "mkdocs_live_wysiwyg_plugin/wysiwyg.svg"
 
 [[tool.uv.index]]

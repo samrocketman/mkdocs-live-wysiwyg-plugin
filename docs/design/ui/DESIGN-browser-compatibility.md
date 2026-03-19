@@ -219,6 +219,12 @@ Since the nav menu drag source and the editable area drop target are on the same
 
 Safari does not always populate `DataTransfer.items` during drag events. All type-checking during `dragover`/`dragenter` must use `e.dataTransfer.types` (a `DOMStringList`), never `e.dataTransfer.items`. Actual data retrieval uses `e.dataTransfer.getData()` in the `drop` handler only.
 
+### WebKit Editable Area Elastic Horizontal Scroll
+
+Safari (WebKit) on macOS shows a momentary horizontal scroll indicator on the `.md-editable-area` contenteditable element due to elastic "rubber band" momentum scrolling. Chrome and Firefox do not exhibit this. The `.md-editable-area` sets `overflow-y: auto` without an explicit `overflow-x`; per CSS spec, when one overflow axis is not `visible` the other becomes `auto`. Safari interprets `overflow-x: auto` as permission to show elastic scroll indicators even when content does not overflow.
+
+**Fix**: `overflow-x: hidden` is set explicitly on both `.md-editable-area` (in `editor.css`) and `.live-wysiwyg-focus-main` (in `_getFocusModeCSS`). This tells the browser horizontal scrolling is not possible, suppressing the elastic bounce indicator. Content already wraps via `word-wrap: break-word`, and child elements that need horizontal scrolling (code blocks, tables) handle their own overflow internally. The focus-main container exhibits the same behavior when a sidebar (e.g., TOC) is hidden, since the flex grid narrows and Safari treats the freed space as scrollable.
+
 ## Cross-References
 
 - `browser-compatibility.mdc` — Rule file with coding standards for using the compat layer

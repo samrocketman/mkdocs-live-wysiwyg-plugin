@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Modes of Operation
 
-The editor has three current modes (Readonly, Unfocused, Focus) with planned future modes (Theme Mode, Mermaid Mode). All mode logic lives in `live-wysiwyg-integration.js`.
+The editor has four current modes (Readonly, Unfocused, Focus, Mermaid) with planned future modes (Theme Mode). All mode logic lives in `live-wysiwyg-integration.js`.
 
 ## Mode Transition Triggers
 
@@ -14,6 +14,8 @@ The editor has three current modes (Readonly, Unfocused, Focus) with planned fut
 | Readonly to Unfocused | Edit button (accesskey e) or period (`.`) shortcut |
 | Unfocused to Focus | Focus Mode toolbar button or browser fullscreen |
 | Focus to Unfocused | X button or Escape key |
+| Focus to Mermaid | Expand button on mermaid block |
+| Mermaid to Focus | Close button, ESC, Ctrl+S |
 | Unfocused to Readonly | Cancel button |
 
 ## Cursor Preservation Across Transitions
@@ -27,18 +29,24 @@ Every mode transition that affects the editing surface must preserve cursor posi
 
 4. **Modes are mutually exclusive.** Only one mode is active at a time. When a mode activates, all lower-layer modes are suppressed. There is no concurrent mode execution.
 
-5. **Mode hierarchy is a layered stack.** Layer 0 = Readonly, Layer 1 = Unfocused, Layer 2 = Focus. Higher layers override lower layers. Future modes must declare their layer position relative to existing layers.
+5. **Mode hierarchy is a layered stack.** Layer 0 = Readonly, Layer 1 = Unfocused, Layer 2 = Focus, Layer 3 = Mermaid. Higher layers override lower layers. Future modes must declare their layer position relative to existing layers.
 
 6. **Lower-layer suppression contract.** When Layer N is active, all layers < N must have: scroll disabled (`overflow: hidden` on body/documentElement), keyboard shortcuts suppressed (lower-layer handlers early-return), permanent event handlers guarded (`isFocusModeActive` or equivalent), and UI non-interactive (behind the higher layer's z-index).
 
 7. **All permanent document-level handlers must check the active mode.** Handlers registered on `document` or `window` that are specific to a particular mode must include an early-return guard when that mode is not active. Use `isFocusModeActive`, `isInReadMode()`, or equivalent. This prevents event leaks from lower layers into higher layers.
 
+## Mermaid Mode
+
+The `_mermaidModeActive` flag guards keyboard handlers when Mermaid mode is active. Handlers must check this flag and return early when true, following the same pattern as `isFocusModeActive`.
+
 ## Future Modes
 
-Theme Mode and Mermaid Mode (documented in `DESIGN-modes-of-operation.md`) must follow the same lifecycle pattern:
+Theme Mode (documented in `DESIGN-modes-of-operation.md`) must follow the same lifecycle pattern:
 
 1. Explicit entry and exit triggers
 2. Cursor/state preservation where applicable
 3. Cleanup on exit (overlays, listeners, injected styles)
 4. Declare layer position in the mode hierarchy
 5. Follow the suppression contract: disable lower layers on entry, resume on exit
+
+Mermaid Mode follows this pattern and is Layer 3.

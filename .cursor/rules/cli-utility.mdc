@@ -23,6 +23,8 @@ alwaysApply: false
 
 7. **Theme restoration hook is Material-only.** `restore_theme.py` is generated only when the effective theme is `material`. It counteracts `techdocs-core`'s `on_config` theme override. Non-Material themes skip the hook because `techdocs-core` is not included in their plugin chain.
 
+8. **Superfences with mermaid is additive-only.** `add_superfences_with_mermaid_if_missing` only adds `pymdownx.superfences` when it is entirely absent from `markdown_extensions`. It never modifies an existing superfences entry. Users with their own superfences configuration are left untouched.
+
 ## Design Document
 
 See `docs/design/DESIGN-cli-utility.md`.

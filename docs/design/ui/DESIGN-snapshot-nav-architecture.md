@@ -2,7 +2,9 @@
 
 ## Overview
 
-The focus mode navigation menu uses a centralized snapshot-driven architecture. All user actions modify `liveWysiwygNavData` in memory, then commit a snapshot. A single renderer (`_renderNavFromSnapshot`) rebuilds the DOM from the active snapshot. Saving computes a phased execution plan by diffing the initial snapshot against the active snapshot. Warnings and dead links are per-item properties on navData, tracked as part of snapshots, and persisted to localStorage only on save. Weight normalization is also a snapshot data mutation — weights are computed and applied to navData before snapshotting, and the standard diff handles all disk writes.
+The focus mode navigation menu uses a centralized snapshot-driven architecture that acts as a virtual file manager. All structural file operations (move, rename, delete, create) are expressed as in-memory `liveWysiwygNavData` mutations, then committed as snapshots. A single renderer (`_renderNavFromSnapshot`) rebuilds the DOM from the active snapshot. Saving computes a phased execution plan by diffing the initial snapshot against the active snapshot to produce the minimum set of disk operations. Warnings and dead links are per-item properties on navData, tracked as part of snapshots, and persisted to localStorage only on save. Weight normalization is also a snapshot data mutation — weights are computed and applied to navData before snapshotting, and the standard diff handles all disk writes.
+
+See [DESIGN-file-management.md](DESIGN-file-management.md) for the file management operations that produce these mutations.
 
 All code lives in `live-wysiwyg-integration.js`.
 
@@ -23,9 +25,10 @@ All code lives in `live-wysiwyg-integration.js`.
 
 ```
 Global variables:
-  _navSnapshots = []     // flat array of snapshot objects
-  _navSnapshotIndex = -1 // index of active snapshot (-1 = none)
-  _uidCounter = 0        // monotonic counter for _uid generation
+  _navSnapshots = []        // flat array of snapshot objects
+  _navSnapshotIndex = -1    // index of active snapshot (-1 = none)
+  _navCleanSnapshot = null  // snapshot captured on edit-mode entry; discard reference point
+  _uidCounter = 0           // monotonic counter for _uid generation
 ```
 
 Each snapshot captures the full editor state:
@@ -40,7 +43,6 @@ Each snapshot captures the full editor state:
   migrationPending: bool      // migration was staged
   focusTarget: string|null    // src_path to focus after save
   topWarnings: [...]          // top-level warning message strings
-  topInfo: [...]              // top-level info message strings
   mkdocsYml: string|null      // virtual mkdocs.yml content
   originalMkdocsYml: string|null // virtual original mkdocs.yml
   hasNavKey: bool              // derived from _ymlHasNavKey(_virtualMkdocsYml)
@@ -90,8 +92,10 @@ Each snapshot captures the full editor state:
 
 ### Button Visibility
 
-- `_navSnapshots.length < 2` → no Save/Cancel/Undo/Redo (no changes made)
-- `_navSnapshots.length >= 2` → buttons appear
+- `_navSnapshots.length < 2` → no actions bar (no changes made)
+- `_navSnapshots.length >= 2` → actions bar appears (both in and outside edit mode)
+- Save/Discard/Review visibility is controlled by `_snapshotHasSaveableChanges()` (hash comparison against `_navCleanSnapshot`), not by edit mode state
+- Undo/Redo are always visible in the actions bar; disabled state is index-based
 
 ### Deep Cloning
 
@@ -99,7 +103,7 @@ Each snapshot captures the full editor state:
 - `children` → recursed
 - `index_meta` → shallow object copy
 - `_fm` → shallow object copy (all values are primitives)
-- `_warnings` → array of `{reason, renames}` objects, each copied
+- `_warnings` → array of `{reason, renames, _actionData?}` objects; `_actionData` is deep-cloned via `JSON.parse(JSON.stringify())` when present
 - `_deadLinks` → `{internal: [...], external: [...]}`, each link object copied
 - All other properties → direct assignment (primitives, strings, booleans)
 
@@ -107,8 +111,11 @@ This includes `_indexContent` (string, copied by value), `setContent` (string, c
 
 ### Discard / Exit
 
-- **Discard**: Restore `_navSnapshots[0]` to navData. Reset to `[initial]; index = 0`. Re-render.
-- **Exit after save**: `_persistWarningsFromSnapshot()` writes to localStorage, then `_exitNavEditMode(false)`.
+- **Discard (lightweight)**: `_confirmNavDiscard()` restores navData to `_navCleanSnapshot` (or `_navSnapshots[0]` as fallback when `_navCleanSnapshot` is null), commits the clean state as a new snapshot, then calls `_exitNavEditMode(true)`. Snapshot history is preserved — the discard is an undo-able operation. If the current snapshot already matches the clean snapshot (no saveable changes), no new snapshot is committed. `_confirmNavDiscard` never calls `_exitNavEditModeDestructive`.
+- **Undo/redo bar outside edit mode**: After lightweight discard, `_exitNavEditMode` nulls `_navEditActionsEl` before calling `_buildNavMenu` (which clears `sidebarEl.innerHTML`), then shows the undo/redo actions bar when `_navSnapshots.length >= 2`. Save/Discard/Review visibility is hash-based (via `_snapshotHasSaveableChanges`). The user can undo the discard from outside edit mode; undoing into a dirty state re-enters edit mode via `_ensureNavEditModeForSnapshot`.
+- **Clean snapshot reference**: `_navCleanSnapshot` is set on first entry to edit mode (`_enterNavEditMode`) and when undo re-enters edit mode (`_ensureNavEditModeForSnapshot`). In both cases, a snapshot of the current (clean) navData is captured. `_snapshotHasSaveableChanges` compares the active snapshot against `_navCleanSnapshot` instead of `_navSnapshots[0]`.
+- **Destructive exit**: `_exitNavEditModeDestructive(restoreCursor)` preserves the old behavior — restores `_navSnapshots[0]`, resets snapshot array, clears `_navCleanSnapshot`. Used only by external rebuild "Discard and Refresh", `_executeNavBatchSave`, and `exitFocusMode` teardown — NOT by the Discard button.
+- **Exit after save**: `_persistWarningsFromSnapshot()` writes to localStorage, then `_exitNavEditModeDestructive(false)`.
 
 ## Virtualized Frontmatter (`_fm`)
 
@@ -172,7 +179,8 @@ Before migration or normalization, index pages that have body content (not just 
 ```
 item._warnings = [
   { reason: 'Internal dead links found', renames: 0 },
-  { reason: 'Batch operation failed: ...', renames: 0 }
+  { reason: 'Batch operation failed: ...', renames: 0 },
+  { reason: 'Some actionable reason', renames: 0, _actionData: { key: 'value' } }
 ]
 
 item._deadLinks = {
@@ -184,7 +192,6 @@ item._deadLinks = {
 **Top-level on snapshot:**
 ```
 topWarnings: ['warning message', ...]
-topInfo: ['info message', ...]
 ```
 
 ### Top-Level Warning Seeding (Lazy)
@@ -257,7 +264,7 @@ Set to `true` in `_executeNavBatchSave` before `_runBatchOps`. Reset to `false` 
 
 4. **Batch save errors**: `_warningDirectMode = true`. `_addCautionPage` writes directly to localStorage so errors survive the page reload that follows batch save.
 
-5. **Discard**: Restores snapshot 0 (which contains original warnings from load). No localStorage mutation needed.
+5. **Discard**: Lightweight discard restores navData to `_navCleanSnapshot` and commits a new snapshot. Warnings from the clean state are restored as part of the snapshot data. Destructive exit (external rebuild, save, focus mode teardown) restores snapshot 0. No localStorage mutation in either case.
 
 ### Rendering Warnings
 
@@ -394,7 +401,7 @@ The `filterTargets` map ensures only *new* dead links caused by the deletion are
 | `_renamed` | Rename handlers | Renderer applies `.live-wysiwyg-nav-item--renamed` |
 | `_new` | Create handlers | Renderer applies `.live-wysiwyg-nav-item--new` |
 | `_originalPath` | Rename/move handlers | Original `src_path` before rename; used by diff |
-| `_warnings` | `_addCautionPage`, dead link scan | Array of `{reason, renames}` — caution reasons |
+| `_warnings` | `_addCautionPage`, dead link scan | Array of `{reason, renames, _actionData?}` — caution reasons with optional action context |
 | `_deadLinks` | `_addDeadLinksForPage` | `{internal: [...], external: [...]}` — dead link details |
 | `_deleted` | Delete handlers | Item marked for deletion; excluded from nav render and diff |
 | `_focused` | `_setNavItemFocused` | Renderer applies `.live-wysiwyg-nav-item--focused`; controls are force-shown; `_renderNavFromSnapshot` scrolls the focused item to center |
@@ -409,7 +416,7 @@ All arrow-key and shortcut-driven move operations follow a data-only pipeline:
 
 1. **Locate item in navData** via `_findNavItemInTree(item._uid)`, which returns `{ parent, index }` — the item's sibling array and position within it.
 2. **Mutate navData** — splice the item out of its current position and into the target position (or into a different parent array for cross-section moves).
-3. **Auto-normalize sibling weights** — if any sibling in the destination level lacks a weight, `_autoNormalizeSiblingWeights(siblings)` assigns sequential weights to all siblings before snapshotting.
+3. **Adjust moved item's weight** — `_updateInMemoryWeightFromDom(item, moveDir)` computes a midpoint weight for the moved item between its new neighbors. Only the moved item's weight changes; sibling weights are untouched.
 4. **Set `_focused` on moved item** — `_setNavItemFocused(item)` clears `_focused` from all other items and sets it on the moved item.
 5. **Commit snapshot** via `_commitNavSnapshot()`, which deep-clones the modified navData and triggers `_renderNavFromSnapshot()` to rebuild the DOM.
 6. **Renderer handles visual focus** — `_buildNavItems` reads `item._focused` and applies the `--focused` CSS class. `_renderNavFromSnapshot` finds the focused `<li>` after the rebuild and scrolls it to center in a `requestAnimationFrame`.

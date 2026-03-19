@@ -1,0 +1,53 @@
+# Mermaid Mode
+
+Mermaid Mode is a Layer 3 UI mode for editing mermaid diagrams. It overlays Focus Mode with an iframe embedding the vendored mermaid-live-editor. All changes are in-memory until save.
+
+## Rules
+
+1. **Mermaid Mode requires Focus Mode.** `enterMermaidMode` returns early if `!isFocusModeActive`. The mode can only be entered from Focus Mode.
+
+2. **Layer 3 suppresses Layer 2.** When `_mermaidModeActive` is true, all Tier 2 keyboard handlers (Ctrl+., undo/redo) are suppressed except ESC and Ctrl+S. All Tier 3 editor/markdown handlers return early. Focus Mode's UI is behind the mermaid overlay (z-index 99995 > 99990).
+
+3. **ESC exits mermaid mode, not focus mode.** The global keydown router checks `_mermaidModeActive` before any other ESC handler. ESC in mermaid mode calls `exitMermaidMode()` and stops propagation.
+
+4. **`exitFocusMode` auto-exits mermaid mode.** If mermaid mode is active when focus mode exit is requested, `exitMermaidMode()` is called first.
+
+5. **Ctrl+S exits mermaid mode.** During mermaid mode, Ctrl+S calls `exitMermaidMode()` and returns (does not proceed to save). The user must press Ctrl+S again to save.
+
+6. **All changes are in-memory.** The iframe sends `live-wysiwyg-mermaid-update` messages that update the hidden `<pre>` in the source block during editing. On exit, `exitMermaidMode()` synchronously reads the iframe's textarea via `contentDocument` (same-origin) for final capture — this avoids debounce timing gaps. No disk writes occur during mermaid mode. `_finalizeUpdate()` is called on exit to mark the content dirty.
+
+7. **Mermaid blocks are `contenteditable=false`.** The `.md-mermaid-block` wrapper, expand button, and preview are all non-editable. The hidden `<pre>` stores the source code. `_nodeToMarkdownRecursive` extracts code from the hidden `<pre>`.
+
+8. **`enhanceMermaidBlocks` runs at every content-loading path.** It must be called alongside `enhanceCodeBlocks` at all sites where `enhanceCodeBlocks` is called. `enhanceCodeBlocks` skips `pre[data-lang="mermaid"]` elements.
+
+9. **Paste handler has a `mermaidblock` case.** When a copied `.md-mermaid-block` is pasted, the inner `<pre>` is extracted and pasted via `pasteCodeblock`, then re-enhanced.
+
+10. **Config warning uses the Caution subsystem.** When `_isMermaidConfiguredInYml(_virtualMkdocsYml)` returns `false`, `exitMermaidMode()` calls `_addCautionPage(pagePath, MERMAID_CONFIG_REASON)` to add a caution icon on the current page. Detection reads from snapshot state (Cardinal Rule B). The caution popup includes an "Auto-fix mkdocs.yml" button that calls `_applyMermaidConfigFix()` and removes only the mermaid reason via `_removeNavWarningReason`. No toast or popup is used.
+
+11. **Scroll suppression follows Focus Mode pattern.** `overflow: hidden` on body and documentElement. Saved before entry, restored on exit.
+
+12. **Mermaid.js loaded once via `_loadMermaidJs`.** Idempotent — subsequent calls return immediately if already loaded. Reuses Material's `window.mermaid` if present (avoids double-loading and global namespace conflicts). Only loads the vendored copy from the API server when `window.mermaid` is not available. Never calls `mermaid.initialize()` when reusing an existing instance.
+
+13. **API server serves mermaid-live-editor.** `GET /mermaid-editor/*` serves static files from `vendor/mermaid-live-editor/`. `mermaid.min.js` is served from `vendor/` (parent directory).
+
+14. **SVG previews inject Material theme CSS.** `_buildMaterialMermaidCSS(svgId)` generates CSS overrides that map mermaid's default selectors to `--md-mermaid-*` CSS variables. The overrides are injected into the SVG's `<style>` block by `_renderMermaidPreview` after `mermaid.render()`. This matches Material's shadow DOM rendering quality. When Material's variables are not defined, no overrides are injected and the default mermaid theme is used.
+
+## Key Functions
+
+- `enterMermaidMode(mermaidBlock)` — Layer 3 entry
+- `exitMermaidMode()` — Layer 3 exit, preview re-render, config warning
+- `enhanceMermaidBlocks(editableArea)` — DOM enhancer
+- `_loadMermaidJs()` — Dynamic script loading
+- `_renderMermaidPreview(previewDiv, code)` — SVG preview rendering
+- `_buildMaterialMermaidCSS(svgId)` — Material theme CSS override generation
+- `MERMAID_CONFIG_REASON` — Caution reason string constant
+- `_isMermaidConfiguredInYml(yml)` — Client-side detection via js-yaml parsing of snapshot state
+- `_addMermaidSuperfencesConfig(yml)` — YAML-parser-based transform (js-yaml round-trip with pre/post processing)
+- `_applyMermaidConfigFix()` — Virtual mkdocs.yml mutation (snapshot-only, no disk I/O)
+- `_preProcessYaml(yml)` / `_postProcessYaml(yml)` — Handle `!!python/name:` tags for js-yaml compatibility
+
+## Design Documents
+
+- `docs/design/mermaid/DESIGN-mermaid-mode.md` — Full architecture
+- `docs/design/mermaid/DESIGN-vendor-subsystem.md` — Vendoring and upgrades
+- `docs/design/mermaid/DESIGN-mkdocs-yml-mermaid-config.md` — Config detection and auto-fix

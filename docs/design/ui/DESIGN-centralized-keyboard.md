@@ -312,9 +312,74 @@ To add a new editor keyboard handler:
 3. Insert the function call in the router at the correct priority position for its key
 4. Call `e.preventDefault()` and `e.stopImmediatePropagation()` inside the handler when consuming the event
 
+## Mermaid Mode Keyboard Isolation
+
+Mermaid Mode (Layer 3) embeds the vendored mermaid-live-editor in a **cross-origin iframe** (parent at MkDocs port, iframe at API server port). Keydown events inside the iframe's document do **not** propagate to the parent's document — they are completely isolated by the browser's event model. This creates a fourth keyboard domain that extends the three-tier architecture.
+
+**Cross-reference:** See [DESIGN-mermaid-mode.md](../mermaid/DESIGN-mermaid-mode.md) § Keyboard Isolation for the mermaid-specific details, and [DESIGN-vendor-subsystem.md](../mermaid/DESIGN-vendor-subsystem.md) § Vendor Patches for the bridge script (P1) and preventDefault override (P8).
+
+### Architecture: Two-Document Keyboard Routing
+
+```
+┌─────────────────────────────────┐     ┌────────────────────────────────┐
+│ PARENT DOCUMENT                 │     │ IFRAME DOCUMENT                │
+│                                 │     │ (mermaid-live-editor)          │
+│ Tier 2: _globalKeydownRouter    │     │                                │
+│   if (_mermaidModeActive) {     │     │ Bridge Keyboard Isolation      │
+│     ESC → exitMermaidMode()     │     │   (capture phase, P1/P8)      │
+│     Ctrl+S → exitMermaidMode()  │◄────│   ESC → postMessage close     │
+│     Ctrl+. → suppress           │     │   Ctrl+S → postMessage close  │
+│   }                             │     │   Ctrl+. → suppress           │
+│                                 │     │   Other keys → vendor editor  │
+│ Tier 3: return early when       │     │                                │
+│   _mermaidModeActive            │     │ Vendor editor handles normal   │
+│                                 │     │ editing (typing, arrows, etc.) │
+└─────────────────────────────────┘     └────────────────────────────────┘
+        message listener ◄──── postMessage ────
+```
+
+### Parent-Side (Tier 2 Guards)
+
+The `_globalKeydownRouter` checks `_mermaidModeActive` at the top of the ESC and Ctrl+S branches. These guards handle events from the **parent document** (e.g., the user clicks the overlay header then types a shortcut). They do NOT handle events from inside the iframe. Both call `_requestMermaidClose(save)` which sends `live-wysiwyg-mermaid-request-close` to the iframe. The bridge PUTs the final code to the session API endpoint, then responds with a lightweight close signal. A 500ms timeout ensures the editor closes even if the iframe is unresponsive.
+
+### Iframe-Side (Bridge Script)
+
+The bridge script (injected by vendor patch P1) registers a **capture-phase** keydown listener on the iframe's `document`. This fires before any vendor editor handlers and intercepts parent-controlled shortcuts:
+
+| Key | Action | Propagation |
+|-----|--------|-------------|
+| ESC | Deferred overlay check (50ms), then PUTs final code to session API and sends `postMessage` close signal (no content) | Let through (vendor may close its own UI) |
+| Ctrl+S | `stopImmediatePropagation`, then PUTs final code to session API and sends `postMessage` close signal with `save: true` | Stopped |
+| Ctrl+. | `stopImmediatePropagation` | Stopped |
+| All others | No interception | Pass through to vendor |
+
+### P8: preventDefault Override
+
+The bridge also monkey-patches `Event.prototype.preventDefault` to no-op for `KeyboardEvent` instances where `key` is `Escape`, or `ctrlKey`/`metaKey` is held with `key` `s` or `.`. This is a defensive layer — the capture-phase handler already intercepts these keys, but the override ensures no vendor handler at any phase can call `preventDefault` for parent-controlled shortcuts.
+
+### ESC Overlay Escalation (Dialog UX Pattern)
+
+The ESC handler in the bridge follows the same escalation pattern as [DESIGN-popup-dialog-ux.md](DESIGN-popup-dialog-ux.md):
+
+1. ESC fires → bridge does NOT stop propagation (vendor handlers may close open menus/tooltips)
+2. `setTimeout(50ms)` defers the close decision
+3. `_hasVisibleOverlay()` checks for vendor UI elements (`.suggest-widget`, `.cm-tooltip`, `.context-view`, `.monaco-hover`, `.find-widget.visible`, `.parameter-hints-widget.visible`)
+4. Only if nothing is visible does the bridge send `live-wysiwyg-mermaid-close` to the parent
+
+This matches the WYSIWYG editor's own ESC escalation: close the innermost thing first.
+
+### Message Handler (Parent)
+
+The parent's `onMermaidMessage` listener (registered per mermaid mode session) handles:
+
+- `live-wysiwyg-mermaid-update` → caches the raw base64 state token in `_mermaidLastToken`, decodes it via `_decodeMermaidState(token)` to extract the mermaid code, and updates the hidden `<pre>` with the decoded code
+- `live-wysiwyg-mermaid-close` → caches the raw base64 state token in `_mermaidLastToken`, calls `exitMermaidMode()` (which decodes the token to get the final code), optionally clicks save button if `save: true`
+
+All messages carry the raw base64 state token in a `state` field (not decoded `code`). The parent owns all decoding via `_decodeMermaidState()`. See [DESIGN-mermaid-mode.md](../mermaid/DESIGN-mermaid-mode.md) § Base64 State Token for the full data interface design.
+
 ## Rules
 
-1. **No standalone `addEventListener('keydown', ...)`.** All keyboard handling goes through one of the three routers. The only exceptions are input-specific handlers that are internal to a dropdown's autocomplete (e.g., image URL input arrow keys for autocomplete navigation).
+1. **No standalone `addEventListener('keydown', ...)`.** All keyboard handling goes through one of the three routers. The only exceptions are input-specific handlers that are internal to a dropdown's autocomplete (e.g., image URL input arrow keys for autocomplete navigation), and the **bridge script** inside the mermaid iframe (which is the iframe-side equivalent of Tier 2).
 
 2. **Handlers return `true`/`false`.** In Tier 3, each handler function returns whether it consumed the event. The router stops dispatching on the first `true`. In Tier 2, handlers return after calling `preventDefault`/`stopPropagation`.
 

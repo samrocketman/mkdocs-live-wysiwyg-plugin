@@ -199,8 +199,6 @@ All arrow moves operate exclusively on the navData tree. Move functions accept o
 - **Shift+Down**: Move into first level of section below
 - **Shift+Right**: Always prompt for new/choose folder
 
-**Auto-normalization**: If any sibling at the destination level lacks a weight, `_autoNormalizeSiblingWeights` assigns sequential weights to all siblings before the snapshot is committed. This eliminates the need for a blocking normalization prerequisite dialog — items of all types (pages, sections, assets, hidden content) can be moved freely.
-
 ### Root Index (`index.md`)
 
 The root-level `index.md` (src_path `'index.md'`) receives special treatment:
@@ -209,7 +207,7 @@ The root-level `index.md` (src_path `'index.md'`) receives special treatment:
 - **Always stays first**: `_moveNavItemUp` blocks any item from moving above root index at the top level.
 - **No arrows**: `_createNavWeightControls` hides all arrow buttons (`display:none`) for root index.
 - **Gear with disabled weight**: Settings gear is available (skips `_checkNormalizationPrerequisite`) but the weight input is disabled. Other fields (title, headless, retitled, empty) remain editable. `_applySettingsGearChanges` skips disabled inputs.
-- **No warning/question icons**: Weight-exceeds and unweighted caution icons are suppressed.
+- **No warning/question icons**: Weight-exceeds caution icons are suppressed.
 
 ### Nav Item Controls Layout
 
@@ -228,9 +226,9 @@ Each nav item `<li>` has `padding-left:56px; margin-left:-56px` to extend the ho
 
 Two gears: page (current page frontmatter) and folder (parent folder index.md). Fields: title, weight, headless, retitled (index.md only), empty (index.md only), plus Normalize button.
 
-### Normalization on Move
+### Weight Adjustment on Move
 
-Arrow moves no longer require a normalization prerequisite. Instead, `_handleArrowClick` auto-normalizes after the move: if any non-deleted, non-headless sibling at the destination level lacks a weight, `_autoNormalizeSiblingWeights(siblings)` assigns sequential weights (100, 200, 300...) to all siblings in the parent array before committing the snapshot. `_findNavSiblings` walks the navData tree to find the item and its siblings. `_getItemWeight` reads `weight` directly from pages and `index_meta.weight` from sections. All sibling and position lookups use the navData tree — the DOM is not consulted.
+Arrow moves use midpoint weight calculation only. `_doArrowMove` calls `_updateInMemoryWeightFromDom(item, moveDir)` to compute a midpoint weight for the moved item between its new neighbors. Only the moved item's weight changes; sibling weights are untouched. `_normalizeLevelWeights` is never auto-triggered during moves. `_getItemWeight` reads `weight` directly from pages and `index_meta.weight` from sections. All sibling and position lookups use the navData tree — the DOM is not consulted. Explicit normalization from settings menus still works via `_normalizeLevelWeights`.
 
 ### Weight Adjustment
 

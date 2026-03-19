@@ -158,6 +158,29 @@ class LiveWysiwygPlugin(BasePlugin):
         self._link_check_port = port
         return config
 
+    @staticmethod
+    def _is_mermaid_configured(config: MkDocsConfig) -> bool:
+        """Check if pymdownx.superfences has a mermaid custom fence."""
+        md_extensions = config.get("markdown_extensions", [])
+        mdx_configs = config.get("mdx_configs", {})
+
+        has_superfences = False
+        for ext in md_extensions:
+            ext_name = ext if isinstance(ext, str) else ""
+            if ext_name == "pymdownx.superfences":
+                has_superfences = True
+                break
+
+        if not has_superfences:
+            return False
+
+        sf_config = mdx_configs.get("pymdownx.superfences", {})
+        custom_fences = sf_config.get("custom_fences", [])
+        for fence in custom_fences:
+            if isinstance(fence, dict) and fence.get("name") == "mermaid":
+                return True
+        return False
+
     def _resolve_docs_dir(self, config: MkDocsConfig, default: str) -> str:
         """Return the real docs directory for filesystem walks.
 
@@ -445,6 +468,11 @@ class LiveWysiwygPlugin(BasePlugin):
             f"const liveWysiwygLinkCheckPort = {json.dumps(link_check_port)};\n"
         )
 
+        mermaid_configured = self._is_mermaid_configured(config)
+        preamble_parts.append(
+            f"const liveWysiwygMermaidConfigured = {str(mermaid_configured).lower()};\n"
+        )
+
         preamble = "".join(preamble_parts)
 
         admonition_css = parent_dir / "admonition.css"
@@ -455,6 +483,8 @@ class LiveWysiwygPlugin(BasePlugin):
             editor_css_content = f.read()
         with open(vendor_dir / "marked.min.js", "r", encoding="utf-8") as f:
             marked_js_content = f.read()
+        with open(vendor_dir / "js-yaml.min.js", "r", encoding="utf-8") as f:
+            jsyaml_js_content = f.read()
         with open(vendor_dir / "editor.js", "r", encoding="utf-8") as f:
             editor_js_content = f.read()
 
@@ -525,14 +555,15 @@ class LiveWysiwygPlugin(BasePlugin):
         )
 
         # Inject: early overlay (before anything else), theme overrides,
-        # marked.js, MkDocs admonition extension, editor CSS, admonition CSS,
-        # editor JS, integration script (all local)
+        # marked.js, js-yaml, MkDocs admonition extension, editor CSS,
+        # admonition CSS, editor JS, integration script (all local)
         assets = (
             f'<script>{early_inject_script}</script>'
             f'<style id="live-wysiwyg-theme-overrides">{live_edit_theme_css}</style>'
             f'<style>{editor_css_content}</style>'
             f'<style>{admonition_css_content}</style>'
             f'<script>{marked_js_content}</script>'
+            f'<script>{jsyaml_js_content}</script>'
             f'<script>{admonition_extension_script}</script>'
             f'<script>{browser_compat_content}</script>'
             f'<script>{editor_js_content}</script>'

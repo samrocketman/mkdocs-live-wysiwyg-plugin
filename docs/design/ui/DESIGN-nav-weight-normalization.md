@@ -62,16 +62,13 @@ Called from the "Normalize All Nav Weights" button and from migration. Normalize
 
 Called from the "Normalize Weights" button in section settings. Delegates directly to `_normalizeLevelWeights(sectionItem)` for a single-level normalization.
 
-### Auto-Normalize on Move (in `_handleArrowClick`)
+### Weight Adjustment on Move (in `_doArrowMove`)
 
-After a move operation, `_handleArrowClick` checks whether any weightable sibling at the destination level lacks a weight. If so (or if the parent section is `_new` or `_renamed`), it calls `_normalizeLevelWeights(parentSection)` where `parentSection` is `null` for root-level items.
+After a move operation, `_doArrowMove` calls `_updateInMemoryWeightFromDom(item, moveDir)` to compute a midpoint weight for the moved item between its new neighbors. Only the moved item's weight changes; sibling weights are untouched. `_normalizeLevelWeights` is never auto-triggered during moves.
 
-The trigger check applies the same filtering rules as `_normalizeLevelWeights`:
-- Skip `_deleted` items.
-- Skip all `isIndex` pages (they never carry weights).
-- Skip `headless` pages.
-- Skip sections whose children have no visible markdown content.
-- If any remaining sibling has `_getItemWeight(sib) == null`, trigger normalization.
+If the moved item is the currently edited page, `_syncCurrentPageWeight` syncs the new weight to the live editor's frontmatter. For all other items, the weight change is stored in-memory on `navData` and written to disk at save time.
+
+Explicit normalization via menu actions (`_applyNormalizeWeightsToNavData`, `_applyNormalizeFolderToNavData`) and post-migration auto-normalize remain unchanged.
 
 ## Items That Are Never Weighted
 

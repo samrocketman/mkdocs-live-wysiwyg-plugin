@@ -21,6 +21,7 @@ Multiple features can add caution reasons to the same page (e.g. nav migration a
    - Nav migration: `"Link integrity may need attention"`
    - Dead link finder: `"Internal dead links found"`, `"External dead links found"`
    - Unreferenced asset finder: `"Unreferenced asset"`
+   - Mermaid mode: `"Mermaid diagrams require pymdownx.superfences configuration"`
 
 ## Related
 

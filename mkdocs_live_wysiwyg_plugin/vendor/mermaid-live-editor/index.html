@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Online FlowChart &amp; Diagrams Editor - Mermaid Live Editor</title>
+    <meta name="og:image" content="./favicon.svg" />
+    <meta
+      name="description"
+      content="Simplify documentation and avoid heavy tools. Open source Visio Alternative. Commonly used for explaining your code! Mermaid is a simple markdown-like script language for generating charts from text via javascript." />
+    <link rel="icon" type="image/png" href="./favicon.svg" />
+    <link rel="mask-icon" href="./favicon.svg" color="#000000" />
+    <meta name="theme-color" content="#ff3670" />
+    
+		<link rel="modulepreload" href="./_app/immutable/entry/start.NZNVOzjd.js">
+		<link rel="modulepreload" href="./_app/immutable/chunks/BmybysiL.js">
+		<link rel="modulepreload" href="./_app/immutable/chunks/BLXpcXkd.js">
+		<link rel="modulepreload" href="./_app/immutable/chunks/DLeuY3wH.js">
+		<link rel="modulepreload" href="./_app/immutable/entry/app.Cfeer1qE.js">
+		<link rel="modulepreload" href="./_app/immutable/chunks/CACSdi0N.js">
+		<link rel="modulepreload" href="./_app/immutable/chunks/BreKPyJ7.js">
+		<link rel="modulepreload" href="./_app/immutable/chunks/DsnmJJEf.js">
+		<link rel="modulepreload" href="./_app/immutable/chunks/8VNsxgWr.js">
+		<link rel="modulepreload" href="./_app/immutable/chunks/CdO6MHp9.js">
+  <script>
+(function(){
+  /* ===================================================================
+   * PostMessage Bridge + Keyboard Isolation Layer
+   *
+   * Injected by patch P1 into edit.html and index.html.  Two services:
+   *
+   * 1. CONTENT SYNC — reads editor content from the mermaid-live-editor's
+   *    localStorage ("codeStore" key) and PUTs it to the API server's
+   *    mermaid session endpoint.  The parent GETs from the same endpoint.
+   *    No postMessage content, no cross-origin DOM access.
+   *
+   * 2. KEYBOARD ISOLATION — intercepts ESC, Ctrl+S, Ctrl+. at capture
+   *    phase.  See DESIGN-centralized-keyboard.md § Mermaid Mode.
+   *
+   * P8 (preventDefault override) neutralizes vendor preventDefault()
+   * for parent-controlled shortcut keys as a defensive layer.
+   * =================================================================== */
+
+  /* --- P8: preventDefault override for parent-controlled shortcuts --- */
+  var _origPreventDefault = Event.prototype.preventDefault;
+  Event.prototype.preventDefault = function() {
+    if (this instanceof KeyboardEvent) {
+      if (this.key === "Escape" ||
+          ((this.ctrlKey || this.metaKey) && (this.key === "s" || this.key === "."))) {
+        return;
+      }
+    }
+    return _origPreventDefault.call(this);
+  };
+
+  /* --- Session ID from URL query param --- */
+  var _sessionId = (function() {
+    var m = window.location.search.match(/[?&]session=([^&#]+)/);
+    return m ? m[1] : "";
+  })();
+  var _apiBase = window.location.origin;
+
+  function _readEditorCode() {
+    try {
+      var raw = localStorage.getItem("codeStore");
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.code === "string" && parsed.code) return parsed.code;
+      }
+    } catch(ex) {}
+    try {
+      var lines = document.querySelectorAll(".view-lines .view-line");
+      if (lines.length > 0) {
+        var parts = [];
+        for (var i = 0; i < lines.length; i++) parts.push(lines[i].textContent);
+        var text = parts.join("\n");
+        if (text.trim()) return text;
+      }
+    } catch(ex) {}
+    return "";
+  }
+
+  function _putSession(code) {
+    if (!_sessionId) return;
+    try {
+      fetch(_apiBase + "/mermaid-session/" + _sessionId, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: code })
+      }).catch(function() {});
+    } catch(ex) {}
+  }
+
+  console.log("[BRIDGE] script executing, session=" + _sessionId);
+
+  /* --- Periodic sync: read localStorage, PUT to server --- */
+  var _lastSentCode = "";
+  var _syncCount = 0;
+  setInterval(function() {
+    var code = _readEditorCode();
+    _syncCount++;
+    if (_syncCount <= 5 || _syncCount % 10 === 0) {
+      console.log("[BRIDGE] sync #" + _syncCount + " code length=" + code.length + " changed=" + (code !== _lastSentCode));
+    }
+    if (code && code !== _lastSentCode) {
+      _lastSentCode = code;
+      _putSession(code);
+    }
+  }, 1000);
+
+  /* --- Overlay detection for ESC escalation --- */
+  function _isActuallyVisible(el) {
+    if (!el) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return false;
+    var s = window.getComputedStyle(el);
+    return s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0";
+  }
+  function _hasVisibleOverlay() {
+    var selectors = [
+      ".suggest-widget:not(.hidden)",
+      ".cm-tooltip",
+      ".context-view",
+      ".monaco-hover",
+      ".find-widget.visible",
+      ".parameter-hints-widget.visible"
+    ];
+    for (var i = 0; i < selectors.length; i++) {
+      var el = document.querySelector(selectors[i]);
+      if (el && _isActuallyVisible(el)) return true;
+    }
+    return false;
+  }
+
+  /* --- Close helper: PUT final code, then signal parent --- */
+  function _closeAndSignal(save) {
+    var code = _readEditorCode();
+    console.log("[BRIDGE] closeAndSignal code=" + code.length + " save=" + !!save);
+    _putSession(code);
+    var msg = { type: "live-wysiwyg-mermaid-close" };
+    if (save) msg.save = true;
+    try { window.parent.postMessage(msg, "*"); } catch(ex) {}
+  }
+
+  /* --- Parent → Iframe: request-close handler --- */
+  window.addEventListener("message", function(evt) {
+    var data = evt.data;
+    if (!data || typeof data !== "object") return;
+    if (data.type === "live-wysiwyg-mermaid-request-close") {
+      _closeAndSignal(data.save);
+    }
+  });
+
+  /* --- Keyboard Isolation (capture phase) --- */
+  document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape") {
+      setTimeout(function() {
+        if (!_hasVisibleOverlay()) {
+          _closeAndSignal();
+        }
+      }, 50);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.stopImmediatePropagation();
+      _closeAndSignal(true);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === ".") {
+      e.stopImmediatePropagation();
+      return;
+    }
+  }, true);
+})();
+</script></head>
+  <body>
+    <div id="svelte">
+			<script>
+				{
+					__sveltekit_hodg9n = {
+						base: new URL(".", location).pathname.slice(0, -1)
+					};
+
+					const element = document.currentScript.parentElement;
+
+					Promise.all([
+						import("./_app/immutable/entry/start.NZNVOzjd.js"),
+						import("./_app/immutable/entry/app.Cfeer1qE.js")
+					]).then(([kit, app]) => {
+						kit.start(app, element);
+					});
+				}
+			</script>
+		</div>
+  </body>
+</html>

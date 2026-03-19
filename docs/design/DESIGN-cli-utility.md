@@ -21,9 +21,10 @@ All code lives in `techdocs-preview.sh`.
 2. Extracts user plugins (excluding `search`, `techdocs-core`, `live-edit`, `live-wysiwyg`)
 3. Generates a rendered `mkdocs.yml` with techdocs-core plugin chain
 4. Resolves theme: forces Material by default; `--theme` flag preserves user's theme
-5. Injects required markdown extensions (`admonition`, `pymdownx.details`, `pymdownx.superfences`)
-6. Merges user plugins back into the generated config
-7. Writes a restore hook (`restore_theme.py`) to counteract techdocs-core's `on_config` theme override
+5. Injects required markdown extensions (`admonition`, `pymdownx.details`)
+6. Injects `pymdownx.superfences` with mermaid `custom_fences` if not already present (see [Mermaid Superfences Integration](#mermaid-superfences-integration))
+7. Merges user plugins back into the generated config
+8. Writes a restore hook (`restore_theme.py`) to counteract techdocs-core's `on_config` theme override
 
 ### Dual mkdocs.yml Mechanism
 
@@ -76,6 +77,28 @@ When no `docs/` directory exists (or `--current-dir` is used), the script auto-g
 | `upgrade` | Re-install all dependencies |
 | `uninstall` | Remove `~/.techdocs` environment |
 
+## Mermaid Superfences Integration
+
+`add_superfences_with_mermaid_if_missing` ensures MkDocs can render mermaid diagrams out of the box when the user hasn't already configured `pymdownx.superfences`.
+
+### Behavior
+
+| User's `mkdocs.yml` | Script action |
+|---|---|
+| No `pymdownx.superfences` at all | Add it as a map with `custom_fences` containing the mermaid entry |
+| `pymdownx.superfences` as bare string | Leave untouched — user may intend to add their own config later |
+| `pymdownx.superfences` with map config | Leave untouched — user has their own `custom_fences` setup |
+
+The function never modifies an existing `pymdownx.superfences` entry. If the user has a more advanced configuration (e.g., multiple custom fences, custom formatters), it is preserved as-is.
+
+### Mechanism
+
+The `!!python/name:pymdownx.superfences.fence_code_format` YAML tag cannot be constructed inline in `yq` expressions. The function writes a YAML snippet file (`$TMPDIR/superfences-mermaid.yml`) containing the tag, then uses `yq load()` to merge it into the config. This preserves the Python-specific YAML tag through the round-trip.
+
+### Relationship to Client-Side Auto-fix
+
+This CLI-side integration is complementary to the client-side auto-fix in [DESIGN-mkdocs-yml-mermaid-config.md](mermaid/DESIGN-mkdocs-yml-mermaid-config.md). The CLI adds the config at server startup for new projects; the client-side auto-fix handles the case where a user opens a mermaid diagram in an existing project that lacks the config.
+
 ## Rules
 
 1. **The original `mkdocs.yml` must always be restored on exit.** The `cleanup_on` trap handles this. Any new exit path must ensure the trap fires.
@@ -91,3 +114,5 @@ When no `docs/` directory exists (or `--current-dir` is used), the script auto-g
 6. **Theme restoration hook is Material-only.** The `restore_theme.py` hook is only generated when `user_theme_name = material`. Non-Material themes skip the hook since `techdocs-core` is not included.
 
 7. **Auto-generated docs use frontmatter for tracking.** The `full_path` frontmatter line maps each temporary doc back to its original source. The cleanup step uses this to restore edited content. Do not strip this frontmatter during the server session.
+
+8. **Superfences with mermaid is additive-only.** `add_superfences_with_mermaid_if_missing` only adds `pymdownx.superfences` when it is entirely absent from `markdown_extensions`. It never modifies an existing superfences entry, regardless of whether it contains mermaid config or not. Users with their own superfences configuration are responsible for adding mermaid support if desired.

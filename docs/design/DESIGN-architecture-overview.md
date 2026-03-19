@@ -6,7 +6,7 @@ The WYSIWYG plugin uses a snapshot-driven architecture where all content modific
 
 ```mermaid
 flowchart LR
-    ContentMod["Content Modification<br>and saving..."]
+    ContentMod["Content Modification<br>and saving2..."]
     NavSnaps["will update<br>Nav Snapshots."]
     SavePlanner["will use the<br>Declarative Save Planner"]
 
@@ -20,6 +20,8 @@ flowchart LR
     NavSnaps -->|"Differences"| SavePlanner
     SavePlanner -->|"which writes to"| Backend
 ```
+
+
 
 ## Snapshot-Driven Architecture
 
@@ -53,6 +55,8 @@ flowchart TD
     NavWeightMigration -->|"from mkdocs.yml nav"| NavSnaps
 ```
 
+
+
 ## Save Execution Pipeline
 
 ```mermaid
@@ -83,6 +87,8 @@ flowchart LR
     BackendGroup -.- |"read and write content to disk"| BackendGroup
 ```
 
+
+
 ## Source of Truth
 
 `liveWysiwygNavData` (and the snapshots derived from it) is the sole source of truth for all navigation operations — item positioning, movement, sibling lookup, weight computation, and save planning. The DOM is a rendering target rebuilt from the active snapshot on every change; it is never queried for item position, parent–child relationships, or ordering. DOM attributes (`data-nav-uid`, `data-nav-src-path`) exist only for event-to-data bridging (mapping click targets back to navData items) and post-operation visual focus (scrolling a moved item into view).
@@ -97,6 +103,11 @@ UI Subsystem
   |     |-- Readonly Mode
   |     |-- Unfocused Mode
   |     |-- Focus Mode
+  |     |-- Mermaid Mode (Layer 3)
+  |-- Mermaid Subsystem
+  |     |-- Mermaid Mode (UI, Layer 3 in mode hierarchy)
+  |     |-- Vendor Subsystem (mermaid.js + mermaid-live-editor)
+  |     |-- MkDocs YAML Mermaid Config (server-side detection + client-side auto-fix)
   |-- Toolbars
   |-- Content Editing
   |     |-- Editor Core
@@ -118,6 +129,7 @@ UI Subsystem
   |-- Browser Compatibility
 
 Backend Subsystem
+  |-- MkDocs YAML Mermaid Config (config detection in plugin.py)
   |-- Save Pipeline (= Declarative Save Planner)
   |     |-- Snapshot Diff
   |     |-- Write Planner
@@ -125,6 +137,7 @@ Backend Subsystem
   |-- Content Scanning
   |-- Cautions
   |-- API Server (wysiwyg plugin REST API)
+  |     |-- Mermaid Session Server (session-based content brokering)
   |-- WebSocket Server (upstream live-edit-plugin)
   |-- Application Storage
 
@@ -138,6 +151,15 @@ Development Workflow (project conventions)
 - [DESIGN-modes-of-operation.md](ui/DESIGN-modes-of-operation.md) -- Mode lifecycle and transition contracts.
 - [DESIGN-unfocused-mode.md](ui/DESIGN-unfocused-mode.md) -- Inline editing on the readonly page.
 - [DESIGN-focus-mode.md](ui/DESIGN-focus-mode.md) -- Fullscreen editing overlay.
+- [DESIGN-mermaid-mode.md](mermaid/DESIGN-mermaid-mode.md) -- Mermaid diagram editor (Layer 3 mode).
+
+#### Mermaid Subsystem
+
+Mermaid-related design documents are organized under `docs/design/mermaid/` while the architecture overview preserves the conceptual hierarchy.
+
+- [DESIGN-mermaid-mode.md](mermaid/DESIGN-mermaid-mode.md) -- Layer 3 UI mode for mermaid diagram editing.
+- [DESIGN-vendor-subsystem.md](mermaid/DESIGN-vendor-subsystem.md) -- Vendored mermaid.js and mermaid-live-editor.
+- [DESIGN-mkdocs-yml-mermaid-config.md](mermaid/DESIGN-mkdocs-yml-mermaid-config.md) -- Server-side config detection and client-side auto-fix.
 
 #### Toolbars
 
@@ -176,6 +198,10 @@ Development Workflow (project conventions)
 
 ### Backend Subsystem
 
+#### MkDocs YAML Mermaid Config
+
+- [DESIGN-mkdocs-yml-mermaid-config.md](mermaid/DESIGN-mkdocs-yml-mermaid-config.md) -- Config detection in `plugin.py`; client-side warning and auto-fix in integration script.
+
 #### Save Pipeline
 
 - [DESIGN-declarative-save-planner.md](backend/DESIGN-declarative-save-planner.md) -- Declarative two-phase save.
@@ -188,10 +214,15 @@ Development Workflow (project conventions)
 
 - [DESIGN-cautions.md](backend/DESIGN-cautions.md) -- Per-page warning system.
 
+#### API Server
+
+- [DESIGN-mermaid-session-server.md](backend/DESIGN-mermaid-session-server.md) -- Session-based content brokering between parent and mermaid-live-editor iframe.
+
 #### Application Storage
 
 - [DESIGN-application-storage.md](backend/DESIGN-application-storage.md) -- localStorage schema and persistence.
 
 ### CLI Utility
 
-- [DESIGN-cli-utility.md](DESIGN-cli-utility.md) -- `techdocs-preview.sh` server lifecycle, configuration generation, and dual mkdocs.yml mechanism.
+- DESIGN-cli-utility.md -- `techdocs-preview.sh` server lifecycle, configuration generation, dual mkdocs.yml mechanism, and mermaid superfences integration.
+

@@ -1,0 +1,32 @@
+# MkDocs YAML Subsystem
+
+The MkDocs YAML subsystem handles all programmatic modifications to `mkdocs.yml` and `original-mkdocs.yml`. It provides detection, transformation, and dual-write patterns for config changes.
+
+## Rules
+
+1. **All mkdocs.yml modifications use a transform function pattern.** Express changes as `function(yml) { return modifiedYml; }` applied to the YAML string. The same transform runs independently on both the generated and original virtual files.
+
+2. **Dual-write is mandatory.** When `liveWysiwygOriginalMkdocsYml` exists, every transform must also be applied to `_virtualOriginalMkdocsYml`. The save planner emits `write-mkdocs-yml` ops for both files.
+
+3. **Transforms may use js-yaml for complex structural changes.** When the YAML structure is complex (nested lists, dict items), use the vendored js-yaml library to parse, modify, and serialize. Use `_preProcessYaml` / `_postProcessYaml` to handle `!!python/name:` tags. For simple regex-safe changes (e.g., replacing a single value), string-based transforms are acceptable.
+
+4. **Transforms must be idempotent.** Check whether the desired configuration already exists before inserting. Return the unchanged string if no modification is needed.
+
+5. **Transforms must handle missing sections.** If a required top-level key (e.g., `markdown_extensions:`) does not exist, create it. If an extension exists but lacks sub-keys, add them.
+
+6. **For batch ops, use `{ type: 'write-mkdocs-yml', path, content }` ops.** The batch executor handles dual-write by generating separate ops for `../mkdocs.yml` and `liveWysiwygOriginalMkdocsYml`.
+
+7. **Detection uses snapshot state, not server-side flags.** Config checks (e.g., mermaid superfences) read from `_virtualMkdocsYml` in the active snapshot via client-side YAML parsing. This satisfies Cardinal Rule B from DESIGN-cautions.md: mkdocs.yml warnings should ALWAYS and ONLY come from active snapshot state. Server-side preamble flags like `liveWysiwygMermaidConfigured` are legacy dead code.
+
+## Current Integrations
+
+| Feature | Detection | Transform (JS) |
+|---|---|---|
+| Mermaid superfences | `_isMermaidConfiguredInYml` (client-side js-yaml parsing of `_virtualMkdocsYml`) | `_addMermaidSuperfencesConfig` (js-yaml round-trip with pre/post processing) |
+| Nav weight plugin | `on_nav` checks `config['plugins']` (server-side) | Nav migration batch ops (string-based) |
+
+## Design Documents
+
+- `docs/design/mermaid/DESIGN-mkdocs-yml-mermaid-config.md` — Mermaid-specific config detection and auto-fix
+- `docs/design/backend/DESIGN-declarative-save-planner.md` — Batch pipeline `write-mkdocs-yml` ops
+- `dual-mkdocs-yml-write.mdc` — Dual-write contract

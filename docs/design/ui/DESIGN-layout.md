@@ -59,7 +59,7 @@ Every z-index value in the codebase. New z-index values must be added here befor
 | `99989` | `.live-wysiwyg-early-overlay` | `plugin.py`, `_getFocusModeCSS` |
 | `99990` | `.live-wysiwyg-focus-overlay`, `.live-wysiwyg-nav-transition-overlay` | `_getFocusModeCSS` |
 | `99993` | `.live-wysiwyg-dead-link-panel` | `_getFocusModeCSS` |
-| `99995` | `.live-wysiwyg-focus-settings-dropdown`, `.live-wysiwyg-page-submenu` | `_getFocusModeCSS` |
+| `99995` | `.live-wysiwyg-focus-settings-dropdown`, `.live-wysiwyg-page-submenu`, `.live-wysiwyg-mermaid-overlay` | `_getFocusModeCSS` |
 | `99996` | `.live-wysiwyg-nav-popup`, `.live-wysiwyg-asset-preview-popup` | `_getFocusModeCSS` |
 | `99998` | `.md-link-chain-indicator` | JS inline style |
 | `99999` | `.md-table-grid-selector`, `.md-contextual-table-toolbar`, `.md-code-lang-dropdown`, `.md-code-settings-dropdown`, `.md-admonition-settings-dropdown`, `.md-link-settings-dropdown`, `.md-image-insert-dropdown`, `.md-image-gear-dropdown`, `.live-wysiwyg-nav-dialog`, `.live-wysiwyg-selection-edit-popup`, `.live-wysiwyg-emoji-autocomplete`, `.md-admonition-dropdown`, `.live-wysiwyg-nav-review-popup`, `.live-wysiwyg-asset-lightbox` | `editor.css`, `_getFocusModeCSS`, JS inline styles |
@@ -73,7 +73,7 @@ Every z-index value in the codebase. New z-index values must be added here befor
 - **0–100**: In-content elements that layer relative to each other within the editable area.
 - **99989**: Early overlay that appears before focus mode is fully initialized.
 - **99990**: Focus overlay — the primary stacking context for all focus-mode UI.
-- **99993–99996**: Panels and popups that float above the focus overlay but below editor dropdowns.
+- **99993–99996**: Panels and popups that float above the focus overlay but below editor dropdowns. The mermaid overlay (`.live-wysiwyg-mermaid-overlay` at 99995) is Layer 3, above the focus overlay (Layer 2).
 - **99999**: All editor dropdowns share the same layer so they can overlap each other freely.
 - **100000–100002**: Global UI elements (toast, progress bar, notifications) that must appear above everything.
 - **999999**: Confirm overlays that block all interaction.

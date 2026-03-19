@@ -3,8 +3,10 @@
 Runs in a daemon thread alongside the MkDocs dev server.  Exposes
 ``POST /check-links``, ``POST /file-exists``, ``POST /list-items``,
 ``POST /rename-folder``, ``POST /delete-folder``, ``POST /move-file``,
-``POST /delete-file``, ``POST /unreferenced-files``, and
-``GET /link-index``, ``GET /build-epoch`` endpoints.
+``POST /delete-file``, ``POST /unreferenced-files``,
+``GET /link-index``, ``GET /build-epoch``,
+``GET /mermaid-editor/*``, and
+``POST|GET|PUT|DELETE /mermaid-session`` endpoints.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import shutil
 import threading
 import urllib.error
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from pathlib import Path
@@ -26,6 +29,28 @@ _RE_MD_LINK = re.compile(r'(?<!!)\[([^\]]*)\]\(([^)]+)\)')
 _RE_MD_IMAGE = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
 _RE_IMG_TAG = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']')
 _RE_REF_DEF = re.compile(r'^\[([^\]]+)\]:\s+(\S+)', re.MULTILINE)
+
+_MERMAID_EDITOR_DIR = Path(__file__).parent / "vendor" / "mermaid-live-editor"
+_MERMAID_MIME_TYPES = {
+    ".html": "text/html",
+    ".js": "application/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".ttf": "font/ttf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".json": "application/json",
+    ".map": "application/json",
+    ".ico": "image/x-icon",
+    ".xml": "application/xml",
+    ".txt": "text/plain",
+    ".webmanifest": "application/manifest+json",
+}
+
+_mermaid_sessions: dict[str, str] = {}
+_mermaid_sessions_lock = threading.Lock()
 
 
 def _parse_frontmatter(text: str) -> dict:
@@ -85,7 +110,53 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
+        if self.path.startswith("/mermaid-editor/"):
+            return self._serve_mermaid_editor()
+        if self.path.startswith("/mermaid-session/"):
+            return self._handle_mermaid_session_get()
         self.send_error(404)
+
+    # ------------------------------------------------------------------
+    # GET /mermaid-editor/*  — serve vendored Mermaid Live Editor assets
+    # ------------------------------------------------------------------
+
+    def _serve_mermaid_editor(self):
+        rel = self.path[len("/mermaid-editor/"):]
+        if not rel:
+            rel = "index.html"
+        rel = rel.split("?")[0].split("#")[0]
+        if rel == "mermaid.min.js":
+            requested = _MERMAID_EDITOR_DIR.parent / "mermaid.min.js"
+        else:
+            requested = (_MERMAID_EDITOR_DIR / rel).resolve()
+            if not self._is_within_docs(
+                requested, _MERMAID_EDITOR_DIR.resolve()
+            ):
+                self.send_error(403, "Path escapes mermaid-editor directory")
+                return
+        if not requested.is_file():
+            # SvelteKit adapter-static: extensionless routes map to .html files
+            html_fallback = requested.parent / (requested.name + ".html")
+            if html_fallback.is_file() and self._is_within_docs(
+                html_fallback.resolve(), _MERMAID_EDITOR_DIR.resolve()
+            ):
+                requested = html_fallback
+            else:
+                self.send_error(404)
+                return
+        suffix = requested.suffix.lower()
+        content_type = _MERMAID_MIME_TYPES.get(suffix, "application/octet-stream")
+        try:
+            data = requested.read_bytes()
+        except OSError:
+            self.send_error(500, "Failed to read file")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
 
     # ------------------------------------------------------------------
     # POST /check-links
@@ -108,6 +179,8 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
             return self._handle_delete_file()
         if self.path == "/unreferenced-files":
             return self._handle_unreferenced_files()
+        if self.path == "/mermaid-session":
+            return self._handle_mermaid_session_create()
         self.send_error(404)
 
     def _read_json_body(self) -> dict | None:
@@ -546,9 +619,82 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    # ------------------------------------------------------------------
+    # PUT /mermaid-session/{id}
+    # ------------------------------------------------------------------
+
+    def do_PUT(self):
+        if self.path.startswith("/mermaid-session/"):
+            return self._handle_mermaid_session_update()
+        self.send_error(404)
+
+    # ------------------------------------------------------------------
+    # DELETE /mermaid-session/{id}
+    # ------------------------------------------------------------------
+
+    def do_DELETE(self):
+        if self.path.startswith("/mermaid-session/"):
+            return self._handle_mermaid_session_delete()
+        self.send_error(404)
+
+    # ------------------------------------------------------------------
+    # Mermaid Session CRUD
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_session_id(path: str) -> str:
+        return path[len("/mermaid-session/"):].split("?")[0].split("#")[0]
+
+    def _handle_mermaid_session_create(self):
+        body = self._read_json_body()
+        if body is None:
+            return
+        code = body.get("code", "")
+        session_id = uuid.uuid4().hex[:16]
+        with _mermaid_sessions_lock:
+            _mermaid_sessions[session_id] = code
+        self._send_json({"sessionId": session_id}, code=201)
+
+    def _handle_mermaid_session_get(self):
+        sid = self._extract_session_id(self.path)
+        with _mermaid_sessions_lock:
+            code = _mermaid_sessions.get(sid)
+        if code is None:
+            self.send_error(404, "Session not found")
+            return
+        self._send_json({"code": code})
+
+    def _handle_mermaid_session_update(self):
+        sid = self._extract_session_id(self.path)
+        body = self._read_json_body()
+        if body is None:
+            return
+        with _mermaid_sessions_lock:
+            if sid not in _mermaid_sessions:
+                self.send_error(404, "Session not found")
+                return
+            _mermaid_sessions[sid] = body.get("code", "")
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _handle_mermaid_session_delete(self):
+        sid = self._extract_session_id(self.path)
+        with _mermaid_sessions_lock:
+            removed = _mermaid_sessions.pop(sid, None)
+        if removed is None:
+            self.send_error(404, "Session not found")
+            return
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header(
+            "Access-Control-Allow-Methods",
+            "GET, POST, PUT, DELETE, OPTIONS",
+        )
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The focus mode navigation menu provides file management capabilities: moving pages, sections, and binary assets within the nav tree using arrow controls and keyboard shortcuts. Items can be moved individually or as a multi-select group via Cmd+Click (macOS) / Ctrl+Click (Windows/Linux). All movements operate on the in-memory `liveWysiwygNavData` tree and are persisted to disk through the unified save pipeline.
+The focus mode navigation menu provides file management capabilities: moving pages, sections, and binary assets within the nav tree using arrow controls and keyboard shortcuts. Items can be moved individually or as a multi-select group via Cmd+Click (macOS) / Ctrl+Click (Windows/Linux). All movements operate on the in-memory `liveWysiwygNavData` tree and are persisted to disk through the unified save pipeline. All movements are captured as snapshots and persisted through the unified save pipeline. See [DESIGN-snapshot-nav-architecture.md](DESIGN-snapshot-nav-architecture.md) for the snapshot system that underpins undo/redo, discard, and diff-based saving.
 
 All code lives in `live-wysiwyg-integration.js` (movement, selection, save pipeline) and `editor.css` (visual feedback).
 
@@ -70,7 +70,7 @@ These ops are recorded in snapshots for undo/redo and used by `_computeSavePlan`
 After the movement function returns:
 
 1. **Folder auto-expand/collapse**: if the item's parent section changed, the new parent (and its ancestors) are expanded (`_expanded = true`), and the old parent is collapsed
-2. **Weight normalization**: sibling weights are normalized if the parent section is new/renamed or if any sibling lacks a weight
+2. **Weight adjustment**: `_updateInMemoryWeightFromDom` computes a midpoint weight for the moved item between its new neighbors. Only the moved item's weight changes; sibling weights are untouched
 3. **Badge**: a "Reorder files" badge is added to the nav actions bar
 4. **Focus**: `_setNavItemFocused(item)` marks the moved item as focused in navData
 5. **Snapshot**: `_commitNavSnapshot()` captures the state and triggers `_renderNavFromSnapshot()`, which rebuilds the DOM, applies the `--focused` CSS class, and scrolls the focused item to center
@@ -576,12 +576,6 @@ Function: `_showNavPopup`. These are message-only popups with no action buttons.
 
 ```
 This page's weight (NNN) exceeds the default page weight (MMM).
-```
-
-**Unweighted page** — shown when a non-root-index page has `weight == null`:
-
-```
-This page has no nav weight assigned.
 ```
 
 ### Page Management Submenu

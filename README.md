@@ -71,8 +71,7 @@ Add both plugins to your `mkdocs.yml`. **Important:** `live-edit` must be listed
 ```yaml
 plugins:
   - live-edit
-  - live-wysiwyg:
-      autoload_wysiwyg: true # optional, if false, start with plain textarea and show "Enable Editor"
+  - live-wysiwyg
 ```
 
 ### Options

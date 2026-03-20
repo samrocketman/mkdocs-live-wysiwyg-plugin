@@ -57,7 +57,10 @@ Both functions use a shared constant `_PYTHON_NAME_TAG = '!!python/name:'` for c
 
 ### Trigger
 
-When `exitMermaidMode()` fires and `_isMermaidConfiguredInYml(_virtualMkdocsYml)` returns `false`, the function calls `_addCautionPage(pagePath, MERMAID_CONFIG_REASON)` where `pagePath` is the current page's `src_path`. This adds a caution icon to the page in the nav sidebar.
+When `exitMermaidMode()` fires and `_isMermaidConfiguredInYml(_virtualMkdocsYml)` returns `false`, two warnings are created:
+
+1. **Page-level caution** (informational, no action): `_addCautionPage(pagePath, MERMAID_CONFIG_REASON)` adds a caution icon to the current page in the nav sidebar, marking it as containing mermaid content that won't render.
+2. **Top-level warning** (with action): A `mermaid-config-missing` entry is pushed to `_navTopWarnings` with `actionId: 'apply-mermaid-config'` and `actionText: 'Apply to mkdocs.yml'`. This appears as a caution icon next to the nav title with a purple primary action button.
 
 The detection reads from snapshot state (`_virtualMkdocsYml`), satisfying Cardinal Rule B: mkdocs.yml warnings should ALWAYS and ONLY come from active snapshot state.
 
@@ -65,23 +68,28 @@ The detection reads from snapshot state (`_virtualMkdocsYml`), satisfying Cardin
 
 `MERMAID_CONFIG_REASON = "Mermaid diagrams require pymdownx.superfences configuration"`
 
-This reason is registered in the caution reason string inventory alongside dead links, nav migration, and unreferenced assets.
+This reason is used for page-level cautions and is registered in `_navCautionActions` with an "Apply to mkdocs.yml" button. The top-level warning uses a separate id (`mermaid-config-missing`) with `actionId: 'apply-mermaid-config'`.
 
-### Auto-fix in Caution Popup
+### Auto-fix Buttons (Two Surfaces, Same Action)
 
-`_showCautionPopup` renders action buttons for any warning reason registered in `_navCautionActions`. The mermaid config auto-fix is registered as `_navCautionActions[MERMAID_CONFIG_REASON]`. When the user clicks "Auto-fix mkdocs.yml":
+The "Apply to mkdocs.yml" button appears in two places, both using the purple accent primary styling:
+
+1. **Top-level warning:** `_navTopWarningActions['apply-mermaid-config']` — triggered via `_showNavPopup` with `primary: true`
+2. **Page-level caution popup:** `_navCautionActions[MERMAID_CONFIG_REASON]` — rendered with `primary: true` which applies the `live-wysiwyg-nav-popup-primary` CSS class
+
+Both handlers perform the identical action sequence. When the user clicks "Apply to mkdocs.yml" from either surface:
 
 1. The popup is dismissed (dismiss-first invocation)
-2. The handler calls `_applyMermaidConfigFix()` which mutates `_virtualMkdocsYml` in-memory — no disk I/O
-3. Calls `_removeNavWarningReason(navItem, MERMAID_CONFIG_REASON)` to remove only the mermaid reason (respecting caution resolve scoping)
-4. Commits a nav snapshot so the icon update is reflected
-5. Enters edit mode so Save/Discard buttons become visible — the Declarative Save Planner's `mkdocsYmlOps` diff will detect the virtual change and emit `write-mkdocs-yml` ops when the user clicks Save
+2. The handler enters nav edit mode FIRST (if not already in it) — this captures `_navCleanSnapshot` from the pre-change state, so the Save button will appear when changes are made
+3. Calls `_applyMermaidConfigFix()` which mutates `_virtualMkdocsYml` (and `_virtualGeneratedMkdocsYml` via `_applyYmlTransform`) in-memory — no disk I/O
+4. Removes the top-level warning via `_removeNavTopWarning('mermaid-config-missing')`
+5. Removes all page-level mermaid cautions via `_removeNavWarningReasonFromAll(null, MERMAID_CONFIG_REASON)`
+6. Commits a nav snapshot — the diff against `_navCleanSnapshot` makes the Save button visible, and the Declarative Save Planner's `mkdocsYmlOps` diff will emit `write-mkdocs-yml` ops when the user clicks Save
 
 ### Resolve Scoping
 
-The mermaid config reason follows the caution resolve scoping contract:
-- "Resolve" in the popup removes all warnings (including mermaid config) — standard behavior
-- "Auto-fix mkdocs.yml" removes only the mermaid config reason, preserving other reasons on the same page
+- "Apply to mkdocs.yml" (either surface) clears both the top-level warning and all page-level mermaid cautions
+- "Resolve" in the page popup removes all warnings on that page (including mermaid config) — standard behavior
 - "Resolve All" clears all cautions across all pages — standard behavior
 
 ---
@@ -116,9 +124,9 @@ Applies the mermaid config fix to the virtual mkdocs.yml state in memory. No dis
 
 | Step | Action |
 |------|--------|
-| 1 | Apply `_addMermaidSuperfencesConfig` to `_virtualMkdocsYml` |
+| 1 | Apply `_addMermaidSuperfencesConfig` to both `_virtualMkdocsYml` and `_virtualGeneratedMkdocsYml` via `_applyYmlTransform` |
 
-The save planner's `_computeSavePlan` compares the active snapshot's `mkdocsYml` against the original snapshot's `mkdocsYml`. When they differ, it emits `write-mkdocs-yml` (for `original-mkdocs.yml`) and `merge-mkdocs-yml` (for `../mkdocs.yml`) ops. The dual-write is handled by the save planner, not by the fix function.
+The save planner's `_computeSavePlan` compares the active snapshot's `mkdocsYml` and `generatedMkdocsYml` against the original snapshot's copies. When they differ, it emits `write-mkdocs-yml` ops for both files (direct writes, no merge). The dual-write is handled by the save planner, not by the fix function.
 
 ---
 

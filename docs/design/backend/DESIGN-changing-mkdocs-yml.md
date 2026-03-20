@@ -31,54 +31,39 @@ All code lives in `live-wysiwyg-integration.js`.
 
 ## Virtual Mutation Pattern
 
-Transforms are applied to `_virtualMkdocsYml` (the single in-memory copy of the user's mkdocs.yml content). After applying a transform, the caller commits a nav snapshot via `_commitNavSnapshot()`. The snapshot captures the current `_virtualMkdocsYml` value, making the change part of the undo/redo history.
+Transforms are applied to both `_virtualMkdocsYml` (the user's original config) and `_virtualGeneratedMkdocsYml` (the techdocs-generated config) via `_applyYmlTransform(fn)`. After applying a transform, the caller commits a nav snapshot via `_commitNavSnapshot()`. The snapshot captures both virtual copies, making the change part of the undo/redo history.
 
 ```
 Action handler
-  → apply transform to _virtualMkdocsYml
+  → _applyYmlTransform(transformFn)  // applies to both virtual copies
   → _commitNavSnapshot()
-  → snapshot captures _virtualMkdocsYml
-  → on Save: _computeSavePlan detects diff → emits mkdocsYmlOps
+  → snapshot captures mkdocsYml + generatedMkdocsYml
+  → on Save: _computeSavePlan detects diff → emits write-mkdocs-yml ops for each changed file
 ```
 
 ## Source of Truth Architecture
 
-`original-mkdocs.yml` is the primary source of truth for `_virtualMkdocsYml`. The generated `../mkdocs.yml` (which includes techdocs-core plugins, hooks, theme overrides) is only used as a fallback when `original-mkdocs.yml` is not available.
+Two virtual copies are maintained when `original-mkdocs.yml` exists:
+
+- `_virtualMkdocsYml` — the user's original config (`original-mkdocs.yml`)
+- `_virtualGeneratedMkdocsYml` — the techdocs-generated config (`../mkdocs.yml`)
+
+When `original-mkdocs.yml` does not exist, only `_virtualMkdocsYml` is used (loaded from `../mkdocs.yml`), and `_virtualGeneratedMkdocsYml` remains `null`.
 
 ### Prefetch
 
-`_prefetchMkdocsYml()` loads `_virtualMkdocsYml` from:
-1. `liveWysiwygOriginalMkdocsYml` (if available — the user's original config)
-2. `../mkdocs.yml` (fallback — the generated config)
+`_prefetchMkdocsYml()` loads:
+1. `_virtualMkdocsYml` from `liveWysiwygOriginalMkdocsYml` (if available) or `../mkdocs.yml` (fallback)
+2. `_virtualGeneratedMkdocsYml` from `../mkdocs.yml` (only when `liveWysiwygOriginalMkdocsYml` exists)
 
-Only one virtual copy is maintained. All transforms are applied to `_virtualMkdocsYml` only.
+### Save: Direct Writes via Save Planner
 
-### Save: Dual-Write via Save Planner
+When `_computeSavePlan` detects that either virtual copy changed between snapshot 0 and the active snapshot:
 
-When `_computeSavePlan` detects that `_virtualMkdocsYml` changed between snapshot 0 and the active snapshot:
+- **With `original-mkdocs.yml`**: Emits `write-mkdocs-yml` (overwrite) for `original-mkdocs.yml` with `currentSnap.mkdocsYml`, and `write-mkdocs-yml` (overwrite) for `../mkdocs.yml` with `currentSnap.generatedMkdocsYml`.
+- **Without `original-mkdocs.yml`**: Emits `write-mkdocs-yml` (overwrite) for `../mkdocs.yml` with `currentSnap.mkdocsYml` directly.
 
-- **With `original-mkdocs.yml`**: Emits `write-mkdocs-yml` (overwrite) for `original-mkdocs.yml`, then `merge-mkdocs-yml` (3-way YAML deep merge) for `../mkdocs.yml`.
-- **Without `original-mkdocs.yml`**: Emits `write-mkdocs-yml` (overwrite) for `../mkdocs.yml` directly.
-
-### 3-Way YAML Deep Merge (`_yamlDeepMerge`)
-
-The `merge-mkdocs-yml` op handler reads `../mkdocs.yml` from disk and performs a 3-way merge:
-
-- **base**: snapshot 0's mkdocs.yml (before user changes)
-- **source**: active snapshot's mkdocs.yml (after user changes)
-- **target**: the generated `../mkdocs.yml` currently on disk
-
-The merge computes the delta (base → source) and applies only those changes to target:
-
-- Key unchanged between base and source → target untouched
-- Key changed between base and source → target updated with source's value
-- Key in base but not source → deleted from target
-- Key in source but not base → added to target
-- Key in target but not in base or source → preserved (e.g., techdocs-core plugins, hooks)
-
-For `plugins` and `markdown_extensions` lists, set-union merge is used instead of atomic overwrite: items added in source are added to target, items removed from source are removed from target, items only in target are preserved.
-
-If the merged content is identical to the disk content, the write is skipped entirely.
+No `merge-mkdocs-yml` ops are emitted. Both files receive their complete content directly.
 
 ### `!!python/name:` Tag Handling
 

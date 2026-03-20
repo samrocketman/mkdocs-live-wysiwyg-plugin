@@ -13388,6 +13388,14 @@
     if (!item._warnings.length) delete item._warnings;
   }
 
+  function _removeNavWarningReasonFromAll(items, reason) {
+    items = items || (typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : []);
+    for (var i = 0; i < items.length; i++) {
+      _removeNavWarningReason(items[i], reason);
+      if (items[i].children) _removeNavWarningReasonFromAll(items[i].children, reason);
+    }
+  }
+
   function _clearAllNavWarnings(items) {
     items = items || (typeof liveWysiwygNavData !== 'undefined' ? liveWysiwygNavData : []);
     for (var i = 0; i < items.length; i++) {
@@ -16512,7 +16520,14 @@
   // ======================================================================
   var _navTopWarningActions = {
     'start-migration': function () { _startMigrationFlow(); },
-    'apply-default-weight': function (warn) { _applyDefaultPageWeight(warn._suggestedWeight); }
+    'apply-default-weight': function (warn) { _applyDefaultPageWeight(warn._suggestedWeight); },
+    'apply-mermaid-config': function () {
+      if (!_navEditMode) _enterNavEditMode();
+      _applyMermaidConfigFix();
+      _removeNavTopWarning('mermaid-config-missing');
+      _removeNavWarningReasonFromAll(null, MERMAID_CONFIG_REASON);
+      _commitNavSnapshot();
+    }
   };
 
   var _navCautionActions = {};
@@ -17992,38 +18007,9 @@
     }
 
     var totalCautionItems = _collectNavWarnings().length;
-    var buttons = [
-      {
-        text: 'Resolve', action: function () {
-          delete navItem._warnings;
-          delete navItem._deadLinks;
-          _hideDeadLinkPanel();
-          _commitNavSnapshot();
-        }
-      }
-    ];
-    if (totalCautionItems > 1) {
-      buttons.push({
-        text: 'Resolve All', action: function () {
-          _clearAllNavWarnings();
-          _hideDeadLinkPanel();
-          _commitNavSnapshot();
-        }
-      });
-    }
-    var cautionBtnRow = document.createElement('div');
-    cautionBtnRow.style.marginTop = '8px';
-    buttons.forEach(function (btn) {
-      var b = document.createElement('button');
-      b.textContent = btn.text;
-      b.addEventListener('click', function () {
-        popup.parentNode.removeChild(popup);
-        if (btn.action) btn.action();
-      });
-      cautionBtnRow.appendChild(b);
-    });
-    popup.appendChild(cautionBtnRow);
+    var hasResolveAll = totalCautionItems > 1;
 
+    var actionBtns = [];
     reasons.forEach(function (reason) {
       var actionDef = _navCautionActions[reason];
       if (!actionDef) return;
@@ -18031,18 +18017,53 @@
       for (var w = 0; w < (navItem._warnings || []).length; w++) {
         if (navItem._warnings[w].reason === reason) { warningEntry = navItem._warnings[w]; break; }
       }
-      var fixRow = document.createElement('div');
-      fixRow.style.marginTop = '6px';
       var fixBtn = document.createElement('button');
       fixBtn.textContent = actionDef.text;
-      if (actionDef.style) fixBtn.style.cssText = actionDef.style;
+      if (actionDef.primary) fixBtn.className = 'live-wysiwyg-nav-popup-primary';
+      else if (actionDef.style) fixBtn.style.cssText = actionDef.style;
       fixBtn.addEventListener('click', function () {
         if (popup.parentNode) popup.parentNode.removeChild(popup);
         actionDef.handler(navItem, warningEntry);
       });
-      fixRow.appendChild(fixBtn);
-      popup.appendChild(fixRow);
+      actionBtns.push(fixBtn);
     });
+
+    if (actionBtns.length && hasResolveAll) {
+      var actionRow = document.createElement('div');
+      actionRow.style.marginTop = '8px';
+      actionBtns.forEach(function (b) { actionRow.appendChild(b); });
+      popup.appendChild(actionRow);
+    }
+
+    var cautionBtnRow = document.createElement('div');
+    cautionBtnRow.style.marginTop = '8px';
+    var resolveBtn = document.createElement('button');
+    resolveBtn.textContent = 'Resolve';
+    resolveBtn.addEventListener('click', function () {
+      popup.parentNode.removeChild(popup);
+      delete navItem._warnings;
+      delete navItem._deadLinks;
+      _hideDeadLinkPanel();
+      _commitNavSnapshot();
+    });
+    cautionBtnRow.appendChild(resolveBtn);
+
+    if (actionBtns.length && !hasResolveAll) {
+      actionBtns.forEach(function (b) { cautionBtnRow.appendChild(b); });
+    }
+
+    if (hasResolveAll) {
+      var resolveAllBtn = document.createElement('button');
+      resolveAllBtn.textContent = 'Resolve All';
+      resolveAllBtn.addEventListener('click', function () {
+        popup.parentNode.removeChild(popup);
+        _clearAllNavWarnings();
+        _hideDeadLinkPanel();
+        _commitNavSnapshot();
+      });
+      cautionBtnRow.appendChild(resolveAllBtn);
+    }
+    popup.appendChild(cautionBtnRow);
 
     var rect = anchorEl.getBoundingClientRect();
     popup.style.position = 'fixed';
@@ -21836,6 +21857,17 @@
       if (!_isMermaidConfiguredInYml(_virtualMkdocsYml)) {
         var pagePath = _getCurrentSrcPath();
         if (pagePath) _addCautionPage(pagePath, MERMAID_CONFIG_REASON);
+        if (!_hasNavTopWarning('mermaid-config-missing')) {
+          _navTopWarnings.push({
+            id: 'mermaid-config-missing',
+            text: 'Mermaid diagrams require pymdownx.superfences configuration in mkdocs.yml. Apply the fix to enable mermaid rendering.',
+            icon: 'caution',
+            title: 'Mermaid not configured',
+            actionId: 'apply-mermaid-config',
+            actionText: 'Apply to mkdocs.yml'
+          });
+          _ensureNavUncollapsed();
+        }
       }
 
       if (callback) callback();
@@ -22059,19 +22091,26 @@
   var MERMAID_CONFIG_REASON = 'Mermaid diagrams require pymdownx.superfences configuration';
 
   _navCautionActions[MERMAID_CONFIG_REASON] = {
-    text: 'Auto-fix mkdocs.yml',
-    style: 'background:#5cb85c;color:#fff;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:.75rem;',
+    text: 'Apply to mkdocs.yml',
+    primary: true,
     handler: function (navItem) {
-      _applyMermaidConfigFix();
-      _removeNavWarningReason(navItem, MERMAID_CONFIG_REASON);
-      _commitNavSnapshot();
       if (!_navEditMode) _enterNavEditMode();
+      _applyMermaidConfigFix();
+      _removeNavTopWarning('mermaid-config-missing');
+      _removeNavWarningReasonFromAll(null, MERMAID_CONFIG_REASON);
+      _commitNavSnapshot();
     }
   };
 
   function _applyMermaidConfigFix() {
     if (_virtualMkdocsYml != null) {
       _applyYmlTransform(_addMermaidSuperfencesConfig);
+      if (!_navBadges.some(function (b) { return b.text === 'Add mermaid to mkdocs.yml'; })) {
+        _addNavBadge({
+          className: 'live-wysiwyg-nav-normalize-badge',
+          text: 'Add mermaid to mkdocs.yml'
+        });
+      }
     }
   }
 

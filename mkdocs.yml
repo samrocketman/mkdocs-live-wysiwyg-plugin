@@ -1,8 +1,7 @@
 site_name: WYSIWYG Test
 plugins:
   - live-edit
-  - live-wysiwyg:
-      autoload_wysiwyg: true         # set to false to start with plain textarea
+  - live-wysiwyg
   - mkdocs-nav-weight
 theme:
   features:

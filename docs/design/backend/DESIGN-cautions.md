@@ -10,7 +10,11 @@ Per-page warning system with scoped reason ownership. Each feature owns its reas
 
 **Rule B.** `mkdocs.yml` warnings should ALWAYS and ONLY come from active snapshot state — because the active snapshot contains `mkdocs.yml` contents or desired contents if the user clicks Save.
 
-**Rule C.** "Applying" `mkdocs.yml` changes ONLY affects snapshot state — deferred to the Declarative Save Planner on Save. Action handlers mutate `_virtualMkdocsYml` and call `_commitNavSnapshot()`. The save planner's `mkdocsYmlOps` diff detects the change and emits `write-mkdocs-yml` / `merge-mkdocs-yml` ops.
+**Rule C.** "Applying" `mkdocs.yml` changes ONLY affects snapshot state — deferred to the Declarative Save Planner on Save. Action handlers mutate `_virtualMkdocsYml` and call `_commitNavSnapshot()`. The save planner's `mkdocsYmlOps` diff detects the change and emits `write-mkdocs-yml` ops.
+
+**Rule D.** Every apply button — whether on a top-level warning or a page-level caution — MUST produce a saveable snapshot diff. The handler must call `_enterNavEditMode()` before any mutations so that `_navCleanSnapshot` captures the pre-change state. After the handler commits a snapshot, `_snapshotHasSaveableChanges()` must return `true` and the Save button must be visible. An apply button that silently succeeds without surfacing a Save button is a bug.
+
+**Rule E.** Every apply button MUST add at least one badge to the Review Changes menu via `_addNavBadge()`. The badge gives the user a human-readable summary of what will change when they click Save. An apply action without a corresponding Review Changes badge is a bug — the user must always be able to review what an apply action staged before committing.
 
 For all mkdocs.yml modification procedures and cardinal rules, see [DESIGN-changing-mkdocs-yml.md](DESIGN-changing-mkdocs-yml.md). Caution action handlers that modify mkdocs.yml (e.g., mermaid auto-fix) must follow the transform procedures documented there.
 
@@ -158,7 +162,8 @@ Both actions create a snapshot, so they can be undone.
 ```
 _navCautionActions[reason] = {
   text: string,         // button label
-  style?: string,       // optional cssText for the button
+  primary?: boolean,    // if true, uses live-wysiwyg-nav-popup-primary class (purple accent)
+  style?: string,       // optional cssText for the button (ignored when primary is true)
   handler: function(navItem, warningEntry) -> void
 }
 ```
@@ -171,12 +176,17 @@ All handlers are synchronous. The popup is dismissed before the handler runs (di
 // 1. Register the action (once, at init time)
 _navCautionActions['My feature needs attention'] = {
   text: 'Fix it',
-  style: 'background:#5cb85c;color:#fff;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:.75rem;',
+  primary: true,
   handler: function (navItem, warningEntry) {
+    // Enter nav edit mode FIRST so _navCleanSnapshot captures pre-change state (Rule D)
+    if (!_navEditMode) _enterNavEditMode();
     // Mutate snapshot state only — no disk I/O
     _removeNavWarningReason(navItem, 'My feature needs attention');
+    // Add a Review Changes badge so the user can see what was staged (Rule E)
+    if (!_navBadges.some(function (b) { return b.text === 'Fix applied'; })) {
+      _addNavBadge({ className: 'live-wysiwyg-nav-normalize-badge', text: 'Fix applied' });
+    }
     _commitNavSnapshot();
-    if (!_navEditMode) _enterNavEditMode();
   }
 };
 
@@ -186,22 +196,26 @@ _addCautionPage(pagePath, 'My feature needs attention', { extra: 'context' });
 
 ### Handler contract
 
-Action handlers registered in `_navCautionActions` MUST:
+Action handlers registered in `_navCautionActions` or `_navTopWarningActions` MUST:
 
 1. Be synchronous — no Promises, no async disk I/O (Cardinal Rule A)
 2. Only mutate snapshot state: navData (via `_removeNavWarningReason` or direct property changes), `_virtualMkdocsYml`
-3. Call `_commitNavSnapshot()` after mutations to trigger a nav DOM rebuild
-4. Call `_enterNavEditMode()` if the mutation creates saveable changes, so Save/Discard buttons become visible
-5. Never use `classList`, `setAttribute`, `removeChild`, or any DOM API on nav sidebar elements
+3. Enter nav edit mode BEFORE making mutations (not after) — `_enterNavEditMode()` captures `_navCleanSnapshot` from the current state, so it must run before changes to ensure the Save button appears when the snapshot differs (Cardinal Rule D)
+4. Add at least one badge via `_addNavBadge()` describing what the action staged (Cardinal Rule E)
+5. Call `_commitNavSnapshot()` after mutations to trigger a nav DOM rebuild
+6. Never use `classList`, `setAttribute`, `removeChild`, or any DOM API on nav sidebar elements
 
 ### Mermaid Config Auto-fix
 
-The Mermaid auto-fix is registered in `_navCautionActions[MERMAID_CONFIG_REASON]`:
+The Mermaid auto-fix appears at both levels — a **top-level warning** (`_navTopWarningActions['apply-mermaid-config']`) and a **page-level caution action** (`_navCautionActions[MERMAID_CONFIG_REASON]`). Both use the purple primary button styling and perform the same action.
 
-1. Calls `_applyMermaidConfigFix()` which applies `_addMermaidSuperfencesConfig` to `_virtualMkdocsYml` in-memory — no disk I/O (Cardinal Rule C)
-2. Removes only the mermaid config reason via `_removeNavWarningReason(navItem, MERMAID_CONFIG_REASON)` — respecting scoped resolution
-3. Commits a nav snapshot so the caution icon update is reflected
-4. Enters edit mode so the user can Save the mkdocs.yml change (the Declarative Save Planner's `mkdocsYmlOps` diff detects the virtual change and emits `write-mkdocs-yml` ops)
+When the user clicks "Apply to mkdocs.yml" from either surface:
+
+1. Enters nav edit mode FIRST (if not already active) — this captures `_navCleanSnapshot` before changes, so the Save button appears when the snapshot differs
+2. Calls `_applyMermaidConfigFix()` which applies `_addMermaidSuperfencesConfig` to both `_virtualMkdocsYml` and `_virtualGeneratedMkdocsYml` via `_applyYmlTransform` — no disk I/O (Cardinal Rule C)
+3. Removes the top-level warning via `_removeNavTopWarning('mermaid-config-missing')`
+4. Removes all page-level mermaid cautions via `_removeNavWarningReasonFromAll(null, MERMAID_CONFIG_REASON)` — respecting scoped resolution (only removes the mermaid reason, preserving other reasons on any page)
+5. Commits a nav snapshot — the diff against `_navCleanSnapshot` makes Save visible; the Declarative Save Planner's `mkdocsYmlOps` diff emits `write-mkdocs-yml` ops
 
 See `docs/design/mermaid/DESIGN-mkdocs-yml-mermaid-config.md` for the full auto-fix architecture.
 
@@ -220,7 +234,7 @@ See `docs/design/mermaid/DESIGN-mkdocs-yml-mermaid-config.md` for the full auto-
 | Content Scanning (Dead Link Finder) | `"Internal dead links found"`, `"External dead links found"` | — |
 | Nav Migration | `"Link integrity may need attention"` | — |
 | Unreferenced Asset Finder | `"Unreferenced asset"` | — |
-| Mermaid Mode | `"Mermaid diagrams require pymdownx.superfences configuration"` | `_navCautionActions[MERMAID_CONFIG_REASON]` (virtual mkdocs.yml mutation) |
+| Mermaid Mode | `"Mermaid diagrams require pymdownx.superfences configuration"` | `_navCautionActions[MERMAID_CONFIG_REASON]` (page-level) + `_navTopWarningActions['apply-mermaid-config']` (top-level) — both apply the same mkdocs.yml fix |
 
 ## Helper Functions
 
@@ -228,6 +242,7 @@ See `docs/design/mermaid/DESIGN-mkdocs-yml-mermaid-config.md` for the full auto-
 |----------|---------|
 | `_addCautionPage(srcPath, reason, actionData?)` | Add page-level caution; optional `actionData` is stored as `_actionData` on the warning entry |
 | `_removeNavWarningReason(item, reason)` | Remove a specific reason from `item._warnings`; delete array if empty |
+| `_removeNavWarningReasonFromAll(items, reason)` | Recursively remove a specific reason from all items in the tree |
 | `_clearAllNavWarnings(items)` | Recursively delete `_warnings` and `_deadLinks` from all items |
 | `_clearAllNavDeadLinks(items)` | Recursively delete `_deadLinks` and dead-link warning reasons |
 | `_collectNavWarnings(items)` | Walk tree, return `[{path, reasons, renames, actionData?}]` for localStorage format |

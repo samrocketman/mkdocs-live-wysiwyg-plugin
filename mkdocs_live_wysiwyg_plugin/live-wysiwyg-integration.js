@@ -8240,6 +8240,7 @@
   var _warningDirectMode = false;
   var _navTopWarnings = [];
   var _virtualMkdocsYml = null;
+  var _virtualGeneratedMkdocsYml = null;
 
   function _ymlHasNavKey(yml) {
     if (!yml || typeof yml !== 'string') return false;
@@ -8253,10 +8254,25 @@
     var primaryPath = origPath || '../mkdocs.yml';
     return _wsGetContents(primaryPath).then(function (yml) {
       _virtualMkdocsYml = yml || '';
+      if (origPath) {
+        return _wsGetContents('../mkdocs.yml').then(function (genYml) {
+          _virtualGeneratedMkdocsYml = genYml || '';
+        }).catch(function (err) {
+          console.warn('[nav] Failed to pre-fetch generated mkdocs.yml:', err);
+          _virtualGeneratedMkdocsYml = null;
+        });
+      }
     }).catch(function (err) {
       console.warn('[nav] Failed to pre-fetch mkdocs.yml:', err);
       _virtualMkdocsYml = '';
     });
+  }
+
+  function _applyYmlTransform(fn) {
+    _virtualMkdocsYml = fn(_virtualMkdocsYml || '');
+    if (_virtualGeneratedMkdocsYml != null) {
+      _virtualGeneratedMkdocsYml = fn(_virtualGeneratedMkdocsYml || '');
+    }
   }
 
   var _navHiddenPagesPrecomputed = false;
@@ -8608,15 +8624,24 @@
         reject(new Error('ws_port not available'));
         return;
       }
+      console.log('[bulk-ws] creating new WebSocket connection to port', ws_port);
       var ws = new WebSocket('ws://' + location.hostname + ':' + ws_port);
-      ws.onerror = function () { reject(new Error('Bulk WS connection failed')); };
-      ws.onclose = function () { _bulkWs = null; };
+      ws.onerror = function () {
+        console.error('[bulk-ws] connection error (onerror fired)');
+        reject(new Error('Bulk WS connection failed'));
+      };
+      ws.onclose = function (ev) {
+        console.warn('[bulk-ws] connection closed: code=' + ev.code + ' reason=' + (ev.reason || '(none)') + ' wasClean=' + ev.wasClean);
+        _bulkWs = null;
+      };
       ws.onopen = function () {
+        console.log('[bulk-ws] connection opened, waiting for connected message');
         var connHandler = function (e) {
           ws.removeEventListener('message', connHandler);
           try {
             var data = JSON.parse(e.data);
             if (data && data.action === 'connected') {
+              console.log('[bulk-ws] received connected message, ready');
               _bulkWs = ws;
               resolve(ws);
               return;
@@ -8628,6 +8653,7 @@
         ws.addEventListener('message', connHandler);
         setTimeout(function () {
           ws.removeEventListener('message', connHandler);
+          console.warn('[bulk-ws] connected message timeout, resolving anyway');
           _bulkWs = ws;
           resolve(ws);
         }, 3000);
@@ -8641,31 +8667,48 @@
         var msg = { action: action, path: path };
         if (contents !== undefined) msg.contents = contents;
         var settled = false;
+        var sendTs = Date.now();
         var handler = function (e) {
           try {
             var data = JSON.parse(e.data);
             if (data && data.action === action) {
+              var elapsed = Date.now() - sendTs;
+              if (data.success === false) {
+                console.error('[ws-send] ' + action + ' ' + path + ' server returned error in ' + elapsed + 'ms:', data.error);
+              } else {
+                console.log('[ws-send] ' + action + ' ' + path + ' OK in ' + elapsed + 'ms');
+              }
               cleanup();
               resolve(data);
+            } else if (data && data.action === 'error') {
+              console.error('[ws-send] server error while waiting for ' + action + ' ' + path + ':', data.message);
             }
           } catch (err) {
             cleanup();
             resolve(e.data);
           }
         };
-        var closeHandler = function () {
+        var closeHandler = function (ev) {
+          console.error('[ws-send] WS CLOSED while awaiting ' + action + ' ' + path +
+            ' (code=' + ev.code + ' reason=' + (ev.reason || 'none') + ' clean=' + ev.wasClean +
+            ' elapsed=' + (Date.now() - sendTs) + 'ms, readyState=' + ws.readyState + ')');
           cleanup();
           _bulkWs = null;
           reject({ _wsRetryable: true, message: 'WS closed during ' + action + ' ' + path });
         };
         var errorHandler = function () {
+          console.error('[ws-send] WS ERROR while awaiting ' + action + ' ' + path +
+            ' (elapsed=' + (Date.now() - sendTs) + 'ms, readyState=' + ws.readyState + ')');
           cleanup();
           _bulkWs = null;
           reject({ _wsRetryable: true, message: 'WS error during ' + action + ' ' + path });
         };
         var timer = setTimeout(function () {
+          console.error('[ws-send] TIMEOUT (15s) for ' + action + ' ' + path +
+            ' readyState=' + ws.readyState + ' — server may be blocked on sync I/O');
           cleanup();
-          reject(new Error('WS timeout for ' + action + ' ' + path));
+          _bulkWs = null;
+          reject({ _wsRetryable: true, message: 'WS timeout for ' + action + ' ' + path });
         }, 15000);
         function cleanup() {
           if (settled) return;
@@ -8678,6 +8721,7 @@
         ws.addEventListener('message', handler);
         ws.addEventListener('close', closeHandler);
         ws.addEventListener('error', errorHandler);
+        console.log('[ws-send] >> ' + action + ' ' + path);
         ws.send(JSON.stringify(msg));
       });
     });
@@ -8690,10 +8734,14 @@
     function tryOnce() {
       attempt++;
       return _wsSendOnce(action, path, contents).catch(function (err) {
-        if (err && err._wsRetryable && attempt < _WS_MAX_RETRIES) {
+        var retryable = err && err._wsRetryable;
+        console.warn('[ws-send] attempt ' + attempt + '/' + _WS_MAX_RETRIES + ' failed for ' +
+          action + ' ' + path + ' retryable=' + !!retryable + ': ' + (err && err.message || err));
+        if (retryable && attempt < _WS_MAX_RETRIES) {
+          console.log('[ws-send] retrying after rebuild+reconnect...');
           return _waitForRebuildAndReconnect().then(tryOnce);
         }
-        throw err._wsRetryable ? new Error(err.message) : err;
+        throw retryable ? new Error(err.message) : err;
       });
     }
     return tryOnce();
@@ -8701,9 +8749,13 @@
 
   function _wsGetContents(path) {
     return _wsSend('get_contents', path).then(function (resp) {
+      if (resp && resp.success === false) {
+        console.error('[ws-get] server failed to read ' + path + ': ' + (resp.error || 'unknown'));
+        throw new Error('Failed to read ' + path + ': ' + (resp.error || 'unknown'));
+      }
       if (resp && typeof resp.contents === 'string') return resp.contents;
       if (typeof resp === 'string') return resp;
-      if (resp && resp.contents !== undefined) return String(resp.contents);
+      if (resp && resp.contents !== undefined && resp.contents !== null) return String(resp.contents);
       return '';
     });
   }
@@ -9111,6 +9163,7 @@
 
   function _closeBulkWs() {
     if (_bulkWs) {
+      console.log('[bulk-ws] closing (readyState=' + _bulkWs.readyState + ')');
       try { _bulkWs.close(); } catch (e) { /* noop */ }
       _bulkWs = null;
     }
@@ -9157,8 +9210,10 @@
   }
 
   function _waitForRebuildAndReconnect() {
+    console.log('[ws-reconnect] starting: close bulk WS, wait for rebuild, reconnect');
     _closeBulkWs();
     return _waitForRebuild().then(function () {
+      console.log('[ws-reconnect] rebuild detected, refreshing link check port');
       return _refreshLinkCheckPort();
     }).then(function () {
       var wsAttempts = 0;
@@ -9166,7 +9221,9 @@
       var wsDelay = 1500;
       function tryConnect() {
         wsAttempts++;
-        return _getOrCreateBulkWs().catch(function () {
+        console.log('[ws-reconnect] WS connect attempt ' + wsAttempts + '/' + wsMaxAttempts);
+        return _getOrCreateBulkWs().catch(function (err) {
+          console.warn('[ws-reconnect] attempt ' + wsAttempts + ' failed:', err && err.message || err);
           if (wsAttempts < wsMaxAttempts) {
             return new Promise(function (r) { setTimeout(r, wsDelay); }).then(tryConnect);
           }
@@ -12997,6 +13054,7 @@
       JSON.stringify(snap.navData, _navContentHashReplacer),
       JSON.stringify(snap.batchQueue),
       snap.mkdocsYml || '',
+      snap.generatedMkdocsYml || '',
       snap.migrationPending ? '1' : '0',
       snap.pendingFolderDelete ? JSON.stringify(snap.pendingFolderDelete) : ''
     ];
@@ -13025,6 +13083,7 @@
       focusTarget: _navFocusTarget,
       topWarnings: _navTopWarnings.slice(),
       mkdocsYml: _virtualMkdocsYml,
+      generatedMkdocsYml: _virtualGeneratedMkdocsYml,
       hasNavKey: _ymlHasNavKey(_virtualMkdocsYml),
       navWeightConfig: { installed: !!cfg.installed, enabled: !!cfg.enabled, default_page_weight: cfg.default_page_weight || 1000, frontmatter_defaults: cfg.frontmatter_defaults || null }
     };
@@ -13046,6 +13105,7 @@
     _navFocusTarget = snapshot.focusTarget;
     _navTopWarnings = snapshot.topWarnings ? snapshot.topWarnings.slice() : [];
     _virtualMkdocsYml = snapshot.mkdocsYml != null ? snapshot.mkdocsYml : null;
+    _virtualGeneratedMkdocsYml = snapshot.generatedMkdocsYml != null ? snapshot.generatedMkdocsYml : null;
     if (snapshot.navWeightConfig) {
       if (typeof liveWysiwygNavWeightConfig !== 'undefined') {
         liveWysiwygNavWeightConfig.installed = snapshot.navWeightConfig.installed;
@@ -13640,37 +13700,51 @@
 
     var mkdocsYmlPluginOps = [];
     var mkdocsYmlOps = [];
-    if (currentSnap.mkdocsYml != null && currentSnap.mkdocsYml !== originalSnap.mkdocsYml) {
+    var origChanged = currentSnap.mkdocsYml != null && currentSnap.mkdocsYml !== originalSnap.mkdocsYml;
+    var genChanged = currentSnap.generatedMkdocsYml != null && currentSnap.generatedMkdocsYml !== originalSnap.generatedMkdocsYml;
+    if (origChanged || genChanged) {
       var origHasNav = _ymlHasNavKey(originalSnap.mkdocsYml);
       var currHasNav = _ymlHasNavKey(currentSnap.mkdocsYml);
       var navWasRemoved = origHasNav && !currHasNav;
+      var hasOriginalPath = typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml;
 
       if (navWasRemoved) {
         var strippedOrig = _removeNavKeyFromYaml(originalSnap.mkdocsYml);
-        var intermediate = _yamlDeepMerge(strippedOrig, currentSnap.mkdocsYml, originalSnap.mkdocsYml);
-        if (intermediate !== originalSnap.mkdocsYml) {
-          if (typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml) {
-            mkdocsYmlPluginOps.push({ type: 'write-mkdocs-yml', path: liveWysiwygOriginalMkdocsYml, content: intermediate });
-            mkdocsYmlPluginOps.push({ type: 'merge-mkdocs-yml', path: '../mkdocs.yml',
-              base: originalSnap.mkdocsYml, source: intermediate });
-          } else {
-            mkdocsYmlPluginOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: intermediate });
+        if (strippedOrig !== currentSnap.mkdocsYml) {
+          var intermediateOrig = _yamlDeepMerge(strippedOrig, currentSnap.mkdocsYml, originalSnap.mkdocsYml);
+          if (intermediateOrig !== originalSnap.mkdocsYml) {
+            if (hasOriginalPath) {
+              mkdocsYmlPluginOps.push({ type: 'write-mkdocs-yml', path: liveWysiwygOriginalMkdocsYml, content: intermediateOrig });
+              if (currentSnap.generatedMkdocsYml != null) {
+                var strippedGenOrig = _removeNavKeyFromYaml(originalSnap.generatedMkdocsYml || '');
+                var intermediateGen = _yamlDeepMerge(strippedGenOrig, currentSnap.generatedMkdocsYml, originalSnap.generatedMkdocsYml || '');
+                mkdocsYmlPluginOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: intermediateGen });
+              }
+            } else {
+              mkdocsYmlPluginOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: intermediateOrig });
+            }
           }
         }
-        if (typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml) {
+        if (hasOriginalPath) {
           mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: liveWysiwygOriginalMkdocsYml, content: currentSnap.mkdocsYml });
-          mkdocsYmlOps.push({ type: 'merge-mkdocs-yml', path: '../mkdocs.yml',
-            base: intermediate, source: currentSnap.mkdocsYml });
+          if (currentSnap.generatedMkdocsYml != null) {
+            mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: currentSnap.generatedMkdocsYml });
+          }
         } else {
           mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: currentSnap.mkdocsYml });
         }
       } else {
-        if (typeof liveWysiwygOriginalMkdocsYml === 'string' && liveWysiwygOriginalMkdocsYml) {
-          mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: liveWysiwygOriginalMkdocsYml, content: currentSnap.mkdocsYml });
-          mkdocsYmlOps.push({ type: 'merge-mkdocs-yml', path: '../mkdocs.yml',
-            base: originalSnap.mkdocsYml, source: currentSnap.mkdocsYml });
+        if (hasOriginalPath) {
+          if (origChanged) {
+            mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: liveWysiwygOriginalMkdocsYml, content: currentSnap.mkdocsYml });
+          }
+          if (genChanged) {
+            mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: currentSnap.generatedMkdocsYml });
+          }
         } else {
-          mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: currentSnap.mkdocsYml });
+          if (origChanged) {
+            mkdocsYmlOps.push({ type: 'write-mkdocs-yml', path: '../mkdocs.yml', content: currentSnap.mkdocsYml });
+          }
         }
       }
     }
@@ -17319,7 +17393,7 @@
     }
 
     for (var vt = 0; vt < ymlTransforms.length; vt++) {
-      _virtualMkdocsYml = ymlTransforms[vt](_virtualMkdocsYml || '');
+      _applyYmlTransform(ymlTransforms[vt]);
     }
 
     if (suggestedDefaultWeight) {
@@ -17749,7 +17823,7 @@
         weight: dpw, index_weight: -10, headless: false, retitled: false, empty: false
       };
     }
-    _virtualMkdocsYml = _insertNavWeightEntry(_virtualMkdocsYml || '');
+    _applyYmlTransform(_insertNavWeightEntry);
     _removeNavTopWarning('nav-weight-not-installed');
     if (!_navBadges.some(function (b) { return b.text === 'mkdocs-nav-weight plugin staged'; })) {
       _addNavBadge({
@@ -17766,7 +17840,7 @@
   }
 
   function _applyDefaultPageWeight(newWeight) {
-    _virtualMkdocsYml = _replaceDefaultPageWeight(_virtualMkdocsYml || '', newWeight);
+    _applyYmlTransform(function (y) { return _replaceDefaultPageWeight(y, newWeight); });
     liveWysiwygNavWeightConfig.default_page_weight = newWeight;
     _removeNavTopWarning('weight-exceeds-default');
     _commitNavSnapshot();
@@ -21415,7 +21489,7 @@
     })(liveWysiwygNavData);
     if (maxW <= defWeight) return;
     var suggested = Math.ceil((maxW + 500) / 1000) * 1000;
-    _virtualMkdocsYml = _replaceDefaultPageWeight(_virtualMkdocsYml || '', suggested);
+    _applyYmlTransform(function (y) { return _replaceDefaultPageWeight(y, suggested); });
     liveWysiwygNavWeightConfig.default_page_weight = suggested;
     _removeNavTopWarning('weight-exceeds-default');
   }
@@ -21997,7 +22071,7 @@
 
   function _applyMermaidConfigFix() {
     if (_virtualMkdocsYml != null) {
-      _virtualMkdocsYml = _addMermaidSuperfencesConfig(_virtualMkdocsYml);
+      _applyYmlTransform(_addMermaidSuperfencesConfig);
     }
   }
 

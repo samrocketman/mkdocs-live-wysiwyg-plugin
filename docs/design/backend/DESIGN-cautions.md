@@ -6,11 +6,13 @@ Per-page warning system with scoped reason ownership. Each feature owns its reas
 
 ## Cardinal Rules
 
-**Rule A.** Cautions get resolved (applying changes to disk) through the snapshot system only, via the Declarative Save Planner. No caution action handler may perform disk I/O directly.
+**Rule A.** Cautions get resolved (applying changes to disk) through the snapshot system only, via the Declarative Save Planner. No caution action handler may perform disk I/O directly. This is a specific instance of the general rule that all disk I/O in Focus Mode flows exclusively through the Declarative Save Planner (see DESIGN-declarative-save-planner.md Invariant 10).
 
 **Rule B.** `mkdocs.yml` warnings should ALWAYS and ONLY come from active snapshot state — because the active snapshot contains `mkdocs.yml` contents or desired contents if the user clicks Save.
 
-**Rule C.** "Applying" `mkdocs.yml` changes ONLY affects snapshot state — deferred to the Declarative Save Planner on Save. Action handlers mutate `_virtualMkdocsYml` / `_virtualOriginalMkdocsYml` and call `_commitNavSnapshot()`. The save planner's `mkdocsYmlOps` diff detects the change and emits `write-mkdocs-yml` ops.
+**Rule C.** "Applying" `mkdocs.yml` changes ONLY affects snapshot state — deferred to the Declarative Save Planner on Save. Action handlers mutate `_virtualMkdocsYml` and call `_commitNavSnapshot()`. The save planner's `mkdocsYmlOps` diff detects the change and emits `write-mkdocs-yml` / `merge-mkdocs-yml` ops.
+
+For all mkdocs.yml modification procedures and cardinal rules, see [DESIGN-changing-mkdocs-yml.md](DESIGN-changing-mkdocs-yml.md). Caution action handlers that modify mkdocs.yml (e.g., mermaid auto-fix) must follow the transform procedures documented there.
 
 ## Warning Surface Taxonomy
 
@@ -187,7 +189,7 @@ _addCautionPage(pagePath, 'My feature needs attention', { extra: 'context' });
 Action handlers registered in `_navCautionActions` MUST:
 
 1. Be synchronous — no Promises, no async disk I/O (Cardinal Rule A)
-2. Only mutate snapshot state: navData (via `_removeNavWarningReason` or direct property changes), `_virtualMkdocsYml`, `_virtualOriginalMkdocsYml`
+2. Only mutate snapshot state: navData (via `_removeNavWarningReason` or direct property changes), `_virtualMkdocsYml`
 3. Call `_commitNavSnapshot()` after mutations to trigger a nav DOM rebuild
 4. Call `_enterNavEditMode()` if the mutation creates saveable changes, so Save/Discard buttons become visible
 5. Never use `classList`, `setAttribute`, `removeChild`, or any DOM API on nav sidebar elements
@@ -196,7 +198,7 @@ Action handlers registered in `_navCautionActions` MUST:
 
 The Mermaid auto-fix is registered in `_navCautionActions[MERMAID_CONFIG_REASON]`:
 
-1. Calls `_applyMermaidConfigFix()` which applies `_addMermaidSuperfencesConfig` to `_virtualMkdocsYml` and `_virtualOriginalMkdocsYml` in-memory — no disk I/O (Cardinal Rule C)
+1. Calls `_applyMermaidConfigFix()` which applies `_addMermaidSuperfencesConfig` to `_virtualMkdocsYml` in-memory — no disk I/O (Cardinal Rule C)
 2. Removes only the mermaid config reason via `_removeNavWarningReason(navItem, MERMAID_CONFIG_REASON)` — respecting scoped resolution
 3. Commits a nav snapshot so the caution icon update is reflected
 4. Enters edit mode so the user can Save the mkdocs.yml change (the Declarative Save Planner's `mkdocsYmlOps` diff detects the virtual change and emits `write-mkdocs-yml` ops)

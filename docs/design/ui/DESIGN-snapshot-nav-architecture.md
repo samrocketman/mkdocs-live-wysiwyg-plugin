@@ -43,8 +43,7 @@ Each snapshot captures the full editor state:
   migrationPending: bool      // migration was staged
   focusTarget: string|null    // src_path to focus after save
   topWarnings: [...]          // top-level warning message strings
-  mkdocsYml: string|null      // virtual mkdocs.yml content
-  originalMkdocsYml: string|null // virtual original mkdocs.yml
+  mkdocsYml: string|null      // virtual mkdocs.yml content (from original-mkdocs.yml if available)
   hasNavKey: bool              // derived from _ymlHasNavKey(_virtualMkdocsYml)
   navWeightConfig: {           // plugin configuration state
     installed: bool,
@@ -563,7 +562,7 @@ Flattens both snapshots via `_flattenNavTree` (UID-keyed maps), compares them by
   ],
   convertOps: [...],       // pass-through: convert-folder-to-page, regenerate-index
   createFolderOps: [...],  // create-folder ops from batchQueue
-  mkdocsYmlOps: [...]      // write-mkdocs-yml ops if yml changed
+  mkdocsYmlOps: [...]      // write-mkdocs-yml / merge-mkdocs-yml ops if yml changed
 }
 ```
 
@@ -591,6 +590,16 @@ Takes the desired state and computes the minimum disk operations to achieve it.
 
 This approach detects folder renames purely from the file-level desired state (pages + assets). The snapshot diff never specifies renames — the planner discovers them. A directory containing both `.md` pages and binary files will correctly emit a single folder rename when all files move to the same destination.
 
+### Execution Order
+
+`_executeNavBatchSave` constructs the execution sequence:
+
+1. **mkdocs.yml writes** — `write-mkdocs-yml` and `merge-mkdocs-yml` ops. Writing to `../mkdocs.yml` triggers a full MkDocs config reload (not just a page rebuild). This must happen before any file moves so that the `nav` key (if being removed) is gone before MkDocs encounters moved files. If the `nav` key still references old paths when files have been renamed, MkDocs fails to build and the live-edit plugin never recovers.
+2. **`wait-for-rebuild`** — MkDocs completes the config reload.
+3. **Folder operations** — folder renames, deletes, and asset moves via the API server.
+4. **`wait-for-rebuild`** — MkDocs rebuilds with the new file layout and reconnects the WebSocket.
+5. **File operations + content migration** — deletes, moves, creates, frontmatter, link rewrites via the bulk WebSocket.
+
 ### Batch 1: Folder Operations + Asset Moves (API calls)
 
 - **Folder renames**: Detected by the planner from page + asset moves. Deepest folders renamed first. Executed via `_apiPost('/rename-folder', ...)`. The API server creates parent directories automatically (`mkdir(parents=True)`), so deep moves work without prior directory creation.
@@ -599,21 +608,21 @@ This approach detects folder renames purely from the file-level desired state (p
 
 ### Batch 2: File Operations + Content Migration (bulk WebSocket)
 
-**2a. mkdocs.yml writes** — if the virtual `mkdocs.yml` differs from the original.
+**2a. Delete files** — pages with `isDeleted: true` → `_wsDeleteFile`; assets with `assetDeletes` entries → `_apiPost('/delete-file', ...)`
 
-**2b. Delete files** — pages with `isDeleted: true` → `_wsDeleteFile`; assets with `assetDeletes` entries → `_apiPost('/delete-file', ...)`
+**2b. Move/rename files** — pages where `diskPath !== desiredPath`, NOT covered by a folder rename from Batch 1. The `rename-page` executor reads the file, rewrites outbound links, deletes the old file, and creates the new file.
 
-**2c. Move/rename files** — pages where `diskPath !== desiredPath`, NOT covered by a folder rename from Batch 1. The `rename-page` executor reads the file, rewrites outbound links, deletes the old file, and creates the new file.
+**Index content splitting** uses the standard op ordering: the content page (which reuses the original index's UID) generates a `rename-page` that moves the file to the content page path. This vacates the index path. Then in batch 2d, a `create-page` fills the vacated index path with thin frontmatter-only content. Finally in batch 2e, `set-frontmatter` with `setContent` writes the body (from the snapshot) with merged nav-weight frontmatter to the content page. The user can freely move the content page anywhere after staging — the standard diff handles it.
 
-**Index content splitting** uses the standard op ordering: the content page (which reuses the original index's UID) generates a `rename-page` that moves the file to the content page path. This vacates the index path. Then in batch 2e, a `create-page` fills the vacated index path with thin frontmatter-only content. Finally in batch 2f, `set-frontmatter` with `setContent` writes the body (from the snapshot) with merged nav-weight frontmatter to the content page. The user can freely move the content page anywhere after staging — the standard diff handles it.
+**2c. Convert ops** — passthrough ops from the batchQueue (`regenerate-index`, `convert-folder-to-page`). Also includes `create-folder` ops for new sections.
 
-**2d. Convert ops** — passthrough ops from the batchQueue (`regenerate-index`, `convert-folder-to-page`). Also includes `create-folder` ops for new sections.
+**2d. Create new files** — pages with `isNew: true` and `createContent` → `_wsNewFile` + `_wsSetContents`.
 
-**2e. Create new files** — pages with `isNew: true` and `createContent` → `_wsNewFile` + `_wsSetContents`.
-
-**2f. Content migration** — after structural changes:
+**2e. Content migration** — after structural changes:
 - `set-frontmatter` for pages with changed frontmatter or `setContent`. When `setContent` is present, the executor uses it as the body instead of reading from disk, merging any frontmatter in `setContent` with the nav-weight fields from `_fm`. The `newFrontmatter` flag ensures correct key ordering when nav-weight fields are added for the first time.
 - `rewrite-links` — a single op carrying `renameMap` (aggregated from all renames: folder + individual page moves + asset moves) and `deletedPaths`. Asset moves are included so that markdown content referencing binary files (e.g., PDF links, image embeds) is automatically rewritten when the referenced file moves. The rewriter is extension-agnostic.
+
+**mkdocs.yml writes execute before Batch 1**, not within Batch 2. See "Execution Order" below.
 
 ### Precomputed Renames
 
@@ -657,6 +666,7 @@ Close bulk WebSocket → wait for mkdocs rebuild → reload page.
 | `wait-for-rebuild` | `_waitForRebuildAndReconnect` | Between batch 1 and 2 |
 | `save-content` | `_executeSaveContentOp` | Before nav ops |
 | `write-mkdocs-yml` | `_wsSetContents` (direct) | Batch 2a |
+| `merge-mkdocs-yml` | `_wsGetContents` + `_yamlDeepMerge` + `_wsSetContents` | Batch 2a |
 | `move-up` / `move-down` | `_executeMoveWeightOp` | Batch 2c |
 | `move-left` / `move-right` / `move-into-section` | `_executeMoveFolderOp` | Batch 2c |
 | `delete-page` | `_executeDeletePageOp` | Batch 2b |
@@ -748,7 +758,7 @@ Given: `steps/` → `pipeline-steps/`, with claimed index `steps/index.md` conta
 
 ### Motivation
 
-All saving in focus mode — both navigation changes and document content — flows through the 2-batch execution system (`_runBatchOps`). The progress bar, reload guard, WebSocket management, and rebuild waiting are exclusively owned by the batch runner. The upstream `mkdocs-live-edit-plugin` save button is no longer used in focus mode.
+All disk-writing operations in Focus Mode (Layer 2+) flow exclusively through the 2-batch execution system (`_runBatchOps` → `_dispatchSingleOp` → `_execute*Op`). This includes navigation changes, document content saves, mkdocs.yml writes, file moves/renames/deletes, and link rewrites. No code path outside the batch executor may perform disk I/O in Focus Mode. See DESIGN-declarative-save-planner.md Invariant 10. The progress bar, reload guard, WebSocket management, and rebuild waiting are exclusively owned by the batch runner. The upstream `mkdocs-live-edit-plugin` save button is no longer used in focus mode.
 
 ### `save-content` Op Type
 

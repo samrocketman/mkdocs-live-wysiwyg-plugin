@@ -2,11 +2,26 @@
 
 The WYSIWYG plugin uses a snapshot-driven architecture where all content modifications flow through nav snapshots and a declarative save planner before reaching disk.
 
+## Cardinal Rules
+
+Cardinal rules are cross-cutting constraints that apply across multiple subsystems. Every cardinal rule defined in any design document must also appear in this global registry. When a cardinal rule is added, updated, or removed in a design document, this registry must be updated to match.
+
+| # | Rule | Authoritative Source | Summary |
+|---|------|---------------------|---------|
+| 1 | **Registry Consistency** | This document | When a cardinal rule is added or updated in any design document, the global registry in this section must be updated to match. |
+| 2 | **Cursor & Selection Preservation** | `cursor-selection-preservation.mdc` | Every mode transition must preserve the user's cursor position and text selection. A transition that loses the cursor is a regression. |
+| 3 | **Cautions Rule A — No Direct Disk I/O** | `DESIGN-cautions.md` | Caution action handlers must resolve changes through the snapshot system only, via the Declarative Save Planner. No caution handler may perform disk I/O directly. |
+| 4 | **Cautions Rule B — Snapshot State for Warnings** | `DESIGN-cautions.md` | mkdocs.yml warnings must always and only come from active snapshot state. |
+| 5 | **Cautions Rule C — Snapshot-Only mkdocs.yml Changes** | `DESIGN-cautions.md` | Applying mkdocs.yml changes only affects snapshot state — deferred to the Declarative Save Planner on Save. |
+| 6 | **Exclusive Disk I/O in Focus Mode** | `DESIGN-declarative-save-planner.md` Invariant 10 | In Focus Mode (Layer 2+), all disk-writing operations flow exclusively through the Declarative Save Planner batch executor. Does not apply to Unfocused Mode (Layer 1). |
+| 7 | **In-Place Extension Replacement** | `DESIGN-changing-mkdocs-yml.md` | When upgrading a `markdown_extensions` list item from bare string to dict form (e.g., `pymdownx.superfences` to `pymdownx.superfences: {custom_fences: [...]}`), replace the item in-place at its current index. Never add a new entry alongside the old one. |
+| 8 | **In-Place Plugin Replacement** | `DESIGN-changing-mkdocs-yml.md` | When upgrading a `plugins` list item from bare string to dict form (e.g., `mkdocs-nav-weight` to `mkdocs-nav-weight: {default_page_weight: 1000}`), replace the item in-place at its current index. Never add a new entry alongside the old one. |
+
 ## High-Level Pipeline
 
 ```mermaid
 flowchart LR
-    ContentMod["Content Modification<br>and saving2..."]
+    ContentMod["Content Modification<br>and saving..."]
     NavSnaps["will update<br>Nav Snapshots."]
     SavePlanner["will use the<br>Declarative Save Planner"]
 
@@ -100,9 +115,9 @@ flowchart LR
 ```
 UI Subsystem
   |-- Modes of Operation
-  |     |-- Readonly Mode
-  |     |-- Unfocused Mode
-  |     |-- Focus Mode
+  |     |-- Readonly Mode (Layer 1)
+  |     |-- Unfocused Mode (Layer 1)
+  |     |-- Focus Mode (Layer 2)
   |     |-- Mermaid Mode (Layer 3)
   |-- Mermaid Subsystem
   |     |-- Mermaid Mode (UI, Layer 3 in mode hierarchy)
@@ -129,6 +144,7 @@ UI Subsystem
   |-- Browser Compatibility
 
 Backend Subsystem
+  |-- Changing mkdocs.yml (transforms, dual-write, cardinal rules)
   |-- MkDocs YAML Mermaid Config (config detection in plugin.py)
   |-- Save Pipeline (= Declarative Save Planner)
   |     |-- Snapshot Diff
@@ -197,6 +213,10 @@ Mermaid-related design documents are organized under `docs/design/mermaid/` whil
 - [DESIGN-browser-compatibility.md](ui/DESIGN-browser-compatibility.md) -- Browser-specific quirks catalog.
 
 ### Backend Subsystem
+
+#### Changing mkdocs.yml
+
+- [DESIGN-changing-mkdocs-yml.md](backend/DESIGN-changing-mkdocs-yml.md) -- Centralized mkdocs.yml modification procedures, transform inventory, and cardinal rules.
 
 #### MkDocs YAML Mermaid Config
 

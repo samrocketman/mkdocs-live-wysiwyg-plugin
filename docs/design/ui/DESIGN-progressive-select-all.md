@@ -38,6 +38,7 @@ The handler resolves the anchor node to a meaningful element before building ran
 | `_buildAdmonitionBodyRange(ad)` | Builds a Range covering admonition body content only, skipping `.admonition-title` and zero-width-space text nodes. |
 | `_buildHeadingSectionRange(siblings, startIdx, endIdx)` | Builds a Range from `siblings[startIdx]` through `siblings[endIdx]`. Used for heading section selection. |
 | `_selectionCoversRange(sel, targetRange)` | Returns true if the current selection fully covers (is equal to or larger than) the target range. Uses `compareBoundaryPoints`. |
+| `_selectionCrossesTitleBoundary(sel)` | Returns true if the selection crosses an admonition title (`.admonition-title`) or code block title (`.md-code-title`) boundary — one endpoint is inside the title, the other is outside. Used by cut/copy to gate auto-expansion (Cardinal Rule 2). |
 | `_buildProgressiveRanges(sel, ea)` | Builds the ordered `targetRanges` array for a given selection and editable area. Returns the array smallest-to-largest. Single source of truth for the range hierarchy used by both Ctrl+A and cut/copy auto-expansion. |
 
 ### Handler
@@ -54,7 +55,7 @@ When a user manually selects text that partially spans a structural element (adm
 
 ### Solution
 
-The cut and copy handlers in `blockCutPasteHandler` use `_buildProgressiveRanges` to auto-expand partial selections before the clipboard operation. When `findSelectedBlock` returns `null` and the selection is non-collapsed:
+The cut and copy handlers in `blockCutPasteHandler` use `_buildProgressiveRanges` to auto-expand partial selections before the clipboard operation, but **only** when the selection crosses a structurally unsafe boundary (Cardinal Rule 2). When `findSelectedBlock` returns `null`, the selection is non-collapsed, and `_selectionCrossesTitleBoundary(sel)` returns true:
 
 1. Build `targetRanges` via `_buildProgressiveRanges(sel, ea)`.
 2. Get the current selection range.
@@ -62,6 +63,8 @@ The cut and copy handlers in `blockCutPasteHandler` use `_buildProgressiveRanges
 4. Apply that range and re-run `findSelectedBlock`.
 5. If a block is found, proceed with block-aware clipboard handling.
 6. If no block is found even at document level, allow native browser behavior (existing fallthrough).
+
+When the selection does not cross a title boundary, no auto-expansion occurs and the browser's native cut/copy behavior is used (Cardinal Rule 1).
 
 ### "Contains" check
 
@@ -73,6 +76,14 @@ targetRange.compareBoundaryPoints(Range.END_TO_END, currentRange) >= 0
 ```
 
 This is the inverse of `_selectionCoversRange` — the target range covers the current selection rather than the selection covering the target range.
+
+## Cardinal Rules
+
+**Rule 1.** Ctrl+C and Ctrl+X MUST honor the user's selection as-is whenever the selection does not risk corrupting the document. Progressive select-all auto-expansion on cut/copy is a safety net, not the default behavior.
+
+**Rule 2.** If a selection crosses the boundary of an admonition title (partially inside `.admonition-title` and partially outside) or partially spans a code block title (`.md-code-title`), then Ctrl+C or Ctrl+X MUST trigger progressive select-all auto-expansion to snap the selection to the nearest enclosing structural block. Cutting or copying a partial title fragment would corrupt the block structure on paste.
+
+**Rule 3.** Progressive select-all auto-expansion MUST NOT be triggered by any mechanism other than Ctrl+C and Ctrl+X encountering a structurally unsafe partial selection. Ctrl+A walks the hierarchy normally; typing, deletion, and other editing operations must never invoke auto-expansion.
 
 ## Relationship to Other Subsystems
 

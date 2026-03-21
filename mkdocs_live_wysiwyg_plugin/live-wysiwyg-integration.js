@@ -27154,6 +27154,23 @@
       return range;
     }
 
+    function _selectionCrossesTitleBoundary(sel) {
+      if (!sel || !sel.rangeCount) return false;
+      var range = sel.getRangeAt(0);
+      var startNode = range.startContainer;
+      var endNode = range.endContainer;
+      if (startNode.nodeType === 3) startNode = startNode.parentNode;
+      if (endNode.nodeType === 3) endNode = endNode.parentNode;
+
+      var titleSelectors = ['.admonition-title', '.md-code-title'];
+      for (var ti = 0; ti < titleSelectors.length; ti++) {
+        var startTitle = startNode.closest ? startNode.closest(titleSelectors[ti]) : null;
+        var endTitle = endNode.closest ? endNode.closest(titleSelectors[ti]) : null;
+        if (startTitle !== endTitle) return true;
+      }
+      return false;
+    }
+
     function _buildProgressiveRanges(sel, ea) {
       var targetRanges = [];
       var node = sel.anchorNode;
@@ -27628,7 +27645,7 @@
 
         var sel = window.getSelection();
         var block = findSelectedBlock(sel);
-        if (!block && sel && !sel.isCollapsed) {
+        if (!block && sel && !sel.isCollapsed && _selectionCrossesTitleBoundary(sel)) {
           var ranges = _buildProgressiveRanges(sel, ea);
           var cur = sel.rangeCount ? sel.getRangeAt(0) : null;
           if (cur) {
@@ -27758,7 +27775,7 @@
 
         var sel = window.getSelection();
         var block = findSelectedBlock(sel);
-        if (!block && sel && !sel.isCollapsed) {
+        if (!block && sel && !sel.isCollapsed && _selectionCrossesTitleBoundary(sel)) {
           var ranges = _buildProgressiveRanges(sel, ea);
           var cur = sel.rangeCount ? sel.getRangeAt(0) : null;
           if (cur) {

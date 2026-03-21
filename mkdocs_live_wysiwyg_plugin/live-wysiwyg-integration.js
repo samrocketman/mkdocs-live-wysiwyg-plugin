@@ -11882,6 +11882,40 @@
       }
     }
 
+    var allMoved = [focal].concat(effectiveItems.filter(function (e) { return e !== focal; }));
+    for (var ai = 0; ai < allMoved.length; ai++) {
+      var _gItem = allMoved[ai];
+      if (_gItem.type === 'section' && !_getItemSrcPath(_gItem)) {
+        var _gFd = _getSectionFolderDir(_gItem);
+        if (!_gFd) continue;
+        var _gPath = _gFd + '/index.md';
+        var _gTitle = _gItem.title || _gFd.split('/').pop().replace(/-/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+        var _gIndex = {
+          type: 'page', src_path: _gPath, title: _gTitle,
+          isIndex: true, retitled: true, empty: true, weight: 100,
+          _fm: { title: _gTitle, retitled: true, empty: true, weight: 100 },
+          _new: true, _uid: _generateUid()
+        };
+        _gItem.children = _gItem.children || [];
+        _gItem.children.splice(0, 0, _gIndex);
+        _gItem.src_path = _gPath;
+        _gItem.index_meta = { weight: 100, headless: false, retitled: true, empty: true };
+        var _gDir = isUp ? 'up' : 'down';
+        var _gLoc = _gItem._uid ? _findNavItemInTree(_gItem._uid) : null;
+        if (_gLoc) _updateInMemoryWeightFromDom(_gItem, _gDir);
+        _gIndex.weight = _gItem.index_meta.weight;
+        _gIndex._fm.weight = _gItem.index_meta.weight;
+        var _gContent = '---\ntitle: ' + _fmSerialize(_gTitle) +
+          '\nretitled: true\nempty: true\nweight: ' + _gItem.index_meta.weight + '\n---\n';
+        _navBatchQueue.push({ type: 'create-page', path: _gPath, content: _gContent });
+        if (_batchClaimedPaths) _batchClaimedPaths.add(_gPath);
+        _addNavBadge({
+          className: 'live-wysiwyg-nav-normalize-badge',
+          text: 'Create index for "' + _gTitle + '"'
+        });
+      }
+    }
+
     _setNavItemFocused(focal);
 
     if (!_navBadges.some(function (b) { return b.text === 'Reorder files'; })) {
@@ -11953,10 +11987,43 @@
       if (oldParent) oldParent._expanded = false;
     }
 
+    var _autoCreatedIndex = null;
+    if (item.type === 'section' && !_getItemSrcPath(item)) {
+      var _aiFd = _getSectionFolderDir(item);
+      if (_aiFd) {
+        var _aiPath = _aiFd + '/index.md';
+        var _aiTitle = item.title || _aiFd.split('/').pop().replace(/-/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+        _autoCreatedIndex = {
+          type: 'page', src_path: _aiPath, title: _aiTitle,
+          isIndex: true, retitled: true, empty: true, weight: 100,
+          _fm: { title: _aiTitle, retitled: true, empty: true, weight: 100 },
+          _new: true, _uid: _generateUid()
+        };
+        item.children = item.children || [];
+        item.children.splice(0, 0, _autoCreatedIndex);
+        item.src_path = _aiPath;
+        item.index_meta = { weight: 100, headless: false, retitled: true, empty: true };
+      }
+    }
+
     var moveDir = isUp ? 'up' : isDown ? 'down' : isLeft ? 'up' : 'down';
     var loc = item._uid ? _findNavItemInTree(item._uid) : null;
     if (loc) {
       _updateInMemoryWeightFromDom(item, moveDir);
+    }
+
+    if (_autoCreatedIndex) {
+      var _aiW = item.index_meta.weight;
+      _autoCreatedIndex.weight = _aiW;
+      _autoCreatedIndex._fm.weight = _aiW;
+      var _aiContent = '---\ntitle: ' + _fmSerialize(_autoCreatedIndex.title) +
+        '\nretitled: true\nempty: true\nweight: ' + _aiW + '\n---\n';
+      _navBatchQueue.push({ type: 'create-page', path: _autoCreatedIndex.src_path, content: _aiContent });
+      if (_batchClaimedPaths) _batchClaimedPaths.add(_autoCreatedIndex.src_path);
+      _addNavBadge({
+        className: 'live-wysiwyg-nav-normalize-badge',
+        text: 'Create index for "' + _autoCreatedIndex.title + '"'
+      });
     }
 
     _setNavItemFocused(item);

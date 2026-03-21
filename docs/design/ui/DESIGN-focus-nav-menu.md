@@ -198,6 +198,7 @@ All arrow moves operate exclusively on the navData tree. Move functions accept o
 - **Shift+Up**: Move into deepest child of section above
 - **Shift+Down**: Move into first level of section below
 - **Shift+Right**: Always prompt for new/choose folder
+- **Auto-index on move**: If the moved item is an indexless section (folder with content but no `index.md`), a thin index is auto-created before weight computation so the section can carry a weight. See DESIGN-nav-weight-normalization.md § "Auto-Index Creation on Move".
 
 ### Root Index (`index.md`)
 

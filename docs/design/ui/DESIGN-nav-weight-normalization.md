@@ -70,6 +70,33 @@ If the moved item is the currently edited page, `_syncCurrentPageWeight` syncs t
 
 Explicit normalization via menu actions (`_applyNormalizeWeightsToNavData`, `_applyNormalizeFolderToNavData`) and post-migration auto-normalize remain unchanged.
 
+## Auto-Index Creation on Move
+
+When an indexless section (folder with content but no `index.md`) is moved via arrow keys, the editor auto-creates a thin `index.md` for it before computing the new weight. Without an index, the section has no `src_path` and no `index_meta`, so `_updateInMemoryWeightFromDom` bails early (empty `srcPath` guard) and no weight is persisted at save time.
+
+### Mechanism
+
+In `_doArrowMove` (single-item) and `_doGroupArrowMove` (multi-select), after the move operation but before weight computation:
+
+1. Check `item.type === 'section' && !_getItemSrcPath(item)`.
+2. Derive `folderDir` from `_getSectionFolderDir(item)`. Skip if empty.
+3. Create a thin index child page (`_new: true`, `isIndex: true`, `retitled: true`, `empty: true`) and splice it at position 0 of `item.children`.
+4. Set `item.src_path` and `item.index_meta`.
+5. Call `_updateInMemoryWeightFromDom` to compute the midpoint weight.
+6. Sync the computed weight to `indexChild.weight`, `indexChild._fm.weight`, and `item.index_meta.weight`.
+7. Queue a `create-page` op with the final weight in frontmatter.
+8. Add a "Create index for ..." badge.
+
+At save time, `_computeSavePlan` detects the new index child UID (not in original snapshot) and emits a `create-page` op + `set-frontmatter` op with the correct weight.
+
+## Rules
+
+1. **Moving an indexless section must auto-create an index.** Without an `index.md`, the section cannot carry a weight, and reordering has no persistent effect. Both `_doArrowMove` and `_doGroupArrowMove` must check for this and create the index transparently.
+
+2. **Weight computation must follow index creation.** `_updateInMemoryWeightFromDom` requires a truthy `_getItemSrcPath(item)` to proceed. The index must be created and `item.src_path` set before calling the weight computation function.
+
+3. **The `_fm.weight` on the index child must be synced after weight computation.** `_setItemWeight` updates `item.index_meta.weight` and `child.weight` but not `child._fm.weight`. The `_fm` field is what `_computeSavePlan` uses for `desiredFm`, so it must reflect the final computed weight.
+
 ## Items That Are Never Weighted
 
 | Item type | Reason |

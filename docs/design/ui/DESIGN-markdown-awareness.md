@@ -122,3 +122,7 @@ Used by the Content History subsystem (`_createHistoryNode`) to guard against st
 6. **Progressive Select All depends on enhanced DOM.** `_isSelectableTarget` recognizes `.md-code-block`, `.admonition`, and other enhanced wrappers. If enhancement doesn't run, the selection hierarchy degrades to raw elements and the cut/copy auto-expansion chain can break.
 
 7. **New preprocess/postprocess pairs must be added to all content-loading paths.** If a new pair is introduced, it must be added to `setValue`, `switchToMode`, `_historyApplyContent`, and `getValue`.
+
+8. **Ordered list numbering style must be preserved across WYSIWYG ↔ Markdown transitions.** If the document uses repeating `1.` markers (the `all-ones` style detected by `preprocessListMarkers`), then switching to markdown via `_htmlToMarkdown` and back must reproduce repeating `1.` markers — never incrementing `1.`, `2.`, `3.`. The `olStyle` field in `_liveWysiwygListMarkerData` records the document's style; `postprocessListMarkers` must honor it.
+
+9. **New ordered lists must follow the document's existing numbering style.** When a document contains any repeating `1.` ordered lists (`olStyle === 'all-ones'`), newly inserted ordered lists (via toolbar, inline typing, or any other mechanism) must use repeating `1.` markers to match. Do not mix incrementing and repeating styles within a single document.

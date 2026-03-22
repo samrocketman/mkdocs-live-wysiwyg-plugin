@@ -104,6 +104,20 @@ If `_wsSetContents` fails (WebSocket disconnected, server error):
 - A fixed-position error toast appears at the top of the viewport for 5 seconds, then auto-removes.
 - The Save/Discard buttons remain in their current state (the document is still dirty).
 
+## Auto-Save on Navigate
+
+When the user clicks a nav item to navigate to a different page, the editor auto-saves dirty content without prompting. `_navigateToPage` checks `_isDocDirty()` and calls `_doFocusSaveBackground()` (fire-and-forget), then immediately proceeds with `_doNavigate`. No dialog, no waiting — navigation is instant and content is preserved in the background.
+
+## Content Preservation Across Nav-Save Reload
+
+Nav menu saves trigger a page reload (needed to rebuild the snapshot history from fresh server data). User content is preserved through two layers:
+
+1. **Batch `save-content` op**: `_executeNavBatchSave` prepends a `save-content` operation if the document is dirty. This writes to disk before any rename/move ops, and renames carry the content to the new location.
+
+2. **sessionStorage safety net**: Before the reload, `_navigateAfterBatchComplete` stashes `{ srcPath: reloadPath, content: editorContent }` in `sessionStorage` under `live_wysiwyg_content_backup`. After reload, `enterFocusMode` checks this key. If the stashed `srcPath` matches the current page and the content differs from what the server provided, the stashed version is loaded (user content takes priority). `_pristineContent` is set to the server content so any delta shows as dirty. The sessionStorage entry is consumed (deleted) after restoration.
+
+The `reloadPath` is computed from `desiredState.items` in `_executeNavBatchSave` — the desired post-move path of the currently-edited page — ensuring the reload navigates to the correct URL after file moves/renames.
+
 ## Relationship to Other Subsystems
 
 | Subsystem | Interaction |
@@ -113,3 +127,5 @@ If `_wsSetContents` fails (WebSocket disconnected, server error):
 | **Focus mode rebuild poller** | The poller's `poll()` function gained a `_bgSavePendingRebuild` check that takes priority over `_userActionInProgress`. |
 | **Dirty tracking** (`_pristineContent`, `_isDocDirty`) | The background save updates `_pristineContent` on success, same as the blocking save. No changes to the dirty-tracking mechanism itself. |
 | **Cursor preservation** | Not affected. The background save does not reparent, recreate, or refocus any DOM elements. The user's cursor and selection are untouched. |
+| **Nav page navigation** (`_navigateToPage`) | Auto-saves dirty content via `_doFocusSaveBackground()` before AJAX navigation. No save/discard prompt. |
+| **Nav save reload** (`_navigateAfterBatchComplete`) | Stashes content to sessionStorage before reload. `enterFocusMode` restores it post-reload if the server content differs. |

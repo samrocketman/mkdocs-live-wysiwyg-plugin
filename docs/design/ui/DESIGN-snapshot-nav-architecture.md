@@ -43,7 +43,6 @@ Each snapshot captures the full editor state:
   batchQueue: [...]           // shallow-cloned operation descriptors
   badges: [...]               // badge descriptors for the actions bar
   migrationPending: bool      // migration was staged
-  focusTarget: string|null    // src_path to focus after save
   topWarnings: [...]          // top-level warning message strings
   mkdocsYml: string|null      // virtual mkdocs.yml content (from original-mkdocs.yml if available)
   hasNavKey: bool              // derived from _ymlHasNavKey(_virtualMkdocsYml)
@@ -128,7 +127,7 @@ This includes `_indexContent` (string, copied by value), `setContent` (string, c
 - **Undo/redo bar outside edit mode**: After lightweight discard, `_exitNavEditMode` nulls `_navEditActionsEl` before calling `_buildNavMenu` (which clears `sidebarEl.innerHTML`), then shows the undo/redo actions bar when `_navSnapshots.length >= 2`. Save/Discard/Review visibility is hash-based (via `_snapshotHasSaveableChanges`). The user can redo past the disk index to recover discarded changes, or undo before the disk index; either direction re-enters edit mode via `_ensureNavEditModeForSnapshot` when the snapshot has dirty content or edit state.
 - **Clean snapshot reference**: `_navCleanSnapshot` is set on first entry to edit mode (`_enterNavEditMode`) and when undo re-enters edit mode (`_ensureNavEditModeForSnapshot`). In both cases, a snapshot of the current (clean) navData is captured. `_snapshotHasSaveableChanges` compares the active snapshot against both `_navCleanSnapshot` and `_navSnapshots[_navDiskSnapshotIndex]`.
 - **Destructive exit**: `_exitNavEditModeDestructive(restoreCursor)` restores navData from `_navSnapshots[_navDiskSnapshotIndex]`, resets `_navSnapshotIndex` to `_navDiskSnapshotIndex`, clears `_navCleanSnapshot`, and persists. The full snapshot history is preserved. Used only by external rebuild "Discard and Refresh" and `exitFocusMode` teardown — NOT by the Discard button or the save path.
-- **Save path**: `_executeNavBatchSave` saves `_navSnapshotIndex` before calling `_exitNavEditModeDestructive(false)` and restores it immediately after. This allows the destructive exit to clear batch state and edit UI while preserving the active snapshot index. `_finishBatchSave` squashes history on completion: it keeps all entries up to and including the old disk snapshot (previous save points) and discards all intermediate edits. No post-save snapshot is appended — the page reload creates the new disk snapshot fresh from server data. Result after save: `[...previous save points..., oldDiskSnap]`. After page reload: `[...previous save points..., oldDiskSnap, freshServerSnap]`. This avoids stale `src_path` values in persisted snapshots (moved files have new paths on disk that only the server knows). Each save cycle adds exactly one entry to the history progression, and the user can undo back through previous save points.
+- **Save path**: `_executeNavBatchSave` computes `reloadPath` by finding the currently-edited page in `desiredState.items` and using its `desiredPath` (the post-move/rename destination). It saves `_navSnapshotIndex` before calling `_exitNavEditModeDestructive(false)` and restores it immediately after. This allows the destructive exit to clear batch state and edit UI while preserving the active snapshot index. `_finishBatchSave` squashes history on completion: it keeps all entries up to and including the old disk snapshot (previous save points) and discards all intermediate edits. No post-save snapshot is appended — the page reload creates the new disk snapshot fresh from server data. Result after save: `[...previous save points..., oldDiskSnap]`. After page reload: `[...previous save points..., oldDiskSnap, freshServerSnap]`. This avoids stale `src_path` values in persisted snapshots (moved files have new paths on disk that only the server knows). Each save cycle adds exactly one entry to the history progression, and the user can undo back through previous save points. Before reloading, `_navigateAfterBatchComplete` stashes the current editor content in `sessionStorage` under `live_wysiwyg_content_backup` as a safety net.
 - **Exit focus mode**: `exitFocusMode` calls `_persistNavSnapshots()` before `_exitNavEditModeDestructive(false)`, ensuring snapshot state survives focus mode exit and re-entry.
 
 ### Persistence
@@ -823,7 +822,7 @@ Document content saving uses a dedicated batch operation:
 
 ### `_runBatchOps` Options
 
-`_runBatchOps(contentEl, orderedOps, focusTarget, options)` accepts an optional fourth argument:
+`_runBatchOps(contentEl, orderedOps, reloadPath, options)` accepts an optional fourth argument:
 
 | Option | Type | Purpose |
 |--------|------|---------|
@@ -831,7 +830,7 @@ Document content saving uses a dedicated batch operation:
 | `skipLinkIndex` | boolean | Skip `_fetchLinkIndex()` — unnecessary for pure content saves |
 | `onComplete` | function(failures) | If provided, `_finishBatchSave` calls this instead of navigating/reloading. The status element is removed from the container before calling. |
 
-When `onComplete` is absent, `_finishBatchSave` follows the default behavior: nav-specific cleanup, success/error status display, and page navigation/reload.
+When `onComplete` is absent, `_finishBatchSave` follows the default behavior: nav-specific cleanup, success/error status display, content backup to sessionStorage, and page navigation/reload at the computed `reloadPath`.
 
 ### Focus Mode Document Save Flow
 
@@ -852,7 +851,7 @@ When `_executeNavBatchSave` detects dirty document content (via `wysiwygEditor._
 
 ### Dirty Detection API
 
-`wysiwygEditor._isDocDirty()` compares the textarea value against `_pristineContent`. This replaces the previous pattern of checking the upstream save button's `live-edit-hidden` class to determine dirty state. All callers (`_navigateToPage`, `_ensureNavEditReady`, `_onExternalRebuild`, nav popup Apply button) use this method.
+`wysiwygEditor._isDocDirty()` compares the textarea value against `_pristineContent`. This replaces the previous pattern of checking the upstream save button's `live-edit-hidden` class to determine dirty state. All callers (`_ensureNavEditReady`, `_onExternalRebuild`, nav popup Apply button) use this method. `_navigateToPage` also checks `_isDocDirty()` but auto-saves in the background instead of prompting — see below.
 
 ### Upstream Save Button Suppression
 

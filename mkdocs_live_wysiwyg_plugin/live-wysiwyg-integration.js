@@ -8238,6 +8238,7 @@
   var _navBadges = [];
   var _uidCounter = 0;
   var _suppressWarningSnapshot = false;
+  var _warningSnapshotTimer = null;
   var _warningDirectMode = false;
   var _navTopWarnings = [];
   var _virtualMkdocsYml = null;
@@ -13338,6 +13339,14 @@
     _persistNavSnapshots();
   }
 
+  function _debouncedWarningSnapshot() {
+    if (_warningSnapshotTimer) clearTimeout(_warningSnapshotTimer);
+    _warningSnapshotTimer = setTimeout(function () {
+      _warningSnapshotTimer = null;
+      _commitNavSnapshot();
+    }, 200);
+  }
+
   function _captureExpandedFromNavData(items, result) {
     result = result || {};
     if (!items) return result;
@@ -18130,7 +18139,7 @@
     var warningEntry = { reason: msg, renames: 0 };
     if (actionData != null) warningEntry._actionData = actionData;
     item._warnings.push(warningEntry);
-    if (!_suppressWarningSnapshot) _commitNavSnapshot();
+    if (!_suppressWarningSnapshot) _debouncedWarningSnapshot();
     _ensureNavUncollapsed();
   }
 
@@ -18366,7 +18375,7 @@
     if (!item._deadLinks.internal.length && !item._deadLinks.external.length) {
       delete item._deadLinks;
     }
-    if (!_suppressWarningSnapshot) _commitNavSnapshot();
+    if (!_suppressWarningSnapshot) _debouncedWarningSnapshot();
   }
 
   // ======================================================================

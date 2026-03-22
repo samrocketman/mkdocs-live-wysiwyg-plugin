@@ -16,6 +16,8 @@ Per-page warning system with scoped reason ownership. Each feature owns its reas
 
 **Rule E.** Every apply button MUST add at least one badge to the Review Changes menu via `_addNavBadge()`. The badge gives the user a human-readable summary of what will change when they click Save. An apply action without a corresponding Review Changes badge is a bug — the user must always be able to review what an apply action staged before committing.
 
+**Rule F.** Features that produce bulk warnings MUST submit them in rapid succession so the 200 ms debounce timer (`_debouncedWarningSnapshot`) coalesces them into a single nav snapshot. Internally queue all findings first, then call `_addCautionPage` / `_addDeadLinksForPage` for each result in a tight synchronous loop. Do not interleave async work (network calls, timers, `requestAnimationFrame`) between individual warning submissions — any gap longer than 200 ms will trigger an intermediate snapshot, fragmenting what should be one atomic change into multiple undo steps.
+
 For all mkdocs.yml modification procedures and cardinal rules, see [DESIGN-changing-mkdocs-yml.md](DESIGN-changing-mkdocs-yml.md). Caution action handlers that modify mkdocs.yml (e.g., mermaid auto-fix) must follow the transform procedures documented there.
 
 ## Warning Surface Taxonomy
@@ -120,11 +122,17 @@ topWarnings: ['warning message', ...]
 
 The `actionData` map is optional and backward-compatible — entries without it work exactly as before.
 
+## Snapshot Debounce
+
+`_debouncedWarningSnapshot()` is called instead of `_commitNavSnapshot()` in the warning and dead-link addition paths. It resets a 200 ms timer (`_warningSnapshotTimer`) on every invocation. The snapshot is committed only after 200 ms of silence — meaning no further warnings arrived. This coalesces rapid-fire warnings (e.g., a bulk scan reporting findings for many pages) into a single nav snapshot automatically.
+
+The debounce is transparent to callers: `_addCautionPage` and `_addDeadLinksForPage` invoke `_debouncedWarningSnapshot()` internally (unless `_suppressWarningSnapshot` is `true`). No special flag management is required.
+
 ## Batch Suppression
 
-`_suppressWarningSnapshot` (global boolean). When `true`, `_addCautionPage` and `_addDeadLinksForPage` modify navData without calling `_commitNavSnapshot()`. The caller sets this flag, performs all warning operations, unsets it, then calls `_commitNavSnapshot()` once.
+`_suppressWarningSnapshot` (global boolean). When `true`, `_addCautionPage` and `_addDeadLinksForPage` modify navData without calling `_debouncedWarningSnapshot()`. The caller sets this flag, performs all warning operations, unsets it, then calls `_commitNavSnapshot()` once.
 
-Used by `_commitDeadLinkResults` to add dead links for many pages as a single snapshot.
+Used by `_commitDeadLinkResults` to add dead links for many pages as a single snapshot. This remains available for cases where the caller needs precise control over when the snapshot fires (e.g., post-processing after all warnings are added).
 
 ## Direct Mode
 
@@ -241,6 +249,7 @@ See `docs/design/mermaid/DESIGN-mkdocs-yml-mermaid-config.md` for the full auto-
 | Function | Purpose |
 |----------|---------|
 | `_addCautionPage(srcPath, reason, actionData?)` | Add page-level caution; optional `actionData` is stored as `_actionData` on the warning entry |
+| `_debouncedWarningSnapshot()` | Debounced `_commitNavSnapshot()` with 200 ms delay; each call resets the timer |
 | `_removeNavWarningReason(item, reason)` | Remove a specific reason from `item._warnings`; delete array if empty |
 | `_removeNavWarningReasonFromAll(items, reason)` | Recursively remove a specific reason from all items in the tree |
 | `_clearAllNavWarnings(items)` | Recursively delete `_warnings` and `_deadLinks` from all items |
@@ -262,11 +271,13 @@ See `docs/design/mermaid/DESIGN-mkdocs-yml-mermaid-config.md` for the full auto-
 
 5. **Each feature owns its reason strings.** Document which reason strings a feature uses so other features do not accidentally match them.
 
-6. **Batch suppression.** During batch operations that add many warnings, set `_suppressWarningSnapshot = true` before the loop, then call `_commitNavSnapshot()` once after all additions.
+6. **Debounced snapshots.** `_addCautionPage` and `_addDeadLinksForPage` use `_debouncedWarningSnapshot()` (200 ms) so rapid-fire additions produce a single snapshot. Features adding bulk warnings must submit them synchronously in a tight loop to stay within the debounce window (Cardinal Rule F).
 
-7. **Direct mode for batch save errors.** When `_warningDirectMode` is true, write directly to localStorage so errors survive the page reload that follows batch save.
+7. **Batch suppression (explicit).** For cases requiring precise post-processing after all warnings are added, set `_suppressWarningSnapshot = true` before the loop, then call `_commitNavSnapshot()` once after all additions. This bypasses the debounce entirely.
 
-8. **Action handlers are synchronous snapshot mutations.** Handlers registered in `_navCautionActions` must be synchronous, must only mutate snapshot state (navData, virtual mkdocs.yml), and must call `_commitNavSnapshot()`. They must never perform disk I/O or manipulate nav sidebar DOM. See the handler contract and Cardinal Rules above.
+8. **Direct mode for batch save errors.** When `_warningDirectMode` is true, write directly to localStorage so errors survive the page reload that follows batch save.
+
+9. **Action handlers are synchronous snapshot mutations.** Handlers registered in `_navCautionActions` must be synchronous, must only mutate snapshot state (navData, virtual mkdocs.yml), and must call `_commitNavSnapshot()`. They must never perform disk I/O or manipulate nav sidebar DOM. See the handler contract and Cardinal Rules above.
 
 ## Cross-References
 

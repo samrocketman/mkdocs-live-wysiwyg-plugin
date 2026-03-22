@@ -2,7 +2,7 @@
 
 ## Overview
 
-The focus mode navigation menu uses a centralized snapshot-driven architecture that acts as a virtual file manager. All structural file operations (move, rename, delete, create) are expressed as in-memory `liveWysiwygNavData` mutations, then committed as snapshots. A single renderer (`_renderNavFromSnapshot`) rebuilds the DOM from the active snapshot. Saving computes a phased execution plan by diffing the initial snapshot against the active snapshot to produce the minimum set of disk operations. Warnings and dead links are per-item properties on navData, tracked as part of snapshots, and persisted to localStorage only on save. Weight normalization is also a snapshot data mutation — weights are computed and applied to navData before snapshotting, and the standard diff handles all disk writes.
+The focus mode navigation menu uses a centralized snapshot-driven architecture that acts as a virtual file manager. All structural file operations (move, rename, delete, create) are expressed as in-memory `liveWysiwygNavData` mutations, then committed as snapshots. A single renderer (`_renderNavFromSnapshot`) rebuilds the DOM from the active snapshot. Saving computes a phased execution plan by diffing the disk snapshot (`_navDiskSnapshotIndex`) against the active snapshot to produce the minimum set of disk operations. The full snapshot history is persisted to `localStorage` so undo/redo survives page reloads. On page load, persisted state is restored if the disk state matches; if external changes are detected, a new snapshot is appended. Warnings and dead links are per-item properties on navData, tracked as part of snapshots, and persisted to localStorage only on save. Weight normalization is also a snapshot data mutation — weights are computed and applied to navData before snapshotting, and the standard diff handles all disk writes.
 
 See [DESIGN-file-management.md](DESIGN-file-management.md) for the file management operations that produce these mutations.
 
@@ -13,11 +13,12 @@ All code lives in `live-wysiwyg-integration.js`.
 1. **Actions only modify data.** No action handler touches the DOM. Actions modify `liveWysiwygNavData`, set data flags (`_renamed`, `_new`, `_originalPath`, `_warnings`, `_deadLinks`), then call `_commitNavSnapshot()`.
 2. **DOM renders from active snapshot.** `_renderNavFromSnapshot()` applies `_navSnapshots[_navSnapshotIndex]` to globals and calls `_buildNavMenu`. All visual state — including caution icons — comes from data on navData items.
 3. **navData is the sole source of truth for nav operations.** All item positioning, movement, sibling lookup, parent detection, and weight computation operate on the `liveWysiwygNavData` tree (or the active snapshot). The DOM is a read-only rendering target — it is never queried to determine item position, sibling order, or parent–child relationships. Functions like `_findNavItemInTree`, `_findParentSection`, and `_findNavSiblings` walk the navData tree, not the DOM. DOM `data-nav-uid` attributes exist solely for post-operation focus (scrolling a moved item into view) and event-to-data bridging (mapping a click target back to a navData item). If a DOM lookup fails, only visual focus is lost — the data operation has already succeeded.
-4. **Save is a two-step process: desired state then disk planning.** No batch queue is maintained during editing. On save, `_computeSavePlan()` diffs snapshot 0 vs the active snapshot and produces a declarative desired state (where every page should end up, with what frontmatter). Then `_planDiskOperations()` converts that desired state into an optimized 2-batch execution plan, detecting folder renames to minimize disk writes.
+4. **Save is a two-step process: desired state then disk planning.** No batch queue is maintained during editing. On save, `_computeSavePlan()` diffs the disk snapshot (`_navSnapshots[_navDiskSnapshotIndex]`) vs the active snapshot and produces a declarative desired state (where every page should end up, with what frontmatter). Then `_planDiskOperations()` converts that desired state into an optimized 2-batch execution plan, detecting folder renames to minimize disk writes.
 5. **Content refactoring is a decoupled diff phase.** Link rewriting, title/weight updates, headless changes are computed from the diff and applied in Batch 2d, after all structural changes.
 6. **UIDs for cross-snapshot matching.** Every navData item gets a stable `_uid` via `_generateUid()`. UIDs survive renames and moves, enabling robust diffing.
 7. **Warnings are snapshot-tracked.** Per-item `_warnings` and `_deadLinks` arrays live on navData items. They are deep-cloned into snapshots and naturally participate in undo/redo.
-8. **Single snapshot diff, declarative desired state.** The migration, normalization, and all user edits are expressed as mutations to `liveWysiwygNavData`. A single diff between snapshot 0 (original state) and the active snapshot (current state) produces a declarative desired state — not operations. The desired state describes where every page and section should end up, with what frontmatter and content. A separate disk planning phase then converts this into the minimum set of operations (folder renames, file moves, creates, deletes, frontmatter writes) needed to achieve that state.
+8. **Single snapshot diff, declarative desired state.** The migration, normalization, and all user edits are expressed as mutations to `liveWysiwygNavData`. A single diff between the disk snapshot (`_navSnapshots[_navDiskSnapshotIndex]`, representing the current on-disk state) and the active snapshot (current state) produces a declarative desired state — not operations. The desired state describes where every page and section should end up, with what frontmatter and content. A separate disk planning phase then converts this into the minimum set of operations (folder renames, file moves, creates, deletes, frontmatter writes) needed to achieve that state.
+9. **Snapshot history is persistent.** The full `_navSnapshots` array, `_navSnapshotIndex`, `_navDiskSnapshotIndex`, and `_uidCounter` are persisted to `localStorage` on every commit and state change. History survives page reloads, focus mode toggles, and AJAX navigation. On page load, persisted state is restored if the disk state matches; if external changes are detected, a new snapshot is appended.
 
 ## Snapshot System
 
@@ -25,10 +26,11 @@ All code lives in `live-wysiwyg-integration.js`.
 
 ```
 Global variables:
-  _navSnapshots = []        // flat array of snapshot objects
-  _navSnapshotIndex = -1    // index of active snapshot (-1 = none)
-  _navCleanSnapshot = null  // snapshot captured on edit-mode entry; discard reference point
-  _uidCounter = 0           // monotonic counter for _uid generation
+  _navSnapshots = []            // flat array of snapshot objects
+  _navSnapshotIndex = -1        // index of active snapshot (-1 = none)
+  _navDiskSnapshotIndex = -1    // index of snapshot representing current on-disk state
+  _navCleanSnapshot = null      // snapshot captured on edit-mode entry; discard reference point
+  _uidCounter = 0               // monotonic counter for _uid generation
 ```
 
 Each snapshot captures the full editor state:
@@ -59,18 +61,30 @@ Each snapshot captures the full editor state:
 **On page load** (in `enterFocusMode`):
 1. `_assignUids(liveWysiwygNavData)` — walk tree, assign `_uid` to every item
 2. `_applyStoredWarningsToNavData()` — read localStorage, apply `_warnings` / `_deadLinks` to items
-3. `_buildNavMenu(sidebarLeft)` — first render
-4. `_navSnapshots = [_takeNavSnapshot()]; _navSnapshotIndex = 0` — initial snapshot
+3. Take a fresh snapshot from server-rendered navData
+4. Attempt to restore persisted snapshots from localStorage via `_restoreNavSnapshots()`
+5. If persisted state exists: compare `_computeDiskStateHash(freshSnap)` against `_computeDiskStateHash(persisted[diskSnapshotIndex])`:
+   - **Hashes match** (disk unchanged): restore persisted `_navSnapshots`, `_navSnapshotIndex`, `_navDiskSnapshotIndex`, `_uidCounter`. Apply active snapshot to globals.
+   - **Hashes differ** (external changes): append fresh snapshot to persisted array; set both `_navDiskSnapshotIndex` and `_navSnapshotIndex` to the new snapshot.
+6. If no persisted state: `_navSnapshots = [freshSnap]; _navSnapshotIndex = 0; _navDiskSnapshotIndex = 0`
+7. `_buildNavMenu(sidebarLeft)` — render from active snapshot
+8. If `_navSnapshotIndex !== _navDiskSnapshotIndex`: auto-enter edit mode, set `_navCleanSnapshot` from disk snapshot
 
 **On user action:**
 1. Action handler modifies `liveWysiwygNavData` (move, rename, delete, create, etc.)
 2. Action handler calls `_commitNavSnapshot()`
 
 **`_commitNavSnapshot()`:**
-1. Discard everything after `_navSnapshotIndex` (trim redo history)
+1. **Branching** — behavior depends on where the active index is relative to `_navDiskSnapshotIndex`:
+   - **Active is before disk index** (pre-disk region): history before and at the disk index is immutable. The active snapshot is *copied* to the end of the array and `_navSnapshotIndex` advances to the copy. No splicing occurs — all pre-disk and post-disk history is preserved intact.
+   - **Active is at or after disk index** with redo history: normal trim — splice everything after `_navSnapshotIndex`.
+   - **Active is at latest**: no trim needed.
 2. `_takeNavSnapshot()` — deep-clone current state
 3. Push to `_navSnapshots`, advance `_navSnapshotIndex`
 4. Call `_renderNavFromSnapshot()`
+5. Call `_persistNavSnapshots()` — write to localStorage
+
+**`_cloneSnapshot(snap)`:** deep-clones a snapshot (navData tree, batchQueue, badges, warnings, weight config). Used by `_commitNavSnapshot` and `_finishBatchSave` when copying a pre-disk snapshot to the end of the history.
 
 **`_takeNavSnapshot()`:**
 1. `_syncFmFields(navData)` — synchronize item-level fields into `_fm` objects
@@ -93,7 +107,7 @@ Each snapshot captures the full editor state:
 
 - `_navSnapshots.length < 2` → no actions bar (no changes made)
 - `_navSnapshots.length >= 2` → actions bar appears (both in and outside edit mode)
-- Save/Discard/Review visibility is controlled by `_snapshotHasSaveableChanges()` (hash comparison against `_navCleanSnapshot`), not by edit mode state
+- Save/Discard/Review visibility is controlled by `_snapshotHasSaveableChanges()` (hash comparison against `_navCleanSnapshot` and `_navDiskSnapshotIndex`), not by edit mode state
 - Undo/Redo are always visible in the actions bar; disabled state is index-based
 
 ### Deep Cloning
@@ -110,11 +124,48 @@ This includes `_indexContent` (string, copied by value), `setContent` (string, c
 
 ### Discard / Exit
 
-- **Discard (lightweight)**: `_confirmNavDiscard()` restores navData to `_navCleanSnapshot` (or `_navSnapshots[0]` as fallback when `_navCleanSnapshot` is null), commits the clean state as a new snapshot, then calls `_exitNavEditMode(true)`. Snapshot history is preserved — the discard is an undo-able operation. If the current snapshot already matches the clean snapshot (no saveable changes), no new snapshot is committed. `_confirmNavDiscard` never calls `_exitNavEditModeDestructive`.
-- **Undo/redo bar outside edit mode**: After lightweight discard, `_exitNavEditMode` nulls `_navEditActionsEl` before calling `_buildNavMenu` (which clears `sidebarEl.innerHTML`), then shows the undo/redo actions bar when `_navSnapshots.length >= 2`. Save/Discard/Review visibility is hash-based (via `_snapshotHasSaveableChanges`). The user can undo the discard from outside edit mode; undoing into a dirty state re-enters edit mode via `_ensureNavEditModeForSnapshot`.
-- **Clean snapshot reference**: `_navCleanSnapshot` is set on first entry to edit mode (`_enterNavEditMode`) and when undo re-enters edit mode (`_ensureNavEditModeForSnapshot`). In both cases, a snapshot of the current (clean) navData is captured. `_snapshotHasSaveableChanges` compares the active snapshot against `_navCleanSnapshot` instead of `_navSnapshots[0]`.
-- **Destructive exit**: `_exitNavEditModeDestructive(restoreCursor)` preserves the old behavior — restores `_navSnapshots[0]`, resets snapshot array, clears `_navCleanSnapshot`. Used only by external rebuild "Discard and Refresh", `_executeNavBatchSave`, and `exitFocusMode` teardown — NOT by the Discard button.
-- **Exit after save**: `_persistWarningsFromSnapshot()` writes to localStorage, then `_exitNavEditModeDestructive(false)`.
+- **Discard (lightweight)**: `_confirmNavDiscard()` moves `_navSnapshotIndex` to `_navDiskSnapshotIndex`, applies the disk snapshot to globals, nulls `_navCleanSnapshot`, persists, then calls `_exitNavEditMode(true)`. No new snapshot is created — the disk snapshot already exists in the array. The discard is reversible via redo (the user's previous edits remain in the snapshot array after the disk index). `_confirmNavDiscard` never calls `_exitNavEditModeDestructive`.
+- **Undo/redo bar outside edit mode**: After lightweight discard, `_exitNavEditMode` nulls `_navEditActionsEl` before calling `_buildNavMenu` (which clears `sidebarEl.innerHTML`), then shows the undo/redo actions bar when `_navSnapshots.length >= 2`. Save/Discard/Review visibility is hash-based (via `_snapshotHasSaveableChanges`). The user can redo past the disk index to recover discarded changes, or undo before the disk index; either direction re-enters edit mode via `_ensureNavEditModeForSnapshot` when the snapshot has dirty content or edit state.
+- **Clean snapshot reference**: `_navCleanSnapshot` is set on first entry to edit mode (`_enterNavEditMode`) and when undo re-enters edit mode (`_ensureNavEditModeForSnapshot`). In both cases, a snapshot of the current (clean) navData is captured. `_snapshotHasSaveableChanges` compares the active snapshot against both `_navCleanSnapshot` and `_navSnapshots[_navDiskSnapshotIndex]`.
+- **Destructive exit**: `_exitNavEditModeDestructive(restoreCursor)` restores navData from `_navSnapshots[_navDiskSnapshotIndex]`, resets `_navSnapshotIndex` to `_navDiskSnapshotIndex`, clears `_navCleanSnapshot`, and persists. The full snapshot history is preserved. Used only by external rebuild "Discard and Refresh" and `exitFocusMode` teardown — NOT by the Discard button or the save path.
+- **Save path**: `_executeNavBatchSave` saves `_navSnapshotIndex` before calling `_exitNavEditModeDestructive(false)` and restores it immediately after. This allows the destructive exit to clear batch state and edit UI while preserving the active snapshot index. `_finishBatchSave` squashes history on completion: it keeps all entries up to and including the old disk snapshot (previous save points), discards all intermediate edits between the old disk and active, then appends a clone of the active snapshot as the new disk entry. Result: `[...previous save points..., oldDiskSnap, newDiskSnap]`. Each save adds exactly one entry to the history progression, and the user can undo back through previous save points.
+- **Exit focus mode**: `exitFocusMode` calls `_persistNavSnapshots()` before `_exitNavEditModeDestructive(false)`, ensuring snapshot state survives focus mode exit and re-entry.
+
+### Persistence
+
+Snapshot history is persisted to `localStorage` so undo/redo history survives page reloads, focus mode exit/entry, and AJAX navigation.
+
+**Storage key**: `live_wysiwyg_nav_snapshots` (direct `localStorage` key, not inside the `_LS_KEY` settings bucket).
+
+**Stored value**: `{ snapshots: [...], snapshotIndex, diskSnapshotIndex, uidCounter }`
+
+**Write timing**: `_persistNavSnapshots()` is called at the end of every `_commitNavSnapshot()`, in `_exitNavEditModeDestructive`, after save updates the disk index in `_finishBatchSave`, and at the start of `exitFocusMode`.
+
+**Snapshot cap**: `_NAV_SNAPSHOT_CAP` (100). When exceeded, snapshots are trimmed from the oldest end. The active snapshot is the hard floor — trimming never removes it. If trimming removes the disk snapshot, `_navDiskSnapshotIndex` is clamped to 0 (the oldest surviving snapshot becomes the approximate disk baseline). This tradeoff is acceptable: it only occurs during very long unsaved sessions (100+ edits), and the save pipeline handles failures from approximate baselines gracefully.
+
+**Quota safety**: `_persistNavSnapshots` wraps `localStorage.setItem` in try/catch. On `QuotaExceededError`, `_trimAndRetryPersist` progressively trims old snapshots (keeping disk and active) and retries up to 5 times. If all retries fail, the persisted state is removed.
+
+**Data stripping**: `_stripSnapshotForStorage` deep-clones navData and nulls out `_indexContent` and `setContent` fields (large strings only needed during active migration sessions). This reduces storage footprint significantly.
+
+**Restore**: `_restoreNavSnapshots()` reads and validates the persisted data, returning `null` if absent or malformed.
+
+**Clear**: `_clearPersistedNavSnapshots()` removes the localStorage key. Called when persistence needs to be fully reset.
+
+### Disk Snapshot Index (`_navDiskSnapshotIndex`)
+
+`_navDiskSnapshotIndex` tracks which snapshot in the array represents the current on-disk state. This replaces the old hardcoded `_navSnapshots[0]` reference.
+
+**Initialization**: Set alongside `_navSnapshotIndex` during page load (either to the persisted value or to `0` for fresh state).
+
+**After save**: Updated to `_navSnapshotIndex` in `_finishBatchSave`. If the active index is in the pre-disk region (rollback save), the active snapshot is first copied to the end of the array so that disk index always advances forward. Then `_navDiskSnapshotIndex = _navSnapshotIndex`, then persisted.
+
+**Save planning**: `_executeNavBatchSave` uses `_navSnapshots[_navDiskSnapshotIndex]` as `originalSnap` for `_computeSavePlan`, instead of `_navSnapshots[0]`.
+
+**Affected count**: `_countAffectedDocsFromSnapshots` uses `_navDiskSnapshotIndex` for the original flat tree.
+
+**Disk state hash**: `_computeDiskStateHash(snap)` hashes only the disk-representable portions of a snapshot (navData structure + mkdocsYml + generatedMkdocsYml), excluding transient fields (batchQueue, badges, migrationPending, visual state). Used on page load to compare fresh server data against the persisted disk snapshot and detect external changes.
+
+**Saveable changes detection**: `_snapshotHasSaveableChanges()` checks the active snapshot's `contentHash` against both `_navCleanSnapshot` (if available) and `_navSnapshots[_navDiskSnapshotIndex]`. This ensures the Save button appears when the active snapshot differs from disk, even when `_navCleanSnapshot` is null (e.g., restored history with unsaved changes before entering edit mode).
 
 ## Virtualized Frontmatter (`_fm`)
 
@@ -255,7 +306,7 @@ Set to `true` in `_executeNavBatchSave` before `_runBatchOps`. Reset to `false` 
 
 ### Persistence Lifecycle
 
-1. **Load**: `_applyStoredWarningsToNavData()` reads `_getCautionPages()` and `_getDeadLinkPages()` from localStorage, finds matching navData items by `src_path`, and sets `_warnings` / `_deadLinks` on them. This happens before the initial snapshot is taken, so snapshot 0 includes persisted warnings.
+1. **Load**: `_applyStoredWarningsToNavData()` reads `_getCautionPages()` and `_getDeadLinkPages()` from localStorage, finds matching navData items by `src_path`, and sets `_warnings` / `_deadLinks` on them. This happens before the initial snapshot is taken, so the initial snapshot includes persisted warnings.
 
 2. **Editing**: All warning operations (`_addCautionPage`, `_addDeadLinksForPage`, dead link scan, dismiss/resolve) modify navData items only. No localStorage writes.
 
@@ -263,7 +314,7 @@ Set to `true` in `_executeNavBatchSave` before `_runBatchOps`. Reset to `false` 
 
 4. **Batch save errors**: `_warningDirectMode = true`. `_addCautionPage` writes directly to localStorage so errors survive the page reload that follows batch save.
 
-5. **Discard**: Lightweight discard restores navData to `_navCleanSnapshot` and commits a new snapshot. Warnings from the clean state are restored as part of the snapshot data. Destructive exit (external rebuild, save, focus mode teardown) restores snapshot 0. No localStorage mutation in either case.
+5. **Discard**: Lightweight discard restores navData to `_navCleanSnapshot` and commits a new snapshot. Warnings from the clean state are restored as part of the snapshot data. Destructive exit (external rebuild, save, focus mode teardown) restores the disk snapshot (`_navSnapshots[_navDiskSnapshotIndex]`). No localStorage mutation for warnings in either case.
 
 ### Rendering Warnings
 

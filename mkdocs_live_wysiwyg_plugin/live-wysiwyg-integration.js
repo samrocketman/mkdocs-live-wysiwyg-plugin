@@ -8233,6 +8233,7 @@
   var _batchClaimedPaths = (typeof Set !== 'undefined' ? new Set() : null);
   var _navSnapshots = [];
   var _navSnapshotIndex = -1;
+  var _navDiskSnapshotIndex = -1;
   var _navCleanSnapshot = null;
   var _navBadges = [];
   var _uidCounter = 0;
@@ -12868,13 +12869,13 @@
     _navMigrationPending = false;
     _navFocusTarget = null;
     _navTopWarnings = [];
-    if (restoreCursor && _navSnapshots.length > 0) {
-      _applySnapshotToGlobals(_navSnapshots[0]);
+    var diskIdx = _navDiskSnapshotIndex >= 0 ? _navDiskSnapshotIndex : 0;
+    if (restoreCursor && _navSnapshots.length > 0 && _navSnapshots[diskIdx]) {
+      _applySnapshotToGlobals(_navSnapshots[diskIdx]);
     }
-    var initialSnap = (_navSnapshots.length > 0) ? _navSnapshots[0] : null;
-    _navSnapshots = initialSnap ? [initialSnap] : [];
-    _navSnapshotIndex = initialSnap ? 0 : -1;
+    _navSnapshotIndex = (_navSnapshots.length > 0 && diskIdx < _navSnapshots.length) ? diskIdx : -1;
     _navCleanSnapshot = null;
+    _persistNavSnapshots();
 
     if (_navEditActionsEl && _navEditActionsEl.parentNode) {
       _navEditActionsEl.parentNode.removeChild(_navEditActionsEl);
@@ -13128,9 +13129,135 @@
     return _djb2Hash(parts.join('\x00'));
   }
 
+  function _computeDiskStateHash(snap) {
+    var parts = [
+      JSON.stringify(snap.navData, _navContentHashReplacer),
+      snap.mkdocsYml || '',
+      snap.generatedMkdocsYml || ''
+    ];
+    return _djb2Hash(parts.join('\x00'));
+  }
+
+  var _NAV_SNAPSHOT_CAP = 100;
+  var _NAV_SNAPSHOT_LS_KEY = 'live_wysiwyg_nav_snapshots';
+
+  function _stripSnapshotForStorage(snap) {
+    var navData = _deepCloneNavData(snap.navData);
+    (function strip(items) {
+      for (var i = 0; i < items.length; i++) {
+        if (items[i]._indexContent != null) items[i]._indexContent = null;
+        if (items[i].setContent != null) items[i].setContent = null;
+        if (items[i].children) strip(items[i].children);
+      }
+    })(navData);
+    var copy = {};
+    for (var k in snap) {
+      if (snap.hasOwnProperty(k)) copy[k] = snap[k];
+    }
+    copy.navData = navData;
+    return copy;
+  }
+
+  function _persistNavSnapshots() {
+    try {
+      var snaps = _navSnapshots;
+      var idx = _navSnapshotIndex;
+      var diskIdx = _navDiskSnapshotIndex;
+
+      if (snaps.length > _NAV_SNAPSHOT_CAP) {
+        var trimCount = snaps.length - _NAV_SNAPSHOT_CAP;
+        if (trimCount > idx) trimCount = idx;
+        if (trimCount > 0) {
+          snaps = snaps.slice(trimCount);
+          idx -= trimCount;
+          diskIdx = Math.max(0, diskIdx - trimCount);
+          _navSnapshots = snaps;
+          _navSnapshotIndex = idx;
+          _navDiskSnapshotIndex = diskIdx;
+        }
+      }
+
+      var stripped = [];
+      for (var i = 0; i < snaps.length; i++) {
+        stripped.push(_stripSnapshotForStorage(snaps[i]));
+      }
+      var payload = JSON.stringify({
+        snapshots: stripped,
+        snapshotIndex: idx,
+        diskSnapshotIndex: diskIdx,
+        uidCounter: _uidCounter
+      });
+      localStorage.setItem(_NAV_SNAPSHOT_LS_KEY, payload);
+    } catch (e) {
+      if (e && e.name === 'QuotaExceededError') {
+        _trimAndRetryPersist();
+      }
+    }
+  }
+
+  function _trimAndRetryPersist() {
+    var minKeep = 10;
+    var snaps = _navSnapshots;
+    var idx = _navSnapshotIndex;
+    var diskIdx = _navDiskSnapshotIndex;
+    for (var attempt = 0; attempt < 5; attempt++) {
+      if (snaps.length <= minKeep) break;
+      var trimCount = Math.max(1, Math.floor(snaps.length / 4));
+      if (trimCount > idx) trimCount = idx;
+      if (trimCount <= 0) break;
+      snaps = snaps.slice(trimCount);
+      idx -= trimCount;
+      diskIdx = Math.max(0, diskIdx - trimCount);
+      try {
+        var stripped = [];
+        for (var i = 0; i < snaps.length; i++) {
+          stripped.push(_stripSnapshotForStorage(snaps[i]));
+        }
+        var payload = JSON.stringify({
+          snapshots: stripped,
+          snapshotIndex: idx,
+          diskSnapshotIndex: diskIdx,
+          uidCounter: _uidCounter
+        });
+        localStorage.setItem(_NAV_SNAPSHOT_LS_KEY, payload);
+        _navSnapshots = snaps;
+        _navSnapshotIndex = idx;
+        _navDiskSnapshotIndex = diskIdx;
+        return;
+      } catch (e2) {
+        if (!e2 || e2.name !== 'QuotaExceededError') return;
+      }
+    }
+    try { localStorage.removeItem(_NAV_SNAPSHOT_LS_KEY); } catch (_) {}
+  }
+
+  function _restoreNavSnapshots() {
+    try {
+      var raw = localStorage.getItem(_NAV_SNAPSHOT_LS_KEY);
+      if (!raw) return null;
+      var data = JSON.parse(raw);
+      if (!data || !Array.isArray(data.snapshots) || data.snapshots.length === 0) return null;
+      if (typeof data.snapshotIndex !== 'number' || typeof data.diskSnapshotIndex !== 'number') return null;
+      if (data.snapshotIndex < 0 || data.snapshotIndex >= data.snapshots.length) return null;
+      if (data.diskSnapshotIndex < 0 || data.diskSnapshotIndex >= data.snapshots.length) return null;
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function _clearPersistedNavSnapshots() {
+    try { localStorage.removeItem(_NAV_SNAPSHOT_LS_KEY); } catch (_) {}
+  }
+
   function _snapshotHasSaveableChanges() {
-    if (!_navCleanSnapshot || _navSnapshotIndex < 0) return false;
-    return _navCleanSnapshot.contentHash !== _navSnapshots[_navSnapshotIndex].contentHash;
+    if (_navSnapshotIndex < 0) return false;
+    var activeHash = _navSnapshots[_navSnapshotIndex].contentHash;
+    if (_navCleanSnapshot && _navCleanSnapshot.contentHash !== activeHash) return true;
+    if (_navDiskSnapshotIndex >= 0 && _navDiskSnapshotIndex < _navSnapshots.length) {
+      return _navSnapshots[_navDiskSnapshotIndex].contentHash !== activeHash;
+    }
+    return false;
   }
 
   function _takeNavSnapshot() {
@@ -13185,14 +13312,37 @@
     }
   }
 
+  function _cloneSnapshot(snap) {
+    var nwc = snap.navWeightConfig;
+    return {
+      navData: _deepCloneNavData(snap.navData),
+      contentHash: snap.contentHash,
+      batchQueue: snap.batchQueue.map(function (op) {
+        var c = {}; for (var k in op) { if (op.hasOwnProperty(k)) c[k] = op[k]; } return c;
+      }),
+      badges: snap.badges.slice(),
+      migrationPending: snap.migrationPending,
+      focusTarget: snap.focusTarget,
+      topWarnings: snap.topWarnings ? snap.topWarnings.slice() : [],
+      mkdocsYml: snap.mkdocsYml,
+      generatedMkdocsYml: snap.generatedMkdocsYml,
+      hasNavKey: snap.hasNavKey,
+      navWeightConfig: nwc ? { installed: nwc.installed, enabled: nwc.enabled, default_page_weight: nwc.default_page_weight, frontmatter_defaults: nwc.frontmatter_defaults } : null
+    };
+  }
+
   function _commitNavSnapshot() {
-    if (_navSnapshotIndex >= 0 && _navSnapshotIndex < _navSnapshots.length - 1) {
+    if (_navSnapshotIndex >= 0 && _navSnapshotIndex < _navDiskSnapshotIndex && _navDiskSnapshotIndex >= 0) {
+      _navSnapshots.push(_cloneSnapshot(_navSnapshots[_navSnapshotIndex]));
+      _navSnapshotIndex = _navSnapshots.length - 1;
+    } else if (_navSnapshotIndex >= 0 && _navSnapshotIndex < _navSnapshots.length - 1) {
       _navSnapshots.splice(_navSnapshotIndex + 1);
     }
     _navSnapshots.push(_takeNavSnapshot());
     _navSnapshotIndex = _navSnapshots.length - 1;
     _renderNavFromSnapshot();
     _navAutoExitCheck();
+    _persistNavSnapshots();
   }
 
   function _captureExpandedFromNavData(items, result) {
@@ -13294,6 +13444,7 @@
     _ensureNavEditModeForSnapshot();
     _renderNavFromSnapshot();
     _navAutoExitCheck();
+    _persistNavSnapshots();
   }
 
   function _navRedo() {
@@ -13302,6 +13453,7 @@
     _ensureNavEditModeForSnapshot();
     _renderNavFromSnapshot();
     _navAutoExitCheck();
+    _persistNavSnapshots();
   }
 
   function _findNavLi(item) {
@@ -13528,7 +13680,8 @@
 
   function _countAffectedDocsFromSnapshots() {
     if (_navSnapshots.length < 2 || _navSnapshotIndex < 1) return 0;
-    var origFlat = _flattenNavTree(_navSnapshots[0].navData, null, '');
+    var diskIdx = _navDiskSnapshotIndex >= 0 ? _navDiskSnapshotIndex : 0;
+    var origFlat = _flattenNavTree(_navSnapshots[diskIdx].navData, null, '');
     var currFlat = _flattenNavTree(_navSnapshots[_navSnapshotIndex].navData, null, '');
     var count = 0;
     var uid;
@@ -13584,15 +13737,12 @@
   }
 
   function _confirmNavDiscard() {
-    var cleanSnap = _navCleanSnapshot
-      || (_navSnapshots.length > 0 ? _navSnapshots[0] : null);
-    if (!cleanSnap) { _exitNavEditMode(true); return; }
-    var currentSnap = (_navSnapshotIndex >= 0 && _navSnapshotIndex < _navSnapshots.length)
-      ? _navSnapshots[_navSnapshotIndex] : null;
-    if (currentSnap && currentSnap.contentHash !== cleanSnap.contentHash) {
-      _applySnapshotToGlobals(cleanSnap);
-      _commitNavSnapshot();
-    }
+    var diskIdx = _navDiskSnapshotIndex >= 0 ? _navDiskSnapshotIndex : 0;
+    if (diskIdx >= _navSnapshots.length) { _exitNavEditMode(true); return; }
+    _navSnapshotIndex = diskIdx;
+    _applySnapshotToGlobals(_navSnapshots[diskIdx]);
+    _navCleanSnapshot = null;
+    _persistNavSnapshots();
     _exitNavEditMode(true);
   }
 
@@ -14064,7 +14214,7 @@
       return;
     }
 
-    var originalSnap = _navSnapshots[0];
+    var originalSnap = _navSnapshots[_navDiskSnapshotIndex >= 0 ? _navDiskSnapshotIndex : 0];
     var activeSnap = _navSnapshots[_navSnapshotIndex];
 
     var desiredState = _computeSavePlan(originalSnap, activeSnap);
@@ -14127,7 +14277,9 @@
     });
     console.log('[DEBUG-SAVE] precomputedRenames:', JSON.stringify(plan.precomputedRenames || {}));
 
+    var savedSnapshotIndex = _navSnapshotIndex;
     _exitNavEditModeDestructive(false);
+    _navSnapshotIndex = savedSnapshotIndex;
     _warningDirectMode = true;
     _runBatchOps(contentEl, orderedOps, focusTarget, { precomputedRenames: plan.precomputedRenames });
   }
@@ -14437,6 +14589,14 @@
 
     _warningDirectMode = false;
     _setSetting('live_wysiwyg_focus_nav', '1');
+
+    var savedSnap = _cloneSnapshot(_navSnapshots[_navSnapshotIndex]);
+    var keepTo = _navDiskSnapshotIndex >= 0 ? _navDiskSnapshotIndex + 1 : 1;
+    _navSnapshots.splice(keepTo);
+    _navSnapshots.push(savedSnap);
+    _navSnapshotIndex = _navSnapshots.length - 1;
+    _navDiskSnapshotIndex = _navSnapshotIndex;
+    _persistNavSnapshots();
 
     if (failures && failures.length) {
       if (_getSetting('live_wysiwyg_migration_result')) {
@@ -21340,10 +21500,48 @@
       return _prefetchMkdocsYml();
     }).then(function () {
       _seedNavTopWarnings();
-      _buildNavMenu(sidebarLeft);
       if (_navSnapshots.length === 0 && typeof liveWysiwygNavData !== 'undefined' && liveWysiwygNavData.length) {
-        _navSnapshots = [_takeNavSnapshot()];
-        _navSnapshotIndex = 0;
+        var freshSnap = _takeNavSnapshot();
+        var persisted = _restoreNavSnapshots();
+        if (persisted) {
+          var persistedDiskSnap = persisted.snapshots[persisted.diskSnapshotIndex];
+          var freshDiskHash = _computeDiskStateHash(freshSnap);
+          var persistedDiskHash = _computeDiskStateHash(persistedDiskSnap);
+          if (freshDiskHash === persistedDiskHash) {
+            var freshUidCounter = _uidCounter;
+            _navSnapshots = persisted.snapshots;
+            _navSnapshotIndex = persisted.snapshotIndex;
+            _navDiskSnapshotIndex = persisted.diskSnapshotIndex;
+            _uidCounter = Math.max(persisted.uidCounter || 0, freshUidCounter);
+            _applySnapshotToGlobals(_navSnapshots[_navSnapshotIndex]);
+          } else {
+            _navSnapshots = persisted.snapshots;
+            _navSnapshots.push(freshSnap);
+            var newIdx = _navSnapshots.length - 1;
+            _navSnapshotIndex = newIdx;
+            _navDiskSnapshotIndex = newIdx;
+            _uidCounter = Math.max(persisted.uidCounter || 0, _uidCounter);
+            _applySnapshotToGlobals(freshSnap);
+            _persistNavSnapshots();
+          }
+        } else {
+          _navSnapshots = [freshSnap];
+          _navSnapshotIndex = 0;
+          _navDiskSnapshotIndex = 0;
+          _persistNavSnapshots();
+        }
+      }
+      _buildNavMenu(sidebarLeft);
+      if (_navSnapshotIndex >= 0 && _navDiskSnapshotIndex >= 0 && _navSnapshotIndex !== _navDiskSnapshotIndex) {
+        if (!_navEditMode) {
+          _navCleanSnapshot = _navSnapshots[_navDiskSnapshotIndex];
+          _navEditMode = true;
+          if (_navSidebarEl) _navSidebarEl.classList.add('live-wysiwyg-nav-edit-mode');
+        }
+        _renderNavFromSnapshot();
+      } else if (_navSnapshots.length >= 2 && _navSidebarEl) {
+        _addNavEditActions(_navSidebarEl);
+        _updateUndoRedoBtns();
       }
       setTimeout(function () { _resumePipeline(); }, 500);
     });
@@ -21609,6 +21807,7 @@
 
     _removeFocusModeGuard();
 
+    _persistNavSnapshots();
     if (_navEditMode) _exitNavEditModeDestructive(false);
     _navSidebarEl = null;
 
@@ -28354,8 +28553,9 @@
         e.stopPropagation();
 
         var diskSrcPath = assetData.src_path;
-        if (_navSnapshots && _navSnapshots.length > 0 && _navSnapshots[0].navData) {
-          var snap0Data = _navSnapshots[0].navData;
+        var _diskIdx = _navDiskSnapshotIndex >= 0 ? _navDiskSnapshotIndex : 0;
+        if (_navSnapshots && _navSnapshots.length > 0 && _navSnapshots[_diskIdx] && _navSnapshots[_diskIdx].navData) {
+          var snap0Data = _navSnapshots[_diskIdx].navData;
           var found = null;
           (function findInSnap(items) {
             for (var i = 0; i < items.length; i++) {

@@ -103,7 +103,7 @@ topWarnings: ['warning message', ...]
 
 ## Persistence Lifecycle
 
-1. **Load**: `_applyStoredWarningsToNavData()` reads `_getCautionPages()` and `_getDeadLinkPages()` from localStorage, finds matching navData items by `src_path`, and sets `_warnings` / `_deadLinks` on them. When `actionData` is present in the persisted entry, it is attached as `_actionData` on the corresponding warning entries. This happens before the initial snapshot is taken, so snapshot 0 includes persisted warnings.
+1. **Load**: `_applyStoredWarningsToNavData()` reads `_getCautionPages()` and `_getDeadLinkPages()` from localStorage, finds matching navData items by `src_path`, and sets `_warnings` / `_deadLinks` on them. When `actionData` is present in the persisted entry, it is attached as `_actionData` on the corresponding warning entries. This happens before the initial snapshot is taken, so the initial snapshot includes persisted warnings.
 
 2. **Editing**: All warning operations (`_addCautionPage`, `_addDeadLinksForPage`, dead link scan, dismiss/resolve) modify navData items only. No localStorage writes.
 
@@ -111,7 +111,7 @@ topWarnings: ['warning message', ...]
 
 4. **Batch save errors**: `_warningDirectMode = true`. `_addCautionPage` writes directly to localStorage so errors survive the page reload that follows batch save.
 
-5. **Discard**: Restores snapshot 0 (which contains original warnings from load). No localStorage mutation needed.
+5. **Discard**: Restores the disk snapshot (which contains original warnings from load). No localStorage mutation needed.
 
 **localStorage format:**
 ```

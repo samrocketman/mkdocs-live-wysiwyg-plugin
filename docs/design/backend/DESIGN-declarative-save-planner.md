@@ -4,7 +4,7 @@
 
 The save process uses a two-phase architecture that separates **what** the end state should look like from **how** to achieve it:
 
-1. **`_computeSavePlan`** — diffs snapshot 0 vs the active snapshot and produces a declarative desired state describing where every page and section should end up, with what frontmatter and content.
+1. **`_computeSavePlan`** — diffs the disk snapshot (`_navSnapshots[_navDiskSnapshotIndex]`) vs the active snapshot and produces a declarative desired state describing where every page and section should end up, with what frontmatter and content.
 2. **`_planDiskOperations`** — converts the desired state into an optimized 2-batch execution plan, detecting folder renames to minimize disk writes.
 
 This separation means the snapshot diff never specifies rename, move, or delete operations. It only describes the target state. The disk planner independently discovers optimizations (e.g., a single folder rename replacing many individual file moves).
@@ -25,7 +25,7 @@ The declarative approach eliminates this coupling: the diff describes the desire
 
 ### Input
 
-Two snapshots: `originalSnap` (snapshot 0, the pre-edit state) and `currentSnap` (the active snapshot with all user edits).
+Two snapshots: `originalSnap` (the disk snapshot at `_navDiskSnapshotIndex`, representing the current on-disk state) and `currentSnap` (the active snapshot with all user edits).
 
 Both are flattened via `_flattenNavTree` into UID-keyed maps. Each entry contains the `item` reference (preserving access to `_fm`, `setContent`, `_indexContent`, and all data flags), plus `srcPath`, `folderDir`, and other metadata.
 

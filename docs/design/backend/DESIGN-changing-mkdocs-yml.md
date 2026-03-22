@@ -58,7 +58,7 @@ When `original-mkdocs.yml` does not exist, only `_virtualMkdocsYml` is used (loa
 
 ### Save: Direct Writes via Save Planner
 
-When `_computeSavePlan` detects that either virtual copy changed between snapshot 0 and the active snapshot:
+When `_computeSavePlan` detects that either virtual copy changed between the disk snapshot and the active snapshot:
 
 - **With `original-mkdocs.yml`**: Emits `write-mkdocs-yml` (overwrite) for `original-mkdocs.yml` with `currentSnap.mkdocsYml`, and `write-mkdocs-yml` (overwrite) for `../mkdocs.yml` with `currentSnap.generatedMkdocsYml`.
 - **Without `original-mkdocs.yml`**: Emits `write-mkdocs-yml` (overwrite) for `../mkdocs.yml` with `currentSnap.mkdocsYml` directly.

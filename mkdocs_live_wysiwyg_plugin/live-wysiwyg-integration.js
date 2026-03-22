@@ -13135,9 +13135,18 @@
     return _djb2Hash(parts.join('\x00'));
   }
 
+  var _diskStateHashReplacer = function (key, value) {
+    if (key === '_warnings' || key === '_deadLinks' || key === '_expanded' ||
+        key === '_focused' || key === '_selected' || key === '_groupMode' ||
+        key === '_uid' || key === '_indexContent' || key === 'setContent' ||
+        key === 'url' || key === '_new' || key === '_renamed' || key === '_originalPath' ||
+        key === 'isIndex' || key === 'empty' || key === 'retitled') return undefined;
+    return value;
+  };
+
   function _computeDiskStateHash(snap) {
     var parts = [
-      JSON.stringify(snap.navData, _navContentHashReplacer),
+      JSON.stringify(snap.navData, _diskStateHashReplacer),
       snap.mkdocsYml || '',
       snap.generatedMkdocsYml || ''
     ];
@@ -14596,10 +14605,8 @@
     _warningDirectMode = false;
     _setSetting('live_wysiwyg_focus_nav', '1');
 
-    var savedSnap = _cloneSnapshot(_navSnapshots[_navSnapshotIndex]);
     var keepTo = _navDiskSnapshotIndex >= 0 ? _navDiskSnapshotIndex + 1 : 1;
     _navSnapshots.splice(keepTo);
-    _navSnapshots.push(savedSnap);
     _navSnapshotIndex = _navSnapshots.length - 1;
     _navDiskSnapshotIndex = _navSnapshotIndex;
     _persistNavSnapshots();

@@ -84,7 +84,7 @@ Each snapshot captures the full editor state:
 4. Call `_renderNavFromSnapshot()`
 5. Call `_persistNavSnapshots()` — write to localStorage
 
-**`_cloneSnapshot(snap)`:** deep-clones a snapshot (navData tree, batchQueue, badges, warnings, weight config). Used by `_commitNavSnapshot` and `_finishBatchSave` when copying a pre-disk snapshot to the end of the history.
+**`_cloneSnapshot(snap)`:** deep-clones a snapshot (navData tree, batchQueue, badges, warnings, weight config). Used by `_commitNavSnapshot` when copying a pre-disk snapshot to the end of the history.
 
 **`_takeNavSnapshot()`:**
 1. `_syncFmFields(navData)` — synchronize item-level fields into `_fm` objects
@@ -128,7 +128,7 @@ This includes `_indexContent` (string, copied by value), `setContent` (string, c
 - **Undo/redo bar outside edit mode**: After lightweight discard, `_exitNavEditMode` nulls `_navEditActionsEl` before calling `_buildNavMenu` (which clears `sidebarEl.innerHTML`), then shows the undo/redo actions bar when `_navSnapshots.length >= 2`. Save/Discard/Review visibility is hash-based (via `_snapshotHasSaveableChanges`). The user can redo past the disk index to recover discarded changes, or undo before the disk index; either direction re-enters edit mode via `_ensureNavEditModeForSnapshot` when the snapshot has dirty content or edit state.
 - **Clean snapshot reference**: `_navCleanSnapshot` is set on first entry to edit mode (`_enterNavEditMode`) and when undo re-enters edit mode (`_ensureNavEditModeForSnapshot`). In both cases, a snapshot of the current (clean) navData is captured. `_snapshotHasSaveableChanges` compares the active snapshot against both `_navCleanSnapshot` and `_navSnapshots[_navDiskSnapshotIndex]`.
 - **Destructive exit**: `_exitNavEditModeDestructive(restoreCursor)` restores navData from `_navSnapshots[_navDiskSnapshotIndex]`, resets `_navSnapshotIndex` to `_navDiskSnapshotIndex`, clears `_navCleanSnapshot`, and persists. The full snapshot history is preserved. Used only by external rebuild "Discard and Refresh" and `exitFocusMode` teardown — NOT by the Discard button or the save path.
-- **Save path**: `_executeNavBatchSave` saves `_navSnapshotIndex` before calling `_exitNavEditModeDestructive(false)` and restores it immediately after. This allows the destructive exit to clear batch state and edit UI while preserving the active snapshot index. `_finishBatchSave` squashes history on completion: it keeps all entries up to and including the old disk snapshot (previous save points), discards all intermediate edits between the old disk and active, then appends a clone of the active snapshot as the new disk entry. Result: `[...previous save points..., oldDiskSnap, newDiskSnap]`. Each save adds exactly one entry to the history progression, and the user can undo back through previous save points.
+- **Save path**: `_executeNavBatchSave` saves `_navSnapshotIndex` before calling `_exitNavEditModeDestructive(false)` and restores it immediately after. This allows the destructive exit to clear batch state and edit UI while preserving the active snapshot index. `_finishBatchSave` squashes history on completion: it keeps all entries up to and including the old disk snapshot (previous save points) and discards all intermediate edits. No post-save snapshot is appended — the page reload creates the new disk snapshot fresh from server data. Result after save: `[...previous save points..., oldDiskSnap]`. After page reload: `[...previous save points..., oldDiskSnap, freshServerSnap]`. This avoids stale `src_path` values in persisted snapshots (moved files have new paths on disk that only the server knows). Each save cycle adds exactly one entry to the history progression, and the user can undo back through previous save points.
 - **Exit focus mode**: `exitFocusMode` calls `_persistNavSnapshots()` before `_exitNavEditModeDestructive(false)`, ensuring snapshot state survives focus mode exit and re-entry.
 
 ### Persistence
@@ -157,7 +157,7 @@ Snapshot history is persisted to `localStorage` so undo/redo history survives pa
 
 **Initialization**: Set alongside `_navSnapshotIndex` during page load (either to the persisted value or to `0` for fresh state).
 
-**After save**: Updated to `_navSnapshotIndex` in `_finishBatchSave`. If the active index is in the pre-disk region (rollback save), the active snapshot is first copied to the end of the array so that disk index always advances forward. Then `_navDiskSnapshotIndex = _navSnapshotIndex`, then persisted.
+**After save**: `_finishBatchSave` splices the snapshot array to keep only entries up to and including `_navDiskSnapshotIndex`, discarding all intermediate edits. Both `_navSnapshotIndex` and `_navDiskSnapshotIndex` are set to the last remaining entry. No post-save snapshot is appended. On the subsequent page reload, the server-generated navData creates a fresh snapshot that becomes the new disk index (see Persistence → page load restore).
 
 **Save planning**: `_executeNavBatchSave` uses `_navSnapshots[_navDiskSnapshotIndex]` as `originalSnap` for `_computeSavePlan`, instead of `_navSnapshots[0]`.
 
@@ -835,14 +835,16 @@ When `onComplete` is absent, `_finishBatchSave` follows the default behavior: na
 
 ### Focus Mode Document Save Flow
 
-`_doFocusSave()` builds a single `save-content` op and runs it through `_runBatchOps` with `onComplete`:
+Focus mode content saves use the non-blocking background save (`_doFocusSaveBackground`). See [DESIGN-uninterrupted-content-save.md](DESIGN-uninterrupted-content-save.md) for details.
 
-1. Finalize editor state → sync to textarea
-2. Build `save-content` op with page path, content, and title derived from `document.title`
-3. Call `_runBatchOps` with `{ title: "Saving '...'...", skipLinkIndex: true, onComplete: fn }`
-4. `onComplete` resets pristine content via `_resetPristineContent`, syncs build epoch, and resolves the returned Promise
+1. Capture content from WYSIWYG or markdown editor via `_finalizeUpdate` + hidden textarea
+2. Write directly via `_getOrCreateBulkWs()` → `_wsSetContents(path, content)`
+3. On success: `_resetPristineContent(content)`, set `_bgSavePendingRebuild = true`, update save/discard visibility
+4. On failure: show error toast
 
-The function returns a Promise, preserving the chaining API used by callers (`_doFocusModeSave`, `_navigateToPage`, `_ensureNavEditReady`, `_onExternalRebuild`).
+The user continues typing without interruption — no read-only lock, no overlay, no content replacement. The MkDocs rebuild is absorbed silently by the focus mode build-epoch poller.
+
+The blocking `_doFocusSave()` (which routes through `_runBatchOps` with `onComplete`) is retained for the "Save changes and Refresh" path in `_onExternalRebuild`, which deliberately replaces editor content. It returns a Promise, preserving the chaining API used by callers (`_navigateToPage`, `_ensureNavEditReady`, `_onExternalRebuild`).
 
 ### Combined Nav + Document Save
 

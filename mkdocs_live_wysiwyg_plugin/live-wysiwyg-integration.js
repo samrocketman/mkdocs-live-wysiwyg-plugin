@@ -8212,6 +8212,7 @@
   var _reviewPopupDismiss = null;
   var _userActionInProgress = false;
   var _focusModeBuildEpoch = null;
+  var _bgSavePendingRebuild = false;
   var _fmgOrigXHROpen = null;
   var _fmgOrigXHRSend = null;
   var _focusModeLocationGuardHandle = null;
@@ -8885,7 +8886,7 @@
               var data = JSON.parse(e.data);
               if (data && data.action === 'redirect' && data.new_url) {
                 _suppressedRedirectUrl = data.new_url;
-                if (_focusModeGuardActive && !_reloadGuardActive && !_userActionInProgress && !_isMigrationChainActive()) {
+                if (_focusModeGuardActive && !_reloadGuardActive && !_userActionInProgress && !_bgSavePendingRebuild && !_isMigrationChainActive()) {
                   _onExternalRebuild();
                 }
                 return;
@@ -9003,7 +9004,7 @@
       id: 'focus-mode',
       isActive: function () { return _focusModeGuardActive; },
       onIntercept: function () {
-        if (!_reloadGuardActive && !_userActionInProgress) _onExternalRebuild();
+        if (!_reloadGuardActive && !_userActionInProgress && !_bgSavePendingRebuild) _onExternalRebuild();
       }
     });
 
@@ -9068,6 +9069,11 @@
           return;
         }
         _focusModeBuildEpoch = serverEpoch;
+        if (_bgSavePendingRebuild) {
+          _bgSavePendingRebuild = false;
+          _focusModePollerTimer = setTimeout(poll, 2000);
+          return;
+        }
         if (_userActionInProgress || _reloadGuardActive || _focusModeRebuildPromptOpen || _isMigrationChainActive()) {
           _focusModePollerTimer = setTimeout(poll, 2000);
           return;
@@ -15679,26 +15685,55 @@
     });
   }
 
-  function _doFocusModeSave() {
-    if (_navEditMode) { _confirmNavSave(); return; }
-    _doFocusSave().then(function () {
-      if (_getSetting('live_wysiwyg_focus_remain') === '1') {
-        var currentSrc = _getCurrentSrcPath();
-        if (currentSrc) {
-          var transitionOv = _showFullScreenTransition('Reloading...');
-          _wsGetContents(currentSrc).then(function (md) {
-            if (wysiwygEditor && wysiwygEditor._loadContent) {
-              wysiwygEditor._loadContent(md);
-            }
-            _refreshFocusToc();
-            _fadeOutOverlay(transitionOv);
-            if (_focusOverlay && _focusOverlay._updateSaveDiscard) _focusOverlay._updateSaveDiscard();
-          }).catch(function () {
-            _fadeOutOverlay(transitionOv);
-          });
+  function _doFocusSaveBackground() {
+    var path = _getCurrentSrcPath();
+    if (!path) return;
+
+    var content = '';
+    if (wysiwygEditor) {
+      if (wysiwygEditor._finalizeUpdate) {
+        if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor.editableArea) {
+          wysiwygEditor._finalizeUpdate(wysiwygEditor.editableArea.innerHTML);
+        } else if (wysiwygEditor.currentMode === 'markdown' && wysiwygEditor.markdownArea) {
+          wysiwygEditor._finalizeUpdate(wysiwygEditor.markdownArea.value);
         }
       }
+      var ta = document.querySelector('.live-edit-source');
+      content = ta ? ta.value : '';
+    }
+
+    if (!content) return;
+
+    var savedContent = content;
+    _getOrCreateBulkWs().then(function () {
+      return _wsSetContents(path, savedContent);
+    }).then(function () {
+      if (wysiwygEditor && wysiwygEditor._resetPristineContent) {
+        wysiwygEditor._resetPristineContent(savedContent);
+      }
+      _bgSavePendingRebuild = true;
+      if (_focusOverlay && _focusOverlay._updateSaveDiscard) {
+        _focusOverlay._updateSaveDiscard();
+      }
+    }).catch(function (err) {
+      console.error('[bg-save] failed:', err && err.message || err);
+      var overlay = document.querySelector('.live-wysiwyg-focus-overlay');
+      if (overlay) {
+        var msg = document.createElement('div');
+        msg.className = 'live-wysiwyg-bg-save-error';
+        msg.textContent = 'Save failed: ' + (err && err.message || 'unknown error');
+        msg.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);' +
+          'background:#d9534f;color:#fff;padding:8px 18px;border-radius:6px;z-index:1000001;' +
+          'font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+        document.body.appendChild(msg);
+        setTimeout(function () { if (msg.parentNode) msg.parentNode.removeChild(msg); }, 5000);
+      }
     });
+  }
+
+  function _doFocusModeSave() {
+    if (_navEditMode) { _confirmNavSave(); return; }
+    _doFocusSaveBackground();
   }
 
   // ======================================================================

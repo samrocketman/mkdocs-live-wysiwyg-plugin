@@ -265,10 +265,15 @@ get_user_plugins() {
 }
 
 install_techdocs() (
+  if [ -f ~/.techdocs/current ] && [ "$(< ~/.techdocs/current)" = dev ]; then
+    exit
+  fi
   if [ -n "${FORCE_UPDATE:-}" ]; then
     true
   elif [ -d ~/.techdocs/python3 ]; then
-    exit
+    if [ -f ~/.techdocs/current ] && [ "$(< ~/.techdocs/current)" = "$WYSIWYG_VERSION" ]; then
+      exit
+    fi
   else
     mkdir -p ~/.techdocs
     uv venv --python 3.13 ~/.techdocs/python3
@@ -288,6 +293,7 @@ install_techdocs() (
     mkdocs-live-edit-plugin==0.4.1 \
     mkdocs-live-wysiwyg-plugin=="$WYSIWYG_VERSION"
 
+  echo "$WYSIWYG_VERSION" > ~/.techdocs/current
 )
 
 serve() (
@@ -446,6 +452,14 @@ add_plugins() (
   source ~/.techdocs/python3/bin/activate
   set -x
   pip install "$@"
+  set +x
+  for _arg in "$@"; do
+    case "$_arg" in -*) continue ;; esac
+    if [ -d "$_arg"/mkdocs_live_wysiwyg_plugin ]; then
+      echo dev > ~/.techdocs/current
+      break
+    fi
+  done
 )
 
 #

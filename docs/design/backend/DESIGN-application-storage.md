@@ -2,7 +2,9 @@
 
 ## Overview
 
-The WYSIWYG plugin uses `localStorage` for two categories of persistent state: **user preferences** (editor settings that survive page reloads) and **nav-operational data** (warnings, execution pipelines, and notifications generated during editing sessions). All storage keys live in the browser's `localStorage` under well-known string keys. The plugin never uses `sessionStorage` or IndexedDB.
+The WYSIWYG plugin uses `localStorage` for two categories of persistent state: **user preferences** (editor settings that survive page reloads) and **nav-operational data** (warnings, execution pipelines, and notifications generated during editing sessions). All `localStorage` keys live under well-known string keys.
+
+The plugin also uses `sessionStorage` for **tab-scoped transient data** that must survive page reloads within the same browser tab but should not persist across sessions or tabs. See § sessionStorage Keys below.
 
 All code lives in `live-wysiwyg-integration.js`.
 
@@ -141,6 +143,24 @@ The pipeline is a multi-stage execution plan that survives page reloads. Written
 ```
 
 A notification queue. Messages are appended by `_queuePostSaveMessage()` during batch save finalization (before page reload). Consumed and cleared by `_showPostSaveMessages()` after focus mode initializes. Message types: `success`, `warning`, `info`, `error`. Error messages persist until manual dismiss; others auto-dismiss after 5 seconds.
+
+## sessionStorage Keys
+
+`sessionStorage` is used for tab-scoped data that must survive within-tab page reloads but not persist across browser sessions or tabs.
+
+| Key | Format | Purpose |
+|-----|--------|---------|
+| `live_wysiwyg_undo_dag` | JSON object | Content undo/redo DAG state (nodes, currentId, rootMd, nextId, lastMd, srcPath). Persisted on every DAG mutation and before nav-save reloads. Restored on focus mode entry. See [DESIGN-unified-content-undo.md](../ui/DESIGN-unified-content-undo.md) § Persistence. |
+| `live_wysiwyg_content_backup` | JSON object | Editor content snapshot (`{ srcPath, content }`) captured before nav-save page reloads. Restored on focus mode entry if srcPath matches and content differs from server. See [DESIGN-uninterrupted-content-save.md](../ui/DESIGN-uninterrupted-content-save.md) § Content Preservation. |
+
+### Lifecycle
+
+- **`live_wysiwyg_undo_dag`**: Written by `_persistContentHistory()` on every DAG mutation (`_createHistoryNode`, `_contentUndo`, `_contentRedo`) and before page reloads (`_navigateAfterBatchComplete`). Read by `_restoreContentHistory()` during `enterFocusMode`. Keyed by `srcPath` — stale entries for different pages are silently ignored (srcPath mismatch). Never explicitly deleted; overwritten on each persist.
+- **`live_wysiwyg_content_backup`**: Written by `_navigateAfterBatchComplete` before nav-save reloads. Consumed (deleted) by `enterFocusMode` after restoration. Self-cleaning: the entry is removed after successful or failed restoration.
+
+### Corruption Protection
+
+Both keys use the same JSON parse protection as localStorage: `JSON.parse` is wrapped in try/catch, and invalid or structurally wrong data is silently discarded (returns `false` or skips restoration). Quota exceeded errors on `sessionStorage.setItem` are caught and absorbed.
 
 ## Schema Versioning
 

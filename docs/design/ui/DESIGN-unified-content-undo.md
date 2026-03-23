@@ -193,12 +193,48 @@ In `_globalKeydownRouter`, all `Cmd+Z` / `Cmd+Shift+Z` / `Cmd+Y` handling is uni
 
 The `keydown` handler remains necessary for markdown mode (textarea does not fire `beforeinput` with `historyUndo`) and as a fallback for browsers that do not support `beforeinput` input types.
 
+## Persistence
+
+The content undo DAG is persisted to `sessionStorage` under the key `live_wysiwyg_undo_dag`. This ensures undo/redo history survives page reloads (e.g., after a nav menu save). See [DESIGN-application-storage.md](../backend/DESIGN-application-storage.md) § sessionStorage Keys.
+
+### Serialization Format
+
+```
+{
+  srcPath: "docs/page.md",      // current document path (for validation)
+  nodes: { ... },               // _historyNodes map
+  currentId: 5,                 // _historyCurrentId
+  rootMd: "# Title\n...",       // _historyRootMd (full root content)
+  nextId: 12,                   // _historyNextId (auto-increment counter)
+  lastMd: "# Title\n..."        // _historyLastMd (cached current content)
+}
+```
+
+### Persist (`_persistContentHistory`)
+
+Serializes the DAG state to `sessionStorage`. Called by `_autoSaveAndPersistHistory()` on every DAG mutation and by `_navigateAfterBatchComplete()` before page reload.
+
+### Restore (`_restoreContentHistory`)
+
+Restores the DAG from `sessionStorage`. Called during `enterFocusMode` after content backup restoration. Validates that the stored `srcPath` matches the current page. If the editor content has changed since persistence (e.g., server returned newer content), `_historyLastMd` is updated to match. Returns `true` on success.
+
+### Relationship to Content Auto-Save
+
+DAG persistence, disk auto-save, and DAG node creation are unified in a single pipeline. When a DAG node is created (via `_createHistoryNode`) or the user triggers undo/redo, `_autoSaveAndPersistHistory()` is called, which bundles:
+
+1. `_persistContentHistory()` — DAG → `sessionStorage` (synchronous)
+2. `_doFocusSaveBackground()` — content → disk (asynchronous, only if dirty)
+
+No separate timers are used for auto-save or DAG persistence. They reuse the existing `_scheduleHistoryCapture` / `_flushHistoryCapture` debounce. See [DESIGN-uninterrupted-content-save.md](DESIGN-uninterrupted-content-save.md).
+
 ## Lifecycle
 
 - **Initialization**: when `replaceTextareaWithWysiwyg` creates the editor, a root node is created with the initial markdown content. `_historyRootMd = initialValue`.
+- **Focus mode entry**: `_restoreContentHistory()` is called after content backup restoration. If a persisted DAG exists for the current page, it replaces the freshly initialized DAG.
 - **Page navigation**: `_loadContent()` resets the entire DAG (new root with loaded content). All previous history is discarded.
-- **Save**: `_resetPristineContent()` does NOT clear the DAG. The user may still want to undo after saving. History is only cleared on page navigation.
+- **Auto-save**: every DAG mutation triggers `_autoSaveAndPersistHistory()`, which persists the DAG to `sessionStorage` and auto-saves dirty content to disk.
 - **Pruning**: when total node count exceeds ~200, oldest leaf branches are pruned (nodes with no children that are not on the current path from root to `_historyCurrentId`).
+- **Nav save reload**: `_navigateAfterBatchComplete` flushes pending captures and persists the DAG before the reload. `enterFocusMode` restores it afterwards.
 
 ## Extensibility for Non-Linear Redo
 
@@ -227,6 +263,10 @@ Content undo and nav snapshot undo are completely independent:
 | **Survives nav edit** | Yes (JS array in memory) | N/A (is the nav edit system) |
 
 They never conflict: dispatch is determined solely by whether the active element is a content editor (`TEXTAREA`, `INPUT`, or `contentEditable`). Content focus always wins, regardless of `_navEditMode` state.
+
+## Relationship to Content Auto-Save
+
+The DAG's capture pipeline drives content auto-saving. See [DESIGN-uninterrupted-content-save.md](DESIGN-uninterrupted-content-save.md) for the full auto-save architecture. The DAG is persisted to `sessionStorage` — see [DESIGN-application-storage.md](../backend/DESIGN-application-storage.md) § sessionStorage Keys.
 
 ## Relationship to Markdown Awareness
 

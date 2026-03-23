@@ -24114,6 +24114,8 @@
       }
     })();
 
+    var _pendingMultiBacktick = null;
+
     function _doInlineCodeConvert(anchorNode, openingIdx, closingIdx, sel, backtickCount) {
       var ea = wysiwygEditor.editableArea;
       if (!ea) return false;
@@ -24184,6 +24186,7 @@
         ea.addEventListener('input', function (e) {
           if (wysiwygEditor.currentMode !== 'wysiwyg') return;
           if (e.inputType !== 'insertText' || e.data !== '`') return;
+          if (_pendingMultiBacktick) return;
 
           var sel = window.getSelection();
           if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
@@ -24224,9 +24227,8 @@
       var ea = wysiwygEditor.editableArea;
       if (ea && !ea.dataset.liveWysiwygTripleBacktickAttached) {
         ea.dataset.liveWysiwygTripleBacktickAttached = '1';
-        var pendingMulti = null;
 
-        function clearMultiPending() { pendingMulti = null; }
+        function clearMultiPending() { _pendingMultiBacktick = null; }
 
         ea.addEventListener('blur', clearMultiPending);
         _ekh.multiCodeClear = function (e) {
@@ -24261,25 +24263,27 @@
           var text = anchorNode.textContent;
 
           if (ch === ' ') {
-            var runLen = 0;
-            var pos = anchorOffset - 2;
-            while (pos >= 0 && text.charAt(pos) === '`') { runLen++; pos--; }
-            if (runLen >= 2) {
-              pendingMulti = { node: anchorNode, offset: pos + 1, count: runLen };
-              return;
+            if (!_pendingMultiBacktick) {
+              var runLen = 0;
+              var pos = anchorOffset - 2;
+              while (pos >= 0 && text.charAt(pos) === '`') { runLen++; pos--; }
+              if (runLen >= 2) {
+                _pendingMultiBacktick = { node: anchorNode, offset: pos + 1, count: runLen };
+                return;
+              }
             }
             return;
           }
 
           // ch === '`': check for pending multi closing, then fall through to block code
 
-          if (pendingMulti && pendingMulti.node === anchorNode) {
-            var expectedCount = pendingMulti.count;
+          if (_pendingMultiBacktick && _pendingMultiBacktick.node === anchorNode) {
+            var expectedCount = _pendingMultiBacktick.count;
             var closeRun = 0;
             var cp = anchorOffset - 1;
             while (cp >= 0 && text.charAt(cp) === '`') { closeRun++; cp--; }
             if (closeRun === expectedCount && cp >= 0 && text.charAt(cp) === ' ') {
-              var openIdx = pendingMulti.offset;
+              var openIdx = _pendingMultiBacktick.offset;
               clearMultiPending();
               if (_doInlineCodeConvert(anchorNode, openIdx, anchorOffset - 1, sel, expectedCount)) {
                 e.stopImmediatePropagation();

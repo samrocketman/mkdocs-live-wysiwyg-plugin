@@ -7158,14 +7158,18 @@
         while (p) { if (p.nodeName === 'PRE') { inPre = true; break; } p = p.parentNode; }
         if (!inPre) {
           var inner = (node.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
-          if (inner.indexOf('`') >= 0) {
+          if (inner.indexOf('``') >= 0) {
+            md += '``` ';
+            walkChildren(node);
+            md += ' ```';
+          } else if (inner.indexOf('`') >= 0) {
             md += '`` ';
             walkChildren(node);
             md += ' ``';
           } else {
-          md += '`';
-          walkChildren(node);
-          md += '`';
+            md += '`';
+            walkChildren(node);
+            md += '`';
           }
           return;
         }
@@ -24113,6 +24117,56 @@
       }
     })();
 
+    function _doInlineCodeConvert(anchorNode, openingIdx, closingIdx, sel, backtickCount) {
+      var ea = wysiwygEditor.editableArea;
+      if (!ea) return false;
+      var text = anchorNode.textContent;
+      var inner, literal;
+      if (backtickCount === 3) {
+        inner = text.substring(openingIdx + 4, closingIdx - 3);
+        literal = '``` ' + inner + ' ```';
+      } else if (backtickCount === 2) {
+        inner = text.substring(openingIdx + 3, closingIdx - 2);
+        literal = '`` ' + inner + ' ``';
+      } else {
+        inner = text.substring(openingIdx + 1, closingIdx);
+        literal = '`' + inner + '`';
+      }
+      if (inner.length === 0) return false;
+      if (inner.charAt(0) === ' ' || inner.charAt(inner.length - 1) === ' ') return false;
+
+      var before = text.substring(0, openingIdx);
+      var after = text.substring(closingIdx + 1);
+
+      var codeEl = document.createElement('code');
+      codeEl.textContent = inner;
+      codeEl.setAttribute('data-md-literal', literal);
+
+      var parentNode = anchorNode.parentNode;
+      var afterNode = document.createTextNode('\u200B' + after);
+
+      if (before) {
+        anchorNode.textContent = before;
+        parentNode.insertBefore(codeEl, anchorNode.nextSibling);
+        parentNode.insertBefore(afterNode, codeEl.nextSibling);
+      } else {
+        parentNode.insertBefore(codeEl, anchorNode);
+        parentNode.insertBefore(afterNode, codeEl.nextSibling);
+        parentNode.removeChild(anchorNode);
+      }
+
+      var range = document.createRange();
+      range.setStart(afterNode, 1);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+
+      if (wysiwygEditor._finalizeUpdate) {
+        wysiwygEditor._finalizeUpdate(ea.innerHTML);
+      }
+      return true;
+    }
+
     (function () {
       var ea = wysiwygEditor.editableArea;
       if (ea && !ea.dataset.liveWysiwygInlineCodeAttached) {
@@ -24130,51 +24184,6 @@
             clearPending();
           }
         };
-
-        function doConvert(anchorNode, openingIdx, closingIdx, sel, isDouble) {
-          var text = anchorNode.textContent;
-          var inner, literal;
-          if (isDouble) {
-            inner = text.substring(openingIdx + 3, closingIdx - 2);
-            literal = '`` ' + inner + ' ``';
-          } else {
-            inner = text.substring(openingIdx + 1, closingIdx);
-            literal = '`' + inner + '`';
-          }
-          if (inner.length === 0) return false;
-          if (inner.charAt(0) === ' ' || inner.charAt(inner.length - 1) === ' ') return false;
-
-          var before = text.substring(0, openingIdx);
-          var after = text.substring(closingIdx + 1);
-
-          var codeEl = document.createElement('code');
-          codeEl.textContent = inner;
-          codeEl.setAttribute('data-md-literal', literal);
-
-          var parentNode = anchorNode.parentNode;
-          var afterNode = document.createTextNode('\u200B' + after);
-
-          if (before) {
-            anchorNode.textContent = before;
-            parentNode.insertBefore(codeEl, anchorNode.nextSibling);
-            parentNode.insertBefore(afterNode, codeEl.nextSibling);
-          } else {
-            parentNode.insertBefore(codeEl, anchorNode);
-            parentNode.insertBefore(afterNode, codeEl.nextSibling);
-            parentNode.removeChild(anchorNode);
-          }
-
-          var range = document.createRange();
-          range.setStart(afterNode, 1);
-          range.collapse(true);
-          sel.removeAllRanges();
-          sel.addRange(range);
-
-          if (wysiwygEditor._finalizeUpdate) {
-            wysiwygEditor._finalizeUpdate(ea.innerHTML);
-          }
-          return true;
-        }
 
         ea.addEventListener('input', function (e) {
           if (wysiwygEditor.currentMode !== 'wysiwyg') return;
@@ -24197,29 +24206,15 @@
           var closingIdx = anchorOffset - 1;
           if (closingIdx < 0 || text.charAt(closingIdx) !== '`') return;
           if (closingIdx > 0 && text.charAt(closingIdx - 1) === '`') {
-            if (pendingBacktick && pendingBacktick.node === anchorNode && pendingBacktick.offset === closingIdx - 1) {
-              pendingBacktick = { node: anchorNode, offset: closingIdx - 1, isDouble: true };
-              return;
-            }
-            if (pendingBacktick && pendingBacktick.isDouble && pendingBacktick.node === anchorNode &&
-                text.substring(pendingBacktick.offset, pendingBacktick.offset + 3) === '`` ' &&
-                closingIdx >= pendingBacktick.offset + 6 && text.substring(closingIdx - 2, closingIdx + 1) === ' ``') {
-              var openingIdx = pendingBacktick.offset;
-              clearPending();
-              if (doConvert(anchorNode, openingIdx, closingIdx, sel, true)) return;
-              return;
-            }
             clearPending();
             return;
           }
 
-          if (pendingBacktick && pendingBacktick.isDouble && pendingBacktick.node === anchorNode) return;
-
-          if (pendingBacktick && pendingBacktick.node === anchorNode && !pendingBacktick.isDouble) {
+          if (pendingBacktick && pendingBacktick.node === anchorNode) {
             var pIdx = pendingBacktick.offset;
             if (pIdx >= 0 && pIdx < closingIdx && text.charAt(pIdx) === '`') {
               clearPending();
-              if (doConvert(anchorNode, pIdx, closingIdx, sel)) return;
+              if (_doInlineCodeConvert(anchorNode, pIdx, closingIdx, sel, 1)) return;
               return;
             }
           }
@@ -24233,20 +24228,93 @@
       var ea = wysiwygEditor.editableArea;
       if (ea && !ea.dataset.liveWysiwygTripleBacktickAttached) {
         ea.dataset.liveWysiwygTripleBacktickAttached = '1';
+        var pendingMulti = null;
+
+        function clearMultiPending() { pendingMulti = null; }
+
+        ea.addEventListener('blur', clearMultiPending);
+        _ekh.multiCodeClear = function (e) {
+          if (e.key === 'Escape' || e.key === 'Enter' ||
+              e.key.indexOf('Arrow') === 0 ||
+              e.key === 'Home' || e.key === 'End' ||
+              e.key === 'PageUp' || e.key === 'PageDown') {
+            clearMultiPending();
+          }
+        };
+
+        function isInsidePreOrCodeCapture(node) {
+          var anc = node.nodeType === 3 ? node.parentNode : node;
+          while (anc && anc !== ea) {
+            if (anc.nodeName === 'PRE' || anc.nodeName === 'CODE') return true;
+            anc = anc.parentNode;
+          }
+          return false;
+        }
+
         ea.addEventListener('input', function (e) {
           if (wysiwygEditor.currentMode !== 'wysiwyg') return;
-          if (e.inputType !== 'insertText' || e.data !== '`') return;
+          if (e.inputType !== 'insertText') return;
+          var ch = e.data;
+          if (ch !== '`' && ch !== ' ') return;
           var sel = window.getSelection();
           if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
           var anchorNode = sel.anchorNode;
           var anchorOffset = sel.anchorOffset;
           if (!anchorNode || anchorNode.nodeType !== 3) return;
-          var anc = anchorNode.parentNode;
-          while (anc && anc !== ea) {
-            if (anc.nodeName === 'PRE' || anc.nodeName === 'CODE') return;
-            anc = anc.parentNode;
-          }
+          if (isInsidePreOrCodeCapture(anchorNode)) return;
           var text = anchorNode.textContent;
+
+          if (ch === ' ') {
+            // Space typed: check for ``` or `` immediately before the space to set pending
+            // Triple check first (``` + space)
+            if (anchorOffset >= 4 &&
+                text.charAt(anchorOffset - 2) === '`' &&
+                text.charAt(anchorOffset - 3) === '`' &&
+                text.charAt(anchorOffset - 4) === '`' &&
+                (anchorOffset - 5 < 0 || text.charAt(anchorOffset - 5) !== '`')) {
+              pendingMulti = { node: anchorNode, offset: anchorOffset - 4, type: 'triple' };
+              return;
+            }
+            // Double check (`` + space)
+            if (anchorOffset >= 3 &&
+                text.charAt(anchorOffset - 2) === '`' &&
+                text.charAt(anchorOffset - 3) === '`' &&
+                (anchorOffset - 4 < 0 || text.charAt(anchorOffset - 4) !== '`')) {
+              pendingMulti = { node: anchorNode, offset: anchorOffset - 3, type: 'double' };
+              return;
+            }
+            return;
+          }
+
+          // ch === '`': check for pending multi closing, then fall through to block code
+
+          // Check pending triple closing: space + ``` just typed
+          if (pendingMulti && pendingMulti.type === 'triple' && pendingMulti.node === anchorNode &&
+              anchorOffset >= 4 &&
+              text.substring(anchorOffset - 4, anchorOffset) === ' ```' &&
+              (anchorOffset - 5 < 0 || text.charAt(anchorOffset - 5) !== '`')) {
+            var tripleOpenIdx = pendingMulti.offset;
+            clearMultiPending();
+            if (_doInlineCodeConvert(anchorNode, tripleOpenIdx, anchorOffset - 1, sel, 3)) {
+              e.stopImmediatePropagation();
+              return;
+            }
+          }
+
+          // Check pending double closing: space + `` just typed
+          if (pendingMulti && pendingMulti.type === 'double' && pendingMulti.node === anchorNode &&
+              anchorOffset >= 3 &&
+              text.substring(anchorOffset - 3, anchorOffset) === ' ``' &&
+              (anchorOffset - 4 < 0 || text.charAt(anchorOffset - 4) !== '`')) {
+            var doubleOpenIdx = pendingMulti.offset;
+            clearMultiPending();
+            if (_doInlineCodeConvert(anchorNode, doubleOpenIdx, anchorOffset - 1, sel, 2)) {
+              e.stopImmediatePropagation();
+              return;
+            }
+          }
+
+          // Existing block code creation: ``` at line-start
           if (anchorOffset < 3) return;
           var segment = text.substring(anchorOffset - 3, anchorOffset);
           if (segment !== '```') return;
@@ -24771,6 +24839,7 @@
 
         var hm, olm, adMatch;
         var ADMONITION_TYPE_IDS = ['note', 'warning', 'danger', 'tip', 'hint', 'important', 'caution', 'error', 'attention', 'abstract', 'info', 'success', 'question', 'failure', 'bug', 'example', 'quote'];
+        var cbm;
         if (spaceAlreadyInserted) {
           hm = beforeCursor.match(/^(#{1,6}) $/);
           if (hm) return doHeading(anchorNode, block, hm[1].length, countPrefixLen(raw, hm[0].length), sel, hm[0]);
@@ -24789,6 +24858,8 @@
           if (/^[-*+] \[[xX]\] $/.test(beforeCursor)) return doList(anchorNode, block, countPrefixLen(raw, 6), sel, 'ul', beforeCursor, true, true);
           olm = beforeCursor.match(/^(\d+)\. $/);
           if (olm) return doList(anchorNode, block, countPrefixLen(raw, olm[0].length), sel, 'ol', olm[0]);
+          cbm = beforeCursor.match(/^```(\w+) $/);
+          if (cbm) return doCodeBlock(anchorNode, block, countPrefixLen(raw, cbm[0].length), sel, cbm[1], '```' + cbm[1]);
         } else {
           hm = beforeCursor.match(/^(#{1,6})$/);
           if (hm) return doHeading(anchorNode, block, hm[1].length, countPrefixLen(raw, hm[0].length), sel, hm[0] + ' ');
@@ -24807,6 +24878,8 @@
           if (/^[-*+] \[[xX]\]$/.test(beforeCursor)) return doList(anchorNode, block, countPrefixLen(raw, 5), sel, 'ul', beforeCursor + ' ', true, true);
           olm = beforeCursor.match(/^(\d+)\.$/);
           if (olm) return doList(anchorNode, block, countPrefixLen(raw, olm[0].length), sel, 'ol', olm[0] + ' ');
+          cbm = beforeCursor.match(/^```(\w+)$/);
+          if (cbm) return doCodeBlock(anchorNode, block, countPrefixLen(raw, cbm[0].length), sel, cbm[1], '```' + cbm[1]);
         }
         return false;
       }
@@ -24923,6 +24996,64 @@
               placeCursorIn(firstLi, sel, true);
             }
           }
+        }
+        return true;
+      }
+
+      function doCodeBlock(textNode, block, prefixLen, sel, lang, literal) {
+        var MERMAID_DEFAULT = 'stateDiagram-v2\n    [*] --> Still\n    Still --> [*]\n    Still --> Moving\n    Moving --> Still\n    Moving --> Crash\n    Crash --> [*]\n';
+        stripPrefix(textNode, prefixLen);
+        var pre = document.createElement('pre');
+        pre.setAttribute('data-lang', lang);
+        pre.setAttribute('data-md-literal', literal);
+        var code = document.createElement('code');
+        code.textContent = (lang === 'mermaid') ? MERMAID_DEFAULT : '\n';
+        pre.appendChild(code);
+        if (block === ea) {
+          ea.replaceChild(pre, textNode.parentNode === ea ? textNode : block);
+        } else {
+          block.parentNode.replaceChild(pre, block);
+        }
+        enhanceCodeBlocks(ea);
+        enhanceMermaidBlocks(ea);
+        enhanceBasicPreBlocks(ea);
+        populateRawHtmlBlocks(ea);
+        enhanceAdmonitions(ea);
+        enhanceImages(ea);
+        if (lang === 'mermaid') {
+          var wrapper = pre.parentNode;
+          if (wrapper && wrapper.classList && wrapper.classList.contains('md-mermaid-block')) {
+            var pAfter = document.createElement('p');
+            pAfter.innerHTML = '<br>';
+            if (wrapper.nextSibling) {
+              wrapper.parentNode.insertBefore(pAfter, wrapper.nextSibling);
+            } else {
+              wrapper.parentNode.appendChild(pAfter);
+            }
+            requestAnimationFrame(function () {
+              var range = document.createRange();
+              range.setStart(pAfter, 0);
+              range.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(range);
+              ea.focus();
+            });
+          }
+        } else {
+          requestAnimationFrame(function () {
+            var codeEl = pre.querySelector('code') || pre;
+            var tn = codeEl.firstChild;
+            if (!tn || tn.nodeType !== 3) {
+              tn = document.createTextNode('\n');
+              codeEl.appendChild(tn);
+            }
+            var range = document.createRange();
+            range.setStart(tn, 0);
+            range.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(range);
+            ea.focus();
+          });
         }
         return true;
       }
@@ -27871,6 +28002,7 @@
         if (_mermaidModeActive) return;
         if (_compat.isComposing(e)) return;
         if (_ekh.inlineCodeClear) _ekh.inlineCodeClear(e);
+        if (_ekh.multiCodeClear) _ekh.multiCodeClear(e);
         if (_ekh.checklistCursorNorm) _ekh.checklistCursorNorm(e);
 
         if (_ekh.emojiKey) { _ekh.emojiKey(e); if (e.defaultPrevented) return; }

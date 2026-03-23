@@ -104,7 +104,8 @@ Block-level conversions trigger when you type the pattern at the start of an emp
 | `*text*` or `_text_` | *Italic* |
 | `~~text~~` | ~~Strikethrough~~ |
 | `` `text` `` | `Inline code` (single backtick) |
-| ``` `` `text` `` ``` | `Inline code` (double backtick, preserves inner backticks) |
+| ```` `` text `` ```` | `Inline code` (double backtick — space after ` `` ` opens, space + ` `` ` closes; preserves inner single backticks) |
+| ````` ``` text ``` ````` | `Inline code` (triple backtick — space after ` ``` ` opens, space + ` ``` ` closes; preserves inner single and double backticks) |
 | `[text](url)` | [Link](url) |
 
 Inline conversions trigger when you type the closing delimiter. The wrapped text must not be empty and must not start or end with a space.
@@ -121,6 +122,8 @@ Elements created by toolbar buttons (not by typing markdown) are deleted on back
 ### Code Blocks
 
 - Typing **three backticks** (` ``` `) inserts a code block.
+- **Code block with language**: type ` ``` `, press **Backspace** to revert, type a language keyword (e.g. `python`, `bash`, `yaml`), then press **Space**. The code block is created with the language pre-set.
+- **Mermaid shortcut**: typing ` ```mermaid ` (via the backspace-revert flow above) inserts a mermaid code block pre-filled with a default state diagram.
 - **Enter** (3×) at the end of a code block exits onto a new paragraph. Trailing blank lines are removed.
 - **Backspace** on a completely empty code block deletes it.
 - **Tab** inserts the configured indent (spaces or tab character).
@@ -172,7 +175,8 @@ Available types: note, danger, warning, tip, hint, important, caution, error, at
 ### Inline Code
 
 - Wrapping text with a **pair of backticks** (`` `text` ``) converts to inline code.
-- Wrapping text with **double backticks** (``` `` `text` `` ```) also converts to inline code, preserving any single backticks inside the content.
+- **Double backtick** inline code: type ` `` ` then **Space** to open, type content, then **Space** + ` `` ` to close. Preserves single backticks inside the content.
+- **Triple backtick** inline code: type ` ``` ` then **Backspace** (reverts the code block) then **Space** to open, type content, then **Space** + ` ``` ` to close. Preserves single and double backticks inside the content. Mid-line triple backticks followed by Space also open inline mode directly.
 - The **Inline Code** toolbar button toggles inline code off if the cursor is on existing inline code.
 
 ### Emoji

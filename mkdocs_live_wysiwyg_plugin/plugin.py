@@ -473,6 +473,16 @@ class LiveWysiwygPlugin(BasePlugin):
             f"const liveWysiwygMermaidConfigured = {str(mermaid_configured).lower()};\n"
         )
 
+        help_ref_path = parent_dir / "help-reference.md"
+        if help_ref_path.exists():
+            with open(help_ref_path, "r", encoding="utf-8") as f:
+                help_content = f.read()
+            preamble_parts.append(
+                f"const liveWysiwygHelpContent = {json.dumps(help_content)};\n"
+            )
+        else:
+            preamble_parts.append("const liveWysiwygHelpContent = null;\n")
+
         preamble = "".join(preamble_parts)
 
         admonition_css = parent_dir / "admonition.css"

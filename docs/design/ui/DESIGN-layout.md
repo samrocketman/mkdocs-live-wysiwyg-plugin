@@ -66,6 +66,7 @@ Every z-index value in the codebase. New z-index values must be added here befor
 | `100000` | `.live-wysiwyg-toast` | `_getFocusModeCSS` |
 | `100001` | `#live-wysiwyg-pipeline-progress` | JS inline style |
 | `100002` | `#live-wysiwyg-post-save-notifications` | JS inline style |
+| `100003` | `.live-wysiwyg-help-overlay` | `_getFocusModeCSS` |
 | `999999` | Admonition details confirm overlay (`_showAdmonitionDetailsConfirm`) | JS inline style |
 
 ### Z-Index Design Rationale
@@ -76,6 +77,7 @@ Every z-index value in the codebase. New z-index values must be added here befor
 - **99993–99996**: Panels and popups that float above the focus overlay but below editor dropdowns. The mermaid overlay (`.live-wysiwyg-mermaid-overlay` at 99995) is Layer 3, above the focus overlay (Layer 2).
 - **99999**: All editor dropdowns share the same layer so they can overlap each other freely.
 - **100000–100002**: Global UI elements (toast, progress bar, notifications) that must appear above everything.
+- **100003**: Help modal (Layer 5) — above all editing surfaces and global UI. See [DESIGN-help-system.md](DESIGN-help-system.md).
 - **999999**: Confirm overlays that block all interaction.
 
 ## Dropdown and Popup Positioning Contract
@@ -298,3 +300,4 @@ See [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md) for the f
 - [DESIGN-snapshot-nav-architecture.md](DESIGN-snapshot-nav-architecture.md) — notification positioning
 - [DESIGN-theme-detection.md](DESIGN-theme-detection.md) — overlay inline styles (layout aspect)
 - [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md) — engine detection for layout normalization
+- [DESIGN-help-system.md](DESIGN-help-system.md) — z-index 100003 for Layer 5 help modal

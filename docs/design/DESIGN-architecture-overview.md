@@ -133,6 +133,7 @@ UI Subsystem
   |     |-- Markdown Awareness
   |     |-- Dialog UX
   |     |-- Table of Contents
+  |     |-- Help System (Layer 5 modal, context-sensitive shortcut reference)
   |-- Nav Menu
   |     |-- Navigation Menu (data model, snapshots, batch editing)
   |     |-- Nav Renderer (exclusive DOM update authority)
@@ -195,6 +196,7 @@ Mermaid-related design documents are organized under `docs/design/mermaid/` whil
 - [DESIGN-markdown-awareness.md](ui/DESIGN-markdown-awareness.md) -- Preprocess/postprocess round-trip and DOM enhancement contract.
 - [DESIGN-popup-dialog-ux.md](ui/DESIGN-popup-dialog-ux.md) -- Unified dialog interaction model.
 - [DESIGN-table-of-contents.md](ui/DESIGN-table-of-contents.md) -- Right sidebar TOC panel.
+- [DESIGN-help-system.md](ui/DESIGN-help-system.md) -- Layer 5 help modal, context-sensitive shortcut reference.
 
 #### Nav Menu
 

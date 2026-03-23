@@ -8205,6 +8205,10 @@
   var _focusMdInputHandler = null;
   var _focusMdCursorHandler = null;
 
+  var _helpModalOpen = false;
+  var _helpSections = null;
+  var _helpRenderedCache = {};
+
   var _focusModeGuardActive = false;
   var _focusModePollerTimer = null;
   var _focusModeRebuildPromptOpen = false;
@@ -20805,6 +20809,119 @@
       '.live-wysiwyg-nav-asset-link[draggable=true]{cursor:grab;}' +
       '.live-wysiwyg-nav-asset-link[draggable=true]:active{cursor:grabbing;}' +
 
+      '.live-wysiwyg-help-overlay{' +
+        'position:fixed;inset:0;z-index:100003;' +
+        'display:flex;align-items:center;justify-content:center;' +
+      '}' +
+      '.live-wysiwyg-help-backdrop{' +
+        'position:absolute;inset:0;' +
+        'background:rgba(0,0,0,.45);' +
+      '}' +
+      '.live-wysiwyg-help-modal{' +
+        'position:relative;' +
+        'width:min(90vw,56rem);height:min(85vh,44rem);' +
+        'display:flex;flex-direction:column;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'color:var(--md-default-fg-color,#1a1a1a);' +
+        'border-radius:8px;' +
+        'box-shadow:0 8px 32px rgba(0,0,0,.28);' +
+        'overflow:hidden;' +
+      '}' +
+      '.live-wysiwyg-help-header{' +
+        'display:flex;align-items:center;justify-content:space-between;' +
+        'padding:.6rem 1rem;' +
+        'background:var(--md-primary-fg-color,#4051b5);' +
+        'color:var(--md-primary-bg-color,#fff);' +
+        'font-size:.9rem;font-weight:700;' +
+        'flex-shrink:0;' +
+      '}' +
+      '.live-wysiwyg-help-close{' +
+        'background:none;border:none;color:inherit;' +
+        'cursor:pointer;font-size:1.1rem;padding:2px 6px;' +
+        'opacity:.8;line-height:1;' +
+      '}' +
+      '.live-wysiwyg-help-close:hover{opacity:1;}' +
+      '.live-wysiwyg-help-tabs{' +
+        'display:flex;gap:0;' +
+        'border-bottom:1px solid var(--md-default-fg-color--lightest,#e0e0e0);' +
+        'overflow-x:auto;flex-shrink:0;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'scrollbar-width:none;' +
+      '}' +
+      '.live-wysiwyg-help-tabs::-webkit-scrollbar{display:none;}' +
+      '.live-wysiwyg-help-tab{' +
+        'padding:.5rem 1rem;' +
+        'background:none;border:none;' +
+        'border-bottom:2px solid transparent;' +
+        'color:var(--md-default-fg-color--light,#666);' +
+        'font-size:.78rem;cursor:pointer;white-space:nowrap;' +
+        'transition:color .15s,border-color .15s;' +
+      '}' +
+      '.live-wysiwyg-help-tab:hover{' +
+        'color:var(--md-default-fg-color,#1a1a1a);' +
+      '}' +
+      '.live-wysiwyg-help-tab.active{' +
+        'color:var(--md-primary-fg-color,#4051b5);' +
+        'border-bottom-color:var(--md-primary-fg-color,#4051b5);' +
+        'font-weight:600;' +
+      '}' +
+      '.live-wysiwyg-help-body{' +
+        'flex:1;overflow-y:auto;padding:1rem 1.5rem;' +
+        'font-size:.82rem;line-height:1.6;' +
+      '}' +
+      '.live-wysiwyg-help-body table{' +
+        'width:100%;border-collapse:collapse;margin:.8rem 0;font-size:.78rem;' +
+      '}' +
+      '.live-wysiwyg-help-body th,.live-wysiwyg-help-body td{' +
+        'padding:.4rem .6rem;text-align:left;' +
+        'border:1px solid var(--md-default-fg-color--lightest,#e0e0e0);' +
+      '}' +
+      '.live-wysiwyg-help-body th{' +
+        'background:var(--md-default-fg-color--lightest,#f5f5f5);' +
+        'font-weight:600;' +
+      '}' +
+      '.live-wysiwyg-help-body code{' +
+        'background:var(--md-code-bg-color,#f5f5f5);' +
+        'padding:.1em .3em;border-radius:3px;font-size:.85em;' +
+      '}' +
+      '.live-wysiwyg-help-body pre{' +
+        'background:var(--md-code-bg-color,#f5f5f5);' +
+        'padding:.6rem .8rem;border-radius:4px;overflow-x:auto;' +
+        'font-size:.8em;' +
+      '}' +
+      '.live-wysiwyg-help-body pre code{background:none;padding:0;}' +
+      '.live-wysiwyg-help-body h3{' +
+        'font-size:.88rem;margin:1.2rem 0 .4rem;' +
+        'color:var(--md-default-fg-color,#1a1a1a);' +
+      '}' +
+      '.live-wysiwyg-help-body h4{' +
+        'font-size:.82rem;margin:1rem 0 .3rem;' +
+        'color:var(--md-default-fg-color--light,#666);' +
+      '}' +
+      '.live-wysiwyg-help-body ul,.live-wysiwyg-help-body ol{' +
+        'padding-left:1.4em;margin:.4rem 0;' +
+      '}' +
+      '.live-wysiwyg-help-body li{margin:.2rem 0;}' +
+      '.live-wysiwyg-help-body strong{font-weight:600;}' +
+      '.live-wysiwyg-help-body hr{' +
+        'border:none;border-top:1px solid var(--md-default-fg-color--lightest,#e0e0e0);' +
+        'margin:1rem 0;' +
+      '}' +
+      '.live-wysiwyg-help-body .admonition,.live-wysiwyg-help-body details{' +
+        'border-left:4px solid var(--md-primary-fg-color,#4051b5);' +
+        'background:var(--md-admonition-bg-color,rgba(68,138,255,.05));' +
+        'padding:.6rem .8rem;margin:.6rem 0;border-radius:2px;' +
+      '}' +
+      '.live-wysiwyg-help-body .admonition-title,.live-wysiwyg-help-body summary{' +
+        'font-weight:600;margin-bottom:.3rem;' +
+      '}' +
+      '.live-wysiwyg-focus-help-btn{' +
+        'background:none;border:none;color:inherit;' +
+        'cursor:pointer;font-size:.95rem;padding:0 6px;' +
+        'opacity:.7;display:flex;align-items:center;' +
+      '}' +
+      '.live-wysiwyg-focus-help-btn:hover{opacity:1;}' +
+
       '';
 
     if (_compat.engine === 'gecko') {
@@ -21044,6 +21161,192 @@
     if (sc2) sc2.scrollTop = saved.scrollTop;
   }
 
+  // ======================================================================
+  // Help System (Layer 5)
+  // ======================================================================
+
+  function _parseHelpSections() {
+    if (_helpSections) return _helpSections;
+    if (typeof liveWysiwygHelpContent !== 'string' || !liveWysiwygHelpContent) {
+      _helpSections = [];
+      return _helpSections;
+    }
+    var raw = liveWysiwygHelpContent;
+    var sections = [];
+    var h2Pattern = /^## (.+)$/gm;
+    var contextPattern = /<!--\s*context:\s*(content|nav|all)\s*-->/;
+    var match;
+    var lastTitle = null;
+    var lastStart = -1;
+    while ((match = h2Pattern.exec(raw)) !== null) {
+      if (lastTitle !== null) {
+        var chunk = raw.substring(lastStart, match.index).trim();
+        var ctxMatch = chunk.match(contextPattern);
+        var ctx = ctxMatch ? ctxMatch[1] : 'all';
+        var body = chunk.replace(contextPattern, '').trim();
+        sections.push({ title: lastTitle, context: ctx, markdown: body });
+      }
+      lastTitle = match[1].trim();
+      lastStart = match.index + match[0].length;
+    }
+    if (lastTitle !== null) {
+      var lastChunk = raw.substring(lastStart).trim();
+      var lastCtxMatch = lastChunk.match(contextPattern);
+      var lastCtx = lastCtxMatch ? lastCtxMatch[1] : 'all';
+      var lastBody = lastChunk.replace(contextPattern, '').trim();
+      sections.push({ title: lastTitle, context: lastCtx, markdown: lastBody });
+    }
+    _helpSections = sections;
+    return sections;
+  }
+
+  function _renderHelpSection(idx) {
+    if (_helpRenderedCache[idx]) return _helpRenderedCache[idx];
+    var sections = _parseHelpSections();
+    if (!sections[idx]) return '';
+    var html = '';
+    try {
+      html = marked.parse(sections[idx].markdown, { gfm: true });
+    } catch (ex) {
+      html = '<p>Error rendering help content.</p>';
+    }
+    _helpRenderedCache[idx] = html;
+    return html;
+  }
+
+  function _detectHelpContext() {
+    if (_navEditMode) return 'nav';
+    var el = document.activeElement;
+    if (el) {
+      if (el.classList && el.classList.contains('md-editable-area')) return 'content';
+      if (el.closest && el.closest('.md-editable-area')) return 'content';
+      if (el.tagName === 'TEXTAREA') return 'content';
+    }
+    return 'all';
+  }
+
+  function _showHelp(context) {
+    if (_helpModalOpen) { _dismissHelp(); return; }
+    var sections = _parseHelpSections();
+    if (!sections.length) return;
+
+    context = context || _detectHelpContext();
+
+    var visibleSections = [];
+    for (var i = 0; i < sections.length; i++) {
+      if (context === 'all' || sections[i].context === 'all' || sections[i].context === context) {
+        visibleSections.push({ idx: i, section: sections[i] });
+      }
+    }
+    if (!visibleSections.length) {
+      for (var j = 0; j < sections.length; j++) {
+        visibleSections.push({ idx: j, section: sections[j] });
+      }
+    }
+
+    var initialTab = 0;
+    for (var k = 0; k < visibleSections.length; k++) {
+      if (visibleSections[k].section.context === context) {
+        initialTab = k;
+        break;
+      }
+    }
+
+    var overlay = document.createElement('div');
+    overlay.className = 'live-wysiwyg-help-overlay';
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'live-wysiwyg-help-backdrop';
+    backdrop.addEventListener('click', function () { _dismissHelp(); });
+    overlay.appendChild(backdrop);
+
+    var modal = document.createElement('div');
+    modal.className = 'live-wysiwyg-help-modal';
+
+    var header = document.createElement('div');
+    header.className = 'live-wysiwyg-help-header';
+    var headerTitle = document.createElement('span');
+    headerTitle.textContent = 'Help Reference';
+    header.appendChild(headerTitle);
+    var closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'live-wysiwyg-help-close';
+    closeBtn.innerHTML = '&#x2715;';
+    closeBtn.addEventListener('click', function () { _dismissHelp(); });
+    header.appendChild(closeBtn);
+    modal.appendChild(header);
+
+    var tabBar = document.createElement('div');
+    tabBar.className = 'live-wysiwyg-help-tabs';
+
+    var body = document.createElement('div');
+    body.className = 'live-wysiwyg-help-body';
+
+    var activeTabIdx = initialTab;
+
+    function activateTab(tabIdx) {
+      activeTabIdx = tabIdx;
+      var tabs = tabBar.querySelectorAll('.live-wysiwyg-help-tab');
+      for (var t = 0; t < tabs.length; t++) {
+        if (t === tabIdx) tabs[t].classList.add('active');
+        else tabs[t].classList.remove('active');
+      }
+      var vs = visibleSections[tabIdx];
+      if (vs) {
+        body.innerHTML = _renderHelpSection(vs.idx);
+        body.scrollTop = 0;
+      }
+    }
+
+    for (var vi = 0; vi < visibleSections.length; vi++) {
+      var tab = document.createElement('button');
+      tab.type = 'button';
+      tab.className = 'live-wysiwyg-help-tab';
+      tab.textContent = visibleSections[vi].section.title;
+      tab.setAttribute('data-tab-idx', vi);
+      tab.addEventListener('click', (function (idx) {
+        return function () { activateTab(idx); };
+      })(vi));
+      tabBar.appendChild(tab);
+    }
+
+    modal.appendChild(tabBar);
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+
+    document.body.appendChild(overlay);
+    _helpModalOpen = true;
+
+    activateTab(initialTab);
+
+    _attachDialogKeyboard(modal, {
+      category: 'informational',
+      onDismiss: function () { _dismissHelp(); },
+      onConfirm: function () { _dismissHelp(); },
+      autoFocus: closeBtn
+    });
+
+    modal.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        var dir = e.key === 'ArrowLeft' ? -1 : 1;
+        var next = activeTabIdx + dir;
+        if (next >= 0 && next < visibleSections.length) {
+          activateTab(next);
+          var tabs = tabBar.querySelectorAll('.live-wysiwyg-help-tab');
+          if (tabs[next]) tabs[next].focus();
+        }
+      }
+    });
+  }
+
+  function _dismissHelp() {
+    if (!_helpModalOpen) return;
+    var overlay = document.querySelector('.live-wysiwyg-help-overlay');
+    if (overlay) overlay.parentNode.removeChild(overlay);
+    _helpModalOpen = false;
+  }
+
   function enterFocusMode() {
     if (isFocusModeActive || !wysiwygEditor) return;
 
@@ -21170,6 +21473,16 @@
       });
       header.appendChild(paletteBtn);
     }
+
+    var helpBtn = document.createElement('button');
+    helpBtn.type = 'button';
+    helpBtn.className = 'live-wysiwyg-focus-help-btn';
+    helpBtn.title = 'Help (Ctrl+?)';
+    helpBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+    helpBtn.addEventListener('click', function () {
+      _showHelp();
+    });
+    header.appendChild(helpBtn);
 
     var closeBtn = document.createElement('button');
     closeBtn.type = 'button';
@@ -22740,6 +23053,14 @@
         _handleToggleMode(e);
         return;
       }
+
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {
+        e.preventDefault(); e.stopImmediatePropagation();
+        _showHelp();
+        return;
+      }
+
+      if (_helpModalOpen) return;
 
       if (_navEditMode && !dialogOpen) {
         if (e.key.indexOf('Arrow') === 0 && _navKeyboardActiveItem) {

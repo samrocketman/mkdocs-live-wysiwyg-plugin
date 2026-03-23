@@ -203,6 +203,7 @@ Triggered on the Insert click or URL blur when alt is empty and a URL has been t
 | Dead Link Panel | `_showDeadLinkPanel` | close btn | ESC to dismiss |
 | Asset Preview | `_showAssetPreviewPopup` | Expand btn | Small preview with expand; ESC + Enter |
 | Asset Lightbox | `_showAssetLightbox` | Close btn | Modal image/text viewer; ESC to dismiss, click-outside backdrop |
+| Help Modal | `_showHelp` | Close btn | Layer 5 tabbed help reference; ESC + Enter + backdrop click; arrow keys navigate tabs. See [DESIGN-help-system.md](DESIGN-help-system.md) |
 
 ### Excluded (No Changes)
 

@@ -128,6 +128,7 @@ Written once, enforced everywhere:
 | Dead Link Panel | `_showDeadLinkPanel` | None (ESC only) |
 | Page Submenu | `_createPageSubmenu` | Click focused button |
 | Language Dropdown | `createLangDropdown` | Select first language |
+| Help Modal | `_showHelp` | Dismiss (same as ESC) |
 
 ### Extensibility
 
@@ -205,6 +206,7 @@ function _globalKeydownRouter(e) {
 | Ctrl+S | `_navEditMode` | `_handleNavSave` | Confirms nav save |
 | Ctrl+S | (default) | `_handleDocSave` | Saves doc; falls through to nav save if doc clean |
 | Ctrl+. | (always) | `_handleToggleMode` | Toggles WYSIWYG/Markdown |
+| Ctrl+? | (always) | `_showHelp` | Context-sensitive help modal (Layer 5). See [DESIGN-help-system.md](DESIGN-help-system.md) |
 | Arrow keys | `_navEditMode` + `_navKeyboardActiveItem` | `_handleNavArrowKeys` | Nav item movement |
 | Enter | `_navEditMode` + `_navKeyboardActiveItem` + no content focus | `_handleNavSave` | Confirms nav save |
 | Ctrl+Z/Y | Content focus (any mode) | `_handleContentUndoRedo` | DAG undo/redo — always wins when content has focus |
@@ -221,6 +223,7 @@ Instead of dynamic `addEventListener`/`removeEventListener`, features set state 
 | `_admonitionDropdownOpen` | `showDropdown` | `hideDropdown` |
 | `_reviewChangesPopupOpen` | `_showReviewChangesPopup` | Popup dismiss |
 | `_focusModeRebuildPromptOpen` | Rebuild prompt show | Rebuild prompt resolve |
+| `_helpModalOpen` | `_showHelp` | `_dismissHelp` |
 
 ### Extensibility
 

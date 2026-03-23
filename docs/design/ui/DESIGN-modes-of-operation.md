@@ -87,6 +87,7 @@ Browser fullscreen and contenteditable behavior vary across browsers. See [DESIG
 Modes form a layered stack. Only one mode is active at a time. When a higher-layer mode activates, all lower layers are suppressed. When the higher mode exits, the lower mode resumes.
 
 ```
+Layer 5:  Help Modal        (informational overlay, z-index 100003)
 Layer 3:  Mermaid Mode      (full-screen diagram editor, overlays Focus, z-index 99995)
 Layer 2:  Focus Mode        (fullscreen overlay, own scroll, own shortcuts)
 Layer 1:  Unfocused Mode    (inline editor, controls bar, page scroll)
@@ -102,6 +103,7 @@ Layer 4+: Theme Mode (override Focus or peer with Focus)
 | 1 | Unfocused | Edit button / period shortcut | Cancel button | — |
 | 2 | Focus | Focus Mode toolbar / fullscreen | X button / Escape | 99990 |
 | 3 | Mermaid | Expand button on mermaid code block (from Focus Mode only) | Close button, ESC, Ctrl+S | 99995 |
+| 5 | Help | Ctrl+? or help icon (from any mode) | ESC, Enter, backdrop click, Ctrl+? | 100003 |
 
 ### Disk I/O Authority by Layer
 

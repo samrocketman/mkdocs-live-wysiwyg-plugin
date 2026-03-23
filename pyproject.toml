@@ -60,6 +60,7 @@ packages = ["mkdocs_live_wysiwyg_plugin"]
 "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.mermaid-live-editor" = "mkdocs_live_wysiwyg_plugin/vendor/LICENSE.mermaid-live-editor"
 "mkdocs_live_wysiwyg_plugin/vendor/NOTICES.mermaid-live-editor" = "mkdocs_live_wysiwyg_plugin/vendor/NOTICES.mermaid-live-editor"
 "mkdocs_live_wysiwyg_plugin/wysiwyg.svg" = "mkdocs_live_wysiwyg_plugin/wysiwyg.svg"
+"mkdocs_live_wysiwyg_plugin/help-reference.md" = "mkdocs_live_wysiwyg_plugin/help-reference.md"
 
 [[tool.uv.index]]
 name = "testpypi"

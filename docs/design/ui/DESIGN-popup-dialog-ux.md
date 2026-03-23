@@ -190,7 +190,7 @@ Triggered on the Insert click or URL blur when alt is empty and a URL has been t
 |--------|----------|------------|-----------|
 | Code Block Settings | `createSettingsDropdown` | autoIndentBtn | autoIndentBtn -> spacesBtn -> tabsBtn -> size buttons |
 | Admonition Settings | `createAdmonitionSettingsDropdown` | typeSelect | typeSelect -> placement -> collapsible -> collapsed -> detailsTag -> hideTitle |
-| Focus Mode Settings | `_createSettingsDropdown` | first checkbox | autolaunchCb -> autofocusCb -> focusRemainCb |
+| Focus Mode Settings | `_createSettingsDropdown` | first checkbox | autolaunchCb (single checkbox) |
 | Page Submenu | `_createPageSubmenu` | first item | sequential through items |
 
 ### Informational Popups

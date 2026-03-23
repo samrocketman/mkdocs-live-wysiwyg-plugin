@@ -50,24 +50,15 @@ Both animations start immediately on button click — before `switchToMode()` ru
 
 Initial focus mode entry uses instant `display:none` (no animation) when entering in Markdown mode.
 
-## Save and Discard
+## Content Auto-Save
 
-### Save
-
-1. Calls `_doFocusSave()` which flushes pending content and triggers the upstream save
-2. If "Remain in Focus Mode on Save" is enabled (`live_wysiwyg_focus_remain`), refreshes content in place via WebSocket without a full page reload
-
-### Discard
-
-Resets content to the last saved state. Visibility of both Save and Discard is controlled by `_isDocDirty()` — they are shown or hidden together based on whether the document has unsaved changes.
+Content is auto-saved to disk whenever the undo/redo DAG captures a new history node (500ms debounce). There are no Save or Discard buttons in the drawer. See [DESIGN-uninterrupted-content-save.md](DESIGN-uninterrupted-content-save.md).
 
 ## Settings Dropdown
 
-The gear button (`.live-wysiwyg-focus-settings-btn`) opens a dropdown with persistent checkboxes:
+The gear button (`.live-wysiwyg-focus-settings-btn`) opens a dropdown with a single persistent checkbox:
 
-- **Auto-launch editor on page load** (`live_wysiwyg_autolaunch`)
-- **Focus Mode by default** (`live_wysiwyg_autofocus`)
-- **Remain in Focus Mode on Save** (`live_wysiwyg_focus_remain`, default enabled)
+- **Auto-launch editor** (`live_wysiwyg_autolaunch`) — When enabled, auto-clicks the Edit button on page load, entering focus mode automatically. When disabled, the page loads in readonly mode.
 
 ## Page Management Button
 

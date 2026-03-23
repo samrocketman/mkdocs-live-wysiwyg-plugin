@@ -8311,9 +8311,7 @@
   var _LS_KEY = 'liveWysiwygSettings';
   var _settingsCache = null;
   var _settingDefaults = {
-    'live_wysiwyg_autolaunch': '1',
-    'live_wysiwyg_autofocus': '1',
-    'live_wysiwyg_focus_remain': '1'
+    'live_wysiwyg_autolaunch': '1'
   };
 
   function _getSettings() {
@@ -19246,9 +19244,7 @@
       return cb;
     }
 
-    addCheckbox('Auto-launch editor on page load', 'live_wysiwyg_autolaunch');
-    addCheckbox('Focus Mode by default', 'live_wysiwyg_autofocus');
-    addCheckbox('Remain in Focus Mode on Save', 'live_wysiwyg_focus_remain');
+    addCheckbox('Auto-launch editor', 'live_wysiwyg_autolaunch');
 
     var rect = gearBtn.getBoundingClientRect();
     dropdown.style.position = 'fixed';
@@ -21747,6 +21743,7 @@
     if (_mermaidModeActive) exitMermaidMode();
 
     _flushHistoryCapture();
+    _deleteSetting('live_wysiwyg_focus_nav');
 
     _removeFocusModeGuard();
 
@@ -28640,7 +28637,7 @@
 
       if (!isFocusModeActive && window.__liveWysiwygEarlyOverlay) {
         enterFocusMode();
-      } else if (!isFocusModeActive && _getSetting('live_wysiwyg_autofocus') === '1') {
+      } else if (!isFocusModeActive) {
         enterFocusMode();
       }
 

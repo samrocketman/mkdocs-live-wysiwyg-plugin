@@ -96,24 +96,6 @@ When saving content for an AJAX-loaded page, the upstream live-edit save button 
 4. `_resetPristineContent(content)` updates the dirty tracking baseline
 5. If `_ajaxCurrentSrcPath` is not set (original page): clicks the upstream save button as before
 
-## "Remain in Focus Mode on Save"
-
-Cookie: `live_wysiwyg_focus_remain`. When enabled, Save triggers:
-
-**After AJAX navigation** (no page reload needed):
-1. `_doFocusSave()` saves via WebSocket
-2. Re-fetch content: `_wsGetContents(currentSrcPath)`
-3. `_loadContent()` refreshes the editor with server-side content
-4. TOC is rebuilt
-5. Transition overlay fades out
-
-**Original page** (full reload path):
-1. Capture cursor to `live_wysiwyg_nav_edit_cursor` cookie
-2. Trigger upstream save
-3. Set `live_wysiwyg_focus_nav` cookie
-4. Navigate to current page (controlled reload)
-5. Restore cursor from cookie after reconnection
-
 ## Overlay System
 
 All overlays use dark semi-transparent backgrounds to avoid white flashing in both light and dark themes:

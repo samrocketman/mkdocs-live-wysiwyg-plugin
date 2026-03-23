@@ -7158,14 +7158,18 @@
         while (p) { if (p.nodeName === 'PRE') { inPre = true; break; } p = p.parentNode; }
         if (!inPre) {
           var inner = (node.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
-          if (inner.indexOf('``') >= 0) {
-            md += '``` ';
+          var needed = 1;
+          var brun = 0;
+          for (var ci = 0; ci < inner.length; ci++) {
+            if (inner.charAt(ci) === '`') { brun++; if (brun >= needed) needed = brun + 1; }
+            else { brun = 0; }
+          }
+          if (needed >= 2) {
+            var ticks = '';
+            for (var ti = 0; ti < needed; ti++) ticks += '`';
+            md += ticks + ' ';
             walkChildren(node);
-            md += ' ```';
-          } else if (inner.indexOf('`') >= 0) {
-            md += '`` ';
-            walkChildren(node);
-            md += ' ``';
+            md += ' ' + ticks;
           } else {
             md += '`';
             walkChildren(node);
@@ -15739,14 +15743,15 @@
     if (!content) return;
 
     var savedContent = content;
+    _bgSavePendingRebuild = true;
     _getOrCreateBulkWs().then(function () {
       return _wsSetContents(path, savedContent);
     }).then(function () {
       if (wysiwygEditor && wysiwygEditor._resetPristineContent) {
         wysiwygEditor._resetPristineContent(savedContent);
       }
-      _bgSavePendingRebuild = true;
     }).catch(function (err) {
+      _bgSavePendingRebuild = false;
       console.error('[bg-save] failed:', err && err.message || err);
       var overlay = document.querySelector('.live-wysiwyg-focus-overlay');
       if (overlay) {
@@ -24122,12 +24127,11 @@
       if (!ea) return false;
       var text = anchorNode.textContent;
       var inner, literal;
-      if (backtickCount === 3) {
-        inner = text.substring(openingIdx + 4, closingIdx - 3);
-        literal = '``` ' + inner + ' ```';
-      } else if (backtickCount === 2) {
-        inner = text.substring(openingIdx + 3, closingIdx - 2);
-        literal = '`` ' + inner + ' ``';
+      if (backtickCount >= 2) {
+        var ticks = '';
+        for (var t = 0; t < backtickCount; t++) ticks += '`';
+        inner = text.substring(openingIdx + backtickCount + 1, closingIdx - backtickCount);
+        literal = ticks + ' ' + inner + ' ' + ticks;
       } else {
         inner = text.substring(openingIdx + 1, closingIdx);
         literal = '`' + inner + '`';
@@ -24265,22 +24269,11 @@
           var text = anchorNode.textContent;
 
           if (ch === ' ') {
-            // Space typed: check for ``` or `` immediately before the space to set pending
-            // Triple check first (``` + space)
-            if (anchorOffset >= 4 &&
-                text.charAt(anchorOffset - 2) === '`' &&
-                text.charAt(anchorOffset - 3) === '`' &&
-                text.charAt(anchorOffset - 4) === '`' &&
-                (anchorOffset - 5 < 0 || text.charAt(anchorOffset - 5) !== '`')) {
-              pendingMulti = { node: anchorNode, offset: anchorOffset - 4, type: 'triple' };
-              return;
-            }
-            // Double check (`` + space)
-            if (anchorOffset >= 3 &&
-                text.charAt(anchorOffset - 2) === '`' &&
-                text.charAt(anchorOffset - 3) === '`' &&
-                (anchorOffset - 4 < 0 || text.charAt(anchorOffset - 4) !== '`')) {
-              pendingMulti = { node: anchorNode, offset: anchorOffset - 3, type: 'double' };
+            var runLen = 0;
+            var pos = anchorOffset - 2;
+            while (pos >= 0 && text.charAt(pos) === '`') { runLen++; pos--; }
+            if (runLen >= 2) {
+              pendingMulti = { node: anchorNode, offset: pos + 1, count: runLen };
               return;
             }
             return;
@@ -24288,29 +24281,18 @@
 
           // ch === '`': check for pending multi closing, then fall through to block code
 
-          // Check pending triple closing: space + ``` just typed
-          if (pendingMulti && pendingMulti.type === 'triple' && pendingMulti.node === anchorNode &&
-              anchorOffset >= 4 &&
-              text.substring(anchorOffset - 4, anchorOffset) === ' ```' &&
-              (anchorOffset - 5 < 0 || text.charAt(anchorOffset - 5) !== '`')) {
-            var tripleOpenIdx = pendingMulti.offset;
-            clearMultiPending();
-            if (_doInlineCodeConvert(anchorNode, tripleOpenIdx, anchorOffset - 1, sel, 3)) {
-              e.stopImmediatePropagation();
-              return;
-            }
-          }
-
-          // Check pending double closing: space + `` just typed
-          if (pendingMulti && pendingMulti.type === 'double' && pendingMulti.node === anchorNode &&
-              anchorOffset >= 3 &&
-              text.substring(anchorOffset - 3, anchorOffset) === ' ``' &&
-              (anchorOffset - 4 < 0 || text.charAt(anchorOffset - 4) !== '`')) {
-            var doubleOpenIdx = pendingMulti.offset;
-            clearMultiPending();
-            if (_doInlineCodeConvert(anchorNode, doubleOpenIdx, anchorOffset - 1, sel, 2)) {
-              e.stopImmediatePropagation();
-              return;
+          if (pendingMulti && pendingMulti.node === anchorNode) {
+            var expectedCount = pendingMulti.count;
+            var closeRun = 0;
+            var cp = anchorOffset - 1;
+            while (cp >= 0 && text.charAt(cp) === '`') { closeRun++; cp--; }
+            if (closeRun === expectedCount && cp >= 0 && text.charAt(cp) === ' ') {
+              var openIdx = pendingMulti.offset;
+              clearMultiPending();
+              if (_doInlineCodeConvert(anchorNode, openIdx, anchorOffset - 1, sel, expectedCount)) {
+                e.stopImmediatePropagation();
+                return;
+              }
             }
           }
 

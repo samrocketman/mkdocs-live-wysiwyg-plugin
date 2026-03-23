@@ -106,6 +106,7 @@ Block-level conversions trigger when you type the pattern at the start of an emp
 | `` `text` `` | `Inline code` (single backtick) |
 | ```` `` text `` ```` | `Inline code` (double backtick — space after ` `` ` opens, space + ` `` ` closes; preserves inner single backticks) |
 | ````` ``` text ``` ````` | `Inline code` (triple backtick — space after ` ``` ` opens, space + ` ``` ` closes; preserves inner single and double backticks) |
+| `N backticks + space ... space + N backticks` | `Inline code` (4+ backticks — same pattern as double/triple; use more backticks to preserve longer runs inside) |
 | `[text](url)` | [Link](url) |
 
 Inline conversions trigger when you type the closing delimiter. The wrapped text must not be empty and must not start or end with a space.
@@ -177,6 +178,7 @@ Available types: note, danger, warning, tip, hint, important, caution, error, at
 - Wrapping text with a **pair of backticks** (`` `text` ``) converts to inline code.
 - **Double backtick** inline code: type ` `` ` then **Space** to open, type content, then **Space** + ` `` ` to close. Preserves single backticks inside the content.
 - **Triple backtick** inline code: type ` ``` ` then **Backspace** (reverts the code block) then **Space** to open, type content, then **Space** + ` ``` ` to close. Preserves single and double backticks inside the content. Mid-line triple backticks followed by Space also open inline mode directly.
+- **4+ backtick** inline code: same space-delimited pattern works for any number of backticks (4, 5, 6, ...). Use more backticks when the content contains longer consecutive backtick runs.
 - The **Inline Code** toolbar button toggles inline code off if the cursor is on existing inline code.
 
 ### Emoji

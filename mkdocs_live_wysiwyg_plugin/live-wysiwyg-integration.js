@@ -9079,16 +9079,8 @@
           return;
         }
         _focusModeBuildEpoch = serverEpoch;
-        if (_bgSavePendingRebuild) {
-          _bgSavePendingRebuild = false;
-          _focusModePollerTimer = setTimeout(poll, 2000);
-          return;
-        }
-        if (_userActionInProgress || _reloadGuardActive || _focusModeRebuildPromptOpen || _isMigrationChainActive()) {
-          _focusModePollerTimer = setTimeout(poll, 2000);
-          return;
-        }
-        _onExternalRebuild();
+        if (_bgSavePendingRebuild) _bgSavePendingRebuild = false;
+        _focusModePollerTimer = setTimeout(poll, 2000);
       }).catch(function () {
         if (!_focusModeGuardActive) return;
         consecutiveFailures++;

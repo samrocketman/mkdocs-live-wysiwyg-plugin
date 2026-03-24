@@ -16,6 +16,7 @@ Cardinal rules are cross-cutting constraints that apply across multiple subsyste
 | 6 | **Exclusive Disk I/O in Focus Mode** | `DESIGN-declarative-save-planner.md` Invariant 10 | In Focus Mode (Layer 2+), all disk-writing operations flow exclusively through the Declarative Save Planner batch executor. Does not apply to Unfocused Mode (Layer 1). |
 | 7 | **In-Place Extension Replacement** | `DESIGN-changing-mkdocs-yml.md` | When upgrading a `markdown_extensions` list item from bare string to dict form (e.g., `pymdownx.superfences` to `pymdownx.superfences: {custom_fences: [...]}`), replace the item in-place at its current index. Never add a new entry alongside the old one. |
 | 8 | **In-Place Plugin Replacement** | `DESIGN-changing-mkdocs-yml.md` | When upgrading a `plugins` list item from bare string to dict form (e.g., `mkdocs-nav-weight` to `mkdocs-nav-weight: {default_page_weight: 1000}`), replace the item in-place at its current index. Never add a new entry alongside the old one. |
+| 9 | **Layer-Level Mutual Exclusion for Editor Modes** | `DESIGN-modes-of-operation.md` | Editor modes at the same layer are mutually exclusive. They share a single z-index value and entry into one must be blocked while another at the same layer is active. This applies only to editor modes, not to non-modal UI elements (dropdowns, toasts, popups, progress bars). |
 
 ## High-Level Pipeline
 
@@ -115,10 +116,11 @@ flowchart LR
 ```
 UI Subsystem
   |-- Modes of Operation
-  |     |-- Readonly Mode (Layer 1)
+  |     |-- Readonly Mode (Layer 0)
   |     |-- Unfocused Mode (Layer 1)
   |     |-- Focus Mode (Layer 2)
   |     |-- Mermaid Mode (Layer 3)
+  |     |-- Help Mode (Layer 5)
   |-- Mermaid Subsystem
   |     |-- Mermaid Mode (UI, Layer 3 in mode hierarchy)
   |     |-- Vendor Subsystem (mermaid.js + mermaid-live-editor)
@@ -128,6 +130,7 @@ UI Subsystem
   |     |-- Editor Core
   |     |-- Cursor & Selection
   |     |-- Content History
+  |     |     |-- History Mode (UI, Layer 4 in mode hierarchy)
   |     |-- Keyboard
   |     |-- Progressive Select All
   |     |-- Markdown Awareness
@@ -190,6 +193,7 @@ Mermaid-related design documents are organized under `docs/design/mermaid/` whil
 - [DESIGN-image-insertion-resize.md](ui/DESIGN-image-insertion-resize.md) -- Image insertion, resize, and settings.
 - [DESIGN-readonly-selection-heuristics.md](ui/DESIGN-readonly-selection-heuristics.md) -- Read-only to edit mode text selection.
 - [DESIGN-unified-content-undo.md](ui/DESIGN-unified-content-undo.md) -- DAG-based content undo/redo.
+- [DESIGN-history-mode.md](ui/DESIGN-history-mode.md) -- History Mode (Layer 4) — visual DAG history UI with branch picker, overlay, and preview.
 - [DESIGN-uninterrupted-content-save.md](ui/DESIGN-uninterrupted-content-save.md) -- Auto-save and persistent content history.
 - [DESIGN-centralized-keyboard.md](ui/DESIGN-centralized-keyboard.md) -- Three-tier keyboard handling.
 - [DESIGN-progressive-select-all.md](ui/DESIGN-progressive-select-all.md) -- Progressive Ctrl+A selection and cut/copy auto-expansion.

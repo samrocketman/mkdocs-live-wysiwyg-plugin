@@ -16,7 +16,7 @@ All code lives in `live-wysiwyg-integration.js`.
 - **Ordered list numbering**: `1.`, `2.`, `3.` become `1.`, `1.`, `1.`
 - **Table separators**: column alignment markers are normalized
 - **Horizontal rule style**: `***`, `___` become `---`
-- **Inline code backtick count**: double backticks become single backticks
+- **Inline code backtick count**: preserved via run-length fence calculation (longest backtick run + 1)
 - **Reference links**: `[text][ref]` with `[ref]: url` become inline `[text](url)`
 - **Raw HTML blocks**: stripped or mangled by the markdown parser
 
@@ -97,11 +97,19 @@ Any function that loads markdown content into the WYSIWYG editable area must:
 
 `_doubleRenderCheck(markdown)` performs markdown → HTML → markdown → HTML and compares the two HTML outputs after whitespace normalization. If they differ, the markdown content would be corrupted by a round-trip.
 
-Used by the Content History subsystem (`_createHistoryNode`) to guard against storing diffs that would produce corrupted content on undo/redo restore. If the check fails, the capture is skipped and a console warning is logged.
+Previously used by the Content History subsystem to gate history capture (skipping when the check failed). This is **no longer used for history capture gating** — the Content History subsystem now uses always-on HTML snapshots to eliminate round-trip drift entirely (see [DESIGN-unified-content-undo.md](DESIGN-unified-content-undo.md) Rule 6). The double render check remains available for initial content-load validation and diagnostic purposes.
+
+## Markdown Round-Trip Fidelity Check
+
+`_markdownRoundTripFaithful(markdown)` performs markdown → HTML → markdown and compares the normalized results. Unlike the double render check (which compares two HTML outputs), this compares two markdown outputs to detect when markdown content cannot survive the HTML round-trip.
+
+The function strips YAML frontmatter before testing (frontmatter is not markdown and causes false negatives). Returns `true` for empty or whitespace-only bodies.
+
+Used for diagnostic logging in the Content History subsystem but does **not** gate capture or snapshot creation. All WYSIWYG history nodes unconditionally capture HTML snapshots regardless of this check's result.
 
 ## Relationship to Other Subsystems
 
-- **Content History** ([DESIGN-unified-content-undo.md](DESIGN-unified-content-undo.md)): The DAG captures markdown via `getValue()` (which runs postprocessors) and restores via `_historyApplyContent` (which must run preprocessors + enhancers per the content-loading contract). The double render check is a corruption guard before capture.
+- **Content History** ([DESIGN-unified-content-undo.md](DESIGN-unified-content-undo.md)): The DAG captures markdown via `getValue()` (which runs postprocessors) and restores via `_historyApplyContent` (which must run preprocessors + enhancers per the content-loading contract). Every WYSIWYG-mode node also stores an HTML snapshot (`editableArea.innerHTML`) unconditionally, which is used as the primary restore mechanism in WYSIWYG mode — bypassing `_markdownToHtml` entirely to eliminate round-trip drift. DOM enhancers still run after snapshot restore for re-initialization of interactive elements (mermaid preview re-rendering, event handler re-attachment). The undo system is aware of markdown construct boundaries when capturing intermediate typing states: pre-flush before block conversions captures literal markdown syntax (e.g. `` ```mermaid ``) as HTML snapshot nodes, preserving the exact DOM even though the markdown parser would reinterpret the syntax on round-trip. This ensures undo can walk through every intermediate state including partially-typed markdown constructs that straddle code block fence boundaries.
 
 - **Progressive Select All** ([DESIGN-progressive-select-all.md](DESIGN-progressive-select-all.md)): `_isSelectableTarget` must recognize all enhanced DOM elements (`.md-code-block`, `.admonition`, etc.) for the selection hierarchy to work correctly. If enhancement doesn't run after content restoration, the wrapper elements don't exist and selection scoping degrades to raw `<pre>` / `<div>` elements.
 

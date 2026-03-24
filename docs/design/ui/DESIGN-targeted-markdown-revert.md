@@ -70,12 +70,14 @@ Applies to: headings, blockquotes, admonitions, details/collapsible, single-item
 
 ### Inline elements
 
-When the cursor is at a revert position (start, end, or immediately after a zero-width space) of an inline element and the user presses Backspace:
+When the cursor is at a revert position of an inline element and the user presses Backspace:
 
 - **`data-md-literal` present**: Replace the element with a text node containing the stored literal (e.g., `` `text` ``). Cursor placed at end.
 - **`data-md-literal` absent**: Replace the element with a text node containing just the plain text content (no markdown markers). This is the **unwrap** path.
 
-Applies to: `<code>`, `<strong>`/`<b>`, `<em>`, `<del>`, `<a>`.
+Applies to: `<strong>`/`<b>`, `<em>`, `<del>`, `<a>` — revert triggers at start, end, or immediately after the element.
+
+**`<code>` exception**: Inline code elements (`<code>` not inside `<pre>`) only revert when the cursor is **immediately after** the element (in the trailing zero-width space text node). When the cursor is **inside** a `<code>` element at the start or end, Backspace behaves normally (deletes characters). This prevents accidental revert while editing code content. The "immediately after" detection works identically for all backtick counts (single, double, triple, N-backtick inline code).
 
 ### Code block (separate handler)
 

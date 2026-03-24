@@ -14,7 +14,10 @@ All keyboard shortcuts available in the WYSIWYG editor, organized by mode.
 | Cmd+I / Ctrl+I | Italic | Toggle italic on selection |
 | Cmd+A / Ctrl+A | Select all | Progressive: block, then full document |
 | Enter | New paragraph / bubble exit | See enter-bubble-navigation rules |
-| Shift+Enter | Line break | Bypasses bubble behavior |
+| Enter (in inline element) | Split / escape inline element | Left edge: move element down. Right edge: new line below. Middle: split element. |
+| Shift+Enter | Line break | Bypasses bubble and inline escape behavior |
+| ArrowRight (end of inline) | Exit inline element rightward | Cursor lands after the inline element in the same block |
+| ArrowLeft (start of inline) | Exit inline element leftward | Cursor lands before the inline element in the same block |
 | Backspace | Delete / revert markdown element | See targeted-markdown-revert rules |
 | Tab | Indent list / next table cell / insert 4 spaces | Context-dependent |
 | Shift+Tab | Outdent list / previous table cell | Context-dependent |

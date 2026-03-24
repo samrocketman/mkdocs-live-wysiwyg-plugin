@@ -23,6 +23,10 @@ The Markdown Awareness subsystem preserves markdown fidelity through the lossy H
 
 7. **New preprocess/postprocess pairs must be added to all content-loading paths.** If a new pair is introduced, it must be added to `setValue`, `switchToMode`, `_historyApplyContent`, and `getValue`.
 
+8. **Undo/redo snapshot restore must run DOM enhancers.** When `_historyApplyContent` restores an HTML snapshot via `editableArea.innerHTML`, all 6 DOM enhancers must still run. Enhancers are idempotent and handle re-initialization of interactive elements lost during `innerHTML` assignment — notably mermaid diagram previews (empty in snapshot, re-rendered from hidden `<pre>` source) and button event handlers.
+
+9. **Undo history is aware of markdown construct boundaries.** The Content History pre-flush captures intermediate typing states (literal `` ```mermaid `` text, `## ` prefixes, `> ` prefixes) as HTML snapshot nodes before block conversions. This preserves the exact DOM of partially-typed markdown constructs that the parser would reinterpret on round-trip. The always-on HTML snapshot ensures faithful restoration during undo, allowing walkback through every conversion step.
+
 ## Preprocess/Postprocess Pairs
 
 | Store | Preprocessor | Postprocessor |

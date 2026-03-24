@@ -127,17 +127,18 @@ Title handlers do not check `e.shiftKey` because Shift+Enter in a title area sho
 
 ## Handler Registration Order
 
-All handlers are registered on the editable area element in capture phase (`addEventListener('keydown', fn, true)`). Registration order determines firing order for capture-phase listeners on the same element:
+All handlers are dispatched by the centralized `_editorKeydownRouter` in priority order (see [DESIGN-centralized-keyboard.md](DESIGN-centralized-keyboard.md)):
 
-1. **Reverse bubble** (`liveWysiwygReverseBubbleAttached`, ~8241) -- fires first, uses `stopImmediatePropagation`
-2. **List exit** (`liveWysiwygListEnterExitAttached`, ~8489)
-3. **Admonition exit** (`liveWysiwygAdmonitionEnterExitAttached`, ~8688)
-4. **Blockquote exit** (`liveWysiwygBlockquoteEnterExitAttached`, ~8915)
-5. **Heading enter-at-start** (`liveWysiwygHeadingEnterAttached`, ~9093)
-6. **Hidden-title admonition** (`liveWysiwygHiddenTitleAdmonitionEnterAttached`, ~9145) -- subsumed by reverse bubble for Enter
-7. **Code block exit** (`liveWysiwygCodeBlockEnterExitAttached`, ~9214)
+1. **Inline element escape** (`_ekh.inlineEnterEscape`) -- fires first; splits/escapes inline elements (CODE, STRONG, EM, DEL, A, B) when cursor is inside one. Skips when Shift held or inside PRE.
+2. **Reverse bubble** (`_ekh.reverseBubble`) -- exits containers at start
+3. **List exit** (`_ekh.listEnterExit`)
+4. **Admonition exit** (`_ekh.admonitionEnterExit`)
+5. **Blockquote exit** (`_ekh.blockquoteEnterExit`)
+6. **Heading enter-at-start** (`_ekh.headingEnter`)
+7. **Hidden-title admonition** (`_ekh.hiddenTitleAdmonitionEnter`) -- subsumed by reverse bubble for Enter
+8. **Code block exit** (`_ekh.codeBlockEnterExit`)
 
-The reverse bubble handler must be first because it needs to intercept Enter before any forward-bubble handler processes it. When it fires, `stopImmediatePropagation` prevents all subsequent handlers from running.
+The inline element escape handler must be first because inline elements (bold, code, etc.) can appear inside any block container. If the cursor is inside an inline element within, say, an admonition paragraph, the inline handler takes priority. The reverse bubble handler fires next for container-level navigation. When any handler fires (`preventDefault`), subsequent handlers are skipped.
 
 ## Interaction Rules
 

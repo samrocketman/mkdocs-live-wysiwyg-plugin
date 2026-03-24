@@ -24,10 +24,10 @@ flowchart TD
     end
     subgraph tier3 [Tier 3: Editor Keyboard Router]
         EKR["_setupEditorKeyboard(ea, ...)"]
-        EKR --> EnterGroup["Enter: bubble chain"]
+        EKR --> EnterGroup["Enter: inline escape + bubble chain"]
         EKR --> BackspaceGroup["Backspace: revert chain"]
         EKR --> SpaceGroup["Space: auto-convert"]
-        EKR --> ArrowGroup["Arrows: checklist nav"]
+        EKR --> ArrowGroup["Arrows: inline escape + checklist nav"]
         EKR --> EmojiGroup["Emoji: autocomplete"]
         EKR --> SelectAll["Ctrl+A: progressive"]
         EKR --> BoldItalic["Ctrl+B/I: formatting"]
@@ -243,13 +243,14 @@ The router dispatches by key, with handlers tried in priority order. Each handle
 
 #### Enter Priority (highest to lowest)
 
-1. `_handleReverseBubble` — Exit containers at start (Cases A, B, C, D)
-2. `_handleListEnterExit` — 2x Enter on empty LI exits list
-3. `_handleAdmonitionEnterExit` — 3x Enter (or 1 with credit) exits admonition
-4. `_handleBlockquoteEnterExit` — 3x Enter (or 1 with credit) exits blockquote
-5. `_handleHeadingEnter` — Enter at start of heading inserts paragraph before
-6. `_handleHiddenTitleAdmonitionEnter` — Enter at start of hidden-title admonition body
-7. `_handleCodeBlockEnterExit` — Enter in title / 3x Enter exits code block
+1. `_handleInlineEnterEscape` — Split/escape inline elements (CODE, STRONG, EM, DEL, A, B) on Enter; skips when Shift held or inside PRE
+2. `_handleReverseBubble` — Exit containers at start (Cases A, B, C, D)
+3. `_handleListEnterExit` — 2x Enter on empty LI exits list
+4. `_handleAdmonitionEnterExit` — 3x Enter (or 1 with credit) exits admonition
+5. `_handleBlockquoteEnterExit` — 3x Enter (or 1 with credit) exits blockquote
+6. `_handleHeadingEnter` — Enter at start of heading inserts paragraph before
+7. `_handleHiddenTitleAdmonitionEnter` — Enter at start of hidden-title admonition body
+8. `_handleCodeBlockEnterExit` — Enter in title / 3x Enter exits code block
 
 Reverse bubble **must** be first. This was previously enforced by handler registration order; now it is enforced by line order in the router.
 
@@ -266,7 +267,7 @@ Reverse bubble **must** be first. This was previously enforced by handler regist
 |-----|---------|
 | Space | `_handleMarkdownAutoConvert` — Block-level markdown conversions |
 | Delete | `_handleMarkdownAutoConvert` — Delete selected image (inside `_ekh.mdAuto`) |
-| ArrowLeft/Right | `_handleChecklistArrows` — Cursor normalization around checkboxes |
+| ArrowLeft/Right | `_handleInlineArrowEscape` — Escape inline elements (CODE, STRONG, EM, DEL, A, B) at edges; then `_handleChecklistArrows` — Cursor normalization around checkboxes |
 | Ctrl+A | `_handleSelectAllInBlock` — Progressive select-all |
 | Ctrl+B | Bold — `_compat.exec('bold')` + `_finalizeUpdate` |
 | Ctrl+I | Italic — `_compat.exec('italic')` + `_finalizeUpdate` |
@@ -396,4 +397,14 @@ All messages carry the raw base64 state token in a `state` field (not decoded `c
 
 7. **`enterGuard` for special cases.** Dropdowns with autocomplete or other sub-UIs that consume Enter use `opts.enterGuard` to conditionally bypass dialog-level Enter handling.
 
-8. **Shift bypass in Tier 3.** Each Enter handler (reverseBubble, listEnterExit, admonitionEnterExit, blockquoteEnterExit, headingEnter, hiddenTitleAdmonitionEnter, codeBlockEnterExit) checks `e.shiftKey` individually and returns early when Shift is held, allowing Shift+Enter to pass through to browser default. The router has no central shift check.
+8. **Shift bypass in Tier 3.** Each Enter handler (inlineEnterEscape, reverseBubble, listEnterExit, admonitionEnterExit, blockquoteEnterExit, headingEnter, hiddenTitleAdmonitionEnter, codeBlockEnterExit) checks `e.shiftKey` individually and returns early when Shift is held, allowing Shift+Enter to pass through to browser default. The router has no central shift check. The inlineArrowEscape handler also checks `e.shiftKey` to allow Shift+Arrow to extend selection normally.
+
+## History Mode Keyboard
+
+History Mode (Layer 4) has its own keyboard handling that is independent of the three-tier system above. When History Mode is active, the history overlay captures keydown events directly:
+
+- **Branch picker popup**: inline keydown handler for Arrow Up/Down, Tab/Enter, Escape.
+- **DAG overlay**: `_attachHistoryOverlayKeyboard()` handles Arrow keys (DAG navigation), Enter (restore), Escape (exit).
+- **Full-size preview**: inline keydown handler for Enter (restore) and Escape (close preview).
+
+These handlers are registered on the overlay/popup elements and do not interact with the Tier 2/3 routers because the overlay is above Focus Mode in the z-index stack. See [DESIGN-history-mode.md](DESIGN-history-mode.md) for details.

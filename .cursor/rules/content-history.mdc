@@ -19,26 +19,81 @@ The Content History subsystem provides DAG-based undo/redo for document content.
 
 5. **Cmd+Z in content editor always dispatches to content undo.** When content has focus, `Cmd+Z` must be routed to `_contentUndo()`. Browser native undo must never fire. In WYSIWYG mode, a `beforeinput` listener intercepts `historyUndo`/`historyRedo` input types before the native action (required for Safari, where native undo fires before `keydown`). The `keydown` handler in Tier 2 remains as fallback for markdown mode and browsers without `beforeinput` support.
 
-6. **Skip capture on double-render corruption detection.** If `_doubleRenderCheck()` fails, skip the capture and log. Do not store a diff that could produce corrupted content on restore.
+6. **Always capture HTML snapshots in WYSIWYG mode.** `_createHistoryNode` must unconditionally store `editableArea.innerHTML` as `htmlSnapshot` when the editor is in WYSIWYG mode. This eliminates all markdown-to-HTML drift during undo/redo. On restore in WYSIWYG mode, `_historyApplyContent` uses the snapshot directly (bypassing `_markdownToHtml`). On restore in markdown mode, reconstructed markdown from diffs is used. Never gate snapshot capture on fidelity checks — always capture.
 
-7. **Diffs are line-level, not character-level.** The unit of change is a line. Word-boundary grouping is achieved by debounce timing, not character-level diffs.
+7. **Undo/redo must be markdown-aware.** The undo system stores markdown diffs but must respect that some DOM states don't survive a markdown round-trip (literal markdown syntax as text, enhanced elements with attributes). `_historyApplyContent` must fulfill the Markdown Awareness content-loading contract: refresh all 7 preprocess stores and run all 6 DOM enhancers. The always-on HTML snapshot (Rule 6) bypasses the parser to restore the actual DOM in WYSIWYG mode. Undo must never produce a DOM state that differs from what the user saw when the state was captured. See `markdown-awareness.mdc`.
 
-8. **Root node always stores full content.** `_historyRootMd` is the single source of truth for reconstructing any node's content by walking diffs from root.
+8. **Diffs are line-level, not character-level.** The unit of change is a line. Word-boundary grouping is achieved by debounce timing, not character-level diffs.
 
-9. **`activeChildId` determines default redo path.** `Cmd+Shift+Z` always follows `activeChildId`.
+9. **Root node always stores full content.** `_historyRootMd` is the single source of truth for reconstructing any node's content by walking diffs from root.
 
-10. **Never discard redo branches.** Old children remain in the `children` array when new branches are created. Only pruning removes nodes, and it only removes leaves not on the current path.
+10. **`activeChildId` determines default redo path.** `Cmd+Shift+Z` always follows `activeChildId`.
 
-11. **Content undo is independent of nav snapshot undo.** Dispatch is determined by whether the active element has content focus. Content focus always wins.
+11. **Never discard redo branches.** Old children remain in the `children` array when new branches are created. Only pruning removes nodes, and it only removes leaves not on the current path.
 
-12. **`_historyApplyContent` must fulfill the Markdown Awareness contract.** After restoring content, refresh all 7 preprocess stores and run all 6 DOM enhancers. Without this, advanced code blocks degrade to basic fences and enhanced UI elements (title bars, line numbers, checkboxes) are missing after undo/redo. See `markdown-awareness.mdc`.
+12. **Content undo is independent of nav snapshot undo.** Dispatch is determined by whether the active element has content focus. Content focus always wins.
+
+13. **Programmatic DOM mutations must bracket with flush and capture.** Any code path that modifies the editor DOM programmatically — bypassing the browser's input pipeline via `e.preventDefault()` — must call `_flushHistoryCapture()` **before** the mutation and `_scheduleHistoryCapture(true)` **after** `_finalizeUpdate`. This applies to inline typing auto-replacements (backtick → `<code>`, `**` → `<strong>`, `~~` → `<del>`, `[text](url)` → `<a>`, etc.), backspace reverts (`handleRevertOnBackspace`), code block backspace (selection delete and empty revert in `_ekh.codeBlockBackspace`), and any future handler that manipulates the DOM directly. Without both calls, the intermediate state is invisible to the DAG and `Cmd+Z` skips over it.
+
+14. **Conversions with default content are atomic undo steps.** When a block conversion produces an element that includes default content — mermaid diagrams with the stateDiagram template, code blocks with language-specific stubs, admonitions with default titles, etc. — the replacement element and its default content must be captured as a single unified DAG node. `Cmd+Z` must undo the entire conversion in one step, never landing on an intermediate state where the element exists but the default content is missing.
+
+15. **Block conversions must pre-flush with HTML snapshot safety.** The Space-keydown handler for `handleBlockConversions` calls `_flushHistoryCapture()` before the conversion to capture the pre-conversion typing state (e.g. `` ```mermaid ``). The pre-conversion text is markdown syntax that the parser reinterprets on round-trip, so `_markdownRoundTripFaithful` detects lossiness and stores an HTML snapshot. Undo from the converted element first reaches the snapshot node (restoring literal typing text) before earlier states. The HTML snapshot fallback (Rule 6) ensures no corruption.
+
+16. **The DAG is mode-agnostic: undo/redo feature parity between WYSIWYG and markdown is mandatory.** Every node stores a markdown diff regardless of which mode created it. A node created in WYSIWYG must be undoable from markdown mode and vice versa. `_contentUndo`/`_contentRedo` never branch on current mode for content reconstruction — only cursor restoration is mode-aware. When adding capture points or mutation handlers, verify undo/redo works when the user switches modes between the edit and the undo invocation.
+
+17. **Markdown mode must have the same debounce and word-boundary capture behavior as WYSIWYG mode.** Both modes use the same `_scheduleHistoryCapture` / `_flushHistoryCapture` functions and the same 500ms debounce constant. The markdown textarea uses a two-listener strategy (`keydown` for immediate word-boundary flush, `input` for debounced regular-character capture) because `<textarea>` `input` events do not reliably provide `e.data`. Any change to capture timing or word-boundary detection must be applied to both modes.
+
+18. **Immediate post-restore sync eliminates drift.** Both `_contentUndo` and `_contentRedo` must sync `_historyLastMd = wysiwygEditor.getValue()` immediately after `_historySetContent` returns. This absorbs normalization drift so subsequent flushes only detect actual user edits. Do not use a deferred flag-based mechanism — it creates a race condition where user typing between the restore and the deferred sync is absorbed as "drift" and lost on redo.
+
+19. **Block-child cursor is the primary restore strategy for HTML snapshot nodes.** `_restoreHistoryCursor` must first try `blockChildIndex` + `innerOffset` before falling back to semantic or flat text offset. The block-child strategy locates the cursor by structural index within `editableArea.childNodes` and cumulative text offset within that block — this works for classless elements (empty paragraphs) where semantic matching fails. Fallback chain: block-child → semantic → flat offset → position 0.
+
+20. **Cursor capture must record block-child position.** `_captureHistoryCursor` must always compute `blockChildIndex` (direct child index of `editableArea`) and `innerOffset` (cumulative text offset within that block via `TreeWalker`) for WYSIWYG mode cursors. Both fields must be stored alongside `start`, `end`, and `semantic`.
+
+21. **Mermaid diagrams must re-render on snapshot restore.** `enhanceMermaidBlocks` must detect already-wrapped `.md-mermaid-block` elements with empty previews after snapshot restore, re-trigger mermaid rendering from the hidden `<pre>` source, and re-attach expand button handlers. Without this, mermaid diagrams appear blank after undo/redo.
+
+22. **Synchronous cursor placement for mermaid diagram creation.** When `doCodeBlock` creates a mermaid diagram, the trailing paragraph and cursor placement must be synchronous (not `requestAnimationFrame`). History capture runs immediately after `_finalizeUpdate` — the cursor must already be in the trailing paragraph so `_captureHistoryCursor` records the correct block-child position.
+
+23. **`_markdownRoundTripFaithful` must strip frontmatter.** The fidelity check must parse and strip YAML frontmatter via `parseFrontmatter()` before the `md → html → md` comparison. Frontmatter is not markdown and causes false lossy detections.
+
+24. **Redo must flush pending captures to respect new branches.** `_contentRedo()` must call `_flushHistoryCapture()` before checking `activeChildId`. If the user typed after undoing, the flush creates a new branch node, moving `_historyCurrentId` to a node with no children — redo correctly does nothing. Without this flush, redo follows the stale `activeChildId` and overwrites new content.
+
+25. **Branch picker popup appears on redo or at end of history.** `_contentRedo()` calls `_showHistoryBranchPopup()` either after redo at a branch point (`children.length > 1`) or when no redo is available (`!activeChildId`). The popup persists until editing begins (dismissed on `beforeinput` for non-undo input types) and allows switching branches via Tab/Enter or entering full History Mode via "Show All Redo History". The popup is dismissed by `_dismissAllDropdowns()`.
+
+26. **History Mode is mutually exclusive with Mermaid Mode.** `_enterHistoryMode()` returns early if `_mermaidModeActive`, and `enterMermaidMode()` returns early if `_historyModeActive`. Both share z-index 99995 (Cardinal Rule #9). `exitFocusMode()` calls `_exitHistoryMode()` before `exitMermaidMode()`.
+
+27. **`_restoreToHistoryNode` enables direct DAG jumps.** The function flushes pending captures, reconstructs markdown at any node, sets `_historyCurrentId`, applies content, syncs `_historyLastMd`, and restores cursor. Used by the DAG overlay (double-click/Enter) and full-size preview (Restore button/Enter).
+
+28. **Container group crumple accordion is inline.** `_computeContainerGroups` identifies consecutive active-path edits within the same markdown container (code block, admonition, blockquote, list). Collapsed groups render as single crumple icon nodes in the DAG layout, occupying exactly 1 row. Hidden nodes are tracked in `hiddenByGroup` and skipped during row assignment. Expanding a crumple reveals the individual nodes with a staggered entrance animation.
+
+29. **DAG branch expansion is mutually exclusive.** Only one root-level branch or V-tree can be expanded at a time, controlled by `_historyDagActiveBranchKey`. Expanding a new branch collapses the previous one. V-tree pickers (`_historyDagVtreeSelectedBranch`) are per-branch-point. This prevents layout conflicts between expanded branches.
+
+30. **V-tree forks handle multi-branch points.** When an active-path node has 2+ branch children, a V-tree fork icon is rendered at col 1. Clicking shows branch options at col 2; selecting an option replaces the picker with that branch's **vertical** history layout (`_layoutBranchVertical` subtree positions from phase 1).
+
+31. **Summary generation must be markdown-aware.** `_generateSummary` must detect common markdown structures (mermaid blocks, fenced code with language, headings, admonitions, blockquotes, lists) and produce human-readable labels. Fallback is the first few words of changed text or "edited N lines".
+
+32. **Preview content must exclude YAML frontmatter.** All preview rendering paths (hover tooltip, side panel, full-size preview) must call `_stripFrontmatterForPreview` before `_renderMarkdownPreview`. Frontmatter is editor metadata, not user-visible content.
+
+33. **DAG visualization state resets on entry.** `_enterHistoryMode` must reset `_historyDagActiveBranchKey`, `_historyDagVtreeSelectedBranch`, `_historyDagAnimatingGroup`, and `_historyDagViewMode` (`'detailed'`) to ensure a clean initial view with all branches collapsed.
+
+34. **History DAG view mode toggle.** `_historyDagViewMode` is `'detailed'` or `'organic'`. The modal header toggle switches between the full card DAG (`_computeDagLayout` / standard `_renderDag`) and the compact organic tree (`_computeOrganicLayout` / `_renderOrganicDag`). `_renderDag` branches on `_historyDagViewMode` at the start. Preserve the transition class behavior on toggle (short CSS transition on the DAG container).
 
 ## Key Functions
 
 - `_flushHistoryCapture`, `_scheduleHistoryCapture` — capture timing
 - `_contentUndo`, `_contentRedo` — undo/redo dispatch
 - `_reconstructContentAtNode`, `_restoreHistoryCursor` — state restore
+- `_restoreToHistoryNode` — direct DAG node restoration
+- `_showHistoryBranchPopup`, `_dismissHistoryBranchPopup` — branch picker popup
+- `_enterHistoryMode`, `_exitHistoryMode` — History Mode (Layer 4) lifecycle
+- `_computeDagLayout`, `_layoutBranchVertical` — detailed DAG layout (three phases: full walk + vertical branches with `colOccupied`, crumple/`hiddenByZone` + compact rows, visible nodes + Bézier edges)
+- `_computeOrganicLayout`, `_renderOrganicDag` — organic tree view (center trunk, balanced L/R, 10px dots); gated by `_historyDagViewMode`
+- `_computeContainerGroups` — markdown-aware container group detection
+- `_createCrumpleSvg`, `_createVtreeForkSvg` — SVG icon helpers
+- `_renderDag` — renders SVG edges + DOM nodes (standard, crumple, fork, vtree-option)
+- `_stripFrontmatterForPreview`, `_enhancePreviewContent` — preview pipeline helpers
+- `_generateSummary` — markdown-aware change description generator
 
-## Design Document
+## Design Documents
 
-See `docs/design/ui/DESIGN-unified-content-undo.md`.
+- `docs/design/ui/DESIGN-unified-content-undo.md` — DAG data structure and undo/redo mechanics
+- `docs/design/ui/DESIGN-history-mode.md` — History Mode (Layer 4) UI architecture

@@ -204,6 +204,9 @@ Triggered on the Insert click or URL blur when alt is empty and a URL has been t
 | Asset Preview | `_showAssetPreviewPopup` | Expand btn | Small preview with expand; ESC + Enter |
 | Asset Lightbox | `_showAssetLightbox` | Close btn | Modal image/text viewer; ESC to dismiss, click-outside backdrop |
 | Help Modal | `_showHelp` | Close btn | Layer 5 tabbed help reference; ESC + Enter + backdrop click; arrow keys navigate tabs. See [DESIGN-help-system.md](DESIGN-help-system.md) |
+| History Branch Popup | `_showHistoryBranchPopup` | popup itself | Transient branch picker on redo; Arrow Up/Down, Tab/Enter to confirm, ESC/click-outside to dismiss; auto-dismiss 3s. See [DESIGN-history-mode.md](DESIGN-history-mode.md) |
+| History DAG Overlay | `_buildHistoryOverlay` | overlay itself | Layer 4 DAG visualization; Arrow keys navigate DAG, Enter restores, ESC exits. See [DESIGN-history-mode.md](DESIGN-history-mode.md) |
+| History Full-Size Preview | `_showHistoryFullsizePreview` | preview itself | Full-viewport readonly preview; Enter restores, ESC returns to DAG. See [DESIGN-history-mode.md](DESIGN-history-mode.md) |
 
 ### Excluded (No Changes)
 

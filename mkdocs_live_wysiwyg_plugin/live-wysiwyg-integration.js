@@ -294,6 +294,7 @@
     if (_admonitionDropdownDismiss) _admonitionDropdownDismiss();
     hideSelectionEditPopup();
     _dismissAssetPreviewPopup();
+    _dismissHistoryBranchPopup();
   }
 
   function createLangDropdown(anchorBtn, currentLang, onSelect) {
@@ -826,7 +827,30 @@
     var pres = editableArea.querySelectorAll('pre[data-lang="mermaid"]');
     for (var i = 0; i < pres.length; i++) {
       var pre = pres[i];
-      if (pre.parentNode && pre.parentNode.classList && pre.parentNode.classList.contains('md-mermaid-block')) continue;
+      if (pre.parentNode && pre.parentNode.classList && pre.parentNode.classList.contains('md-mermaid-block')) {
+        var mermaidWrapper = pre.parentNode;
+        var existingPreview = mermaidWrapper.querySelector('.md-mermaid-preview');
+        if (existingPreview && !existingPreview.innerHTML.trim()) {
+          var code = pre.textContent || '';
+          if (code.trim()) {
+            (function (p, c) {
+              _loadMermaidJs(function () { _renderMermaidPreview(p, c); });
+            })(existingPreview, code);
+          }
+        }
+        var existingBtn = mermaidWrapper.querySelector('.md-mermaid-expand-btn');
+        if (existingBtn && !existingBtn.__mermaidHandlerAttached) {
+          existingBtn.__mermaidHandlerAttached = true;
+          (function (block, btn) {
+            btn.addEventListener('click', function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (typeof enterMermaidMode === 'function') enterMermaidMode(block);
+            });
+          })(mermaidWrapper, existingBtn);
+        }
+        continue;
+      }
       if (pre.parentNode && pre.parentNode.classList && pre.parentNode.classList.contains('md-code-block')) continue;
       var wrapper = document.createElement('div');
       wrapper.className = 'md-mermaid-block';
@@ -9452,6 +9476,34 @@
     }
   }
 
+  function _markdownRoundTripFaithful(markdownContent) {
+    if (!markdownContent || typeof markdownContent !== 'string') return true;
+    var editor = wysiwygEditor;
+    if (!editor || !editor._markdownToHtml || !editor._htmlToMarkdown) return true;
+    var parsed = parseFrontmatter(markdownContent);
+    var body = parsed.body;
+    if (!body || !body.trim()) return true;
+    var prev = _inMemoryRenderMode;
+    _inMemoryRenderMode = true;
+    try {
+      var html = editor._markdownToHtml(body);
+      var md2 = editor._htmlToMarkdown(html);
+      var norm = function (s) {
+        return (s || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '').replace(/\s+$/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+      };
+      var n1 = norm(body);
+      var n2 = norm(md2);
+      var faithful = n1 === n2;
+      if (!faithful) {
+      }
+      return faithful;
+    } catch (e) {
+      return false;
+    } finally {
+      _inMemoryRenderMode = prev;
+    }
+  }
+
   // --- Unified Content Undo DAG ---
 
   var _historyNodes = {};
@@ -9462,6 +9514,7 @@
   var _historyLastMd = null;
   var _historyMaxNodes = 200;
   var _undoViaBeforeinput = false;
+
 
   function _historyReset(markdown) {
     _historyNodes = {};
@@ -9598,23 +9651,64 @@
       var oldLines = singleOp.old || [];
       if (newLines.length > 0) {
         var first = newLines[0];
-        if (/^```/.test(first) && newLines.length > 1) return 'inserted code block';
-        if (/^#{1,6}\s/.test(first)) return 'changed heading';
-        if (/^(!{3}|\?{3}\+?)\s/.test(first)) return 'inserted admonition';
-        if (/^>\s/.test(first) && newLines.length > 1) return 'inserted blockquote';
-        if (/^(\s*[-*+]|\s*\d+\.)\s/.test(first) && newLines.length > 1) return 'added list items';
-        if (/^(---|___|\*\*\*)\s*$/.test(first)) return 'inserted horizontal rule';
+        if (/^```mermaid\s*$/i.test(first) && newLines.length > 1) return 'mermaid diagram created';
+        if (/^```/.test(first) && newLines.length > 1) {
+          var lang = first.replace(/^```\s*/, '').trim();
+          return lang ? lang + ' code block' : 'code block';
+        }
+        if (/^#{1,6}\s/.test(first)) {
+          var headingText = first.replace(/^#{1,6}\s+/, '').trim();
+          return headingText ? '\u201C' + _truncateExcerpt(headingText, 40) + '\u201D' : 'heading';
+        }
+        if (/^(!{3}|\?{3}\+?)\s/.test(first)) {
+          var admType = first.replace(/^(?:!{3}|\?{3}\+?)\s+/, '').split(/\s/)[0] || '';
+          return admType ? admType + ' admonition' : 'admonition';
+        }
+        if (/^>\s/.test(first) && newLines.length > 1) return 'blockquote';
+        if (/^(\s*[-*+]|\s*\d+\.)\s/.test(first) && newLines.length > 1) return 'list items';
+        if (/^(---|___|\*\*\*)\s*$/.test(first)) return 'horizontal rule';
       }
       if (singleOp.type === 'delete') {
         if (oldLines.length > 0 && /^```/.test(oldLines[0]) && oldLines.length > 1) return 'removed code block';
-        if (oldLines.length > 0 && /^#{1,6}\s/.test(oldLines[0])) return 'removed heading';
+        if (oldLines.length > 0 && /^#{1,6}\s/.test(oldLines[0])) {
+          var removedText = oldLines[0].replace(/^#{1,6}\s+/, '').trim();
+          return removedText ? 'removed \u201C' + _truncateExcerpt(removedText, 30) + '\u201D' : 'removed heading';
+        }
       }
-      if (singleOp.type === 'replace' && singleOp.count === 1 && newLines.length === 1) {
-        return 'edited line ' + (singleOp.line + 1);
+      if (newLines.length > 0) {
+        var excerpt = _extractExcerptFromLines(newLines);
+        if (excerpt) return '\u201C' + excerpt + '\u201D';
+      }
+      if (singleOp.type === 'delete' && oldLines.length > 0) {
+        var delExcerpt = _extractExcerptFromLines(oldLines);
+        if (delExcerpt) return 'removed \u201C' + delExcerpt + '\u201D';
       }
     }
+    var allNewLines = [];
+    for (var j = 0; j < diff.ops.length; j++) {
+      var op2 = diff.ops[j];
+      var lines2 = op2.type === 'replace' ? op2.new : (op2.type === 'insert' ? op2.lines : null);
+      if (lines2) allNewLines = allNewLines.concat(lines2);
+    }
+    if (allNewLines.length > 0) {
+      var multiExcerpt = _extractExcerptFromLines(allNewLines);
+      if (multiExcerpt) return '\u201C' + multiExcerpt + '\u201D';
+    }
     var total = totalOld + totalNew;
-    return 'edited ' + total + ' line' + (total !== 1 ? 's' : '');
+    return total + ' line' + (total !== 1 ? 's' : '') + ' changed';
+  }
+
+  function _truncateExcerpt(text, maxLen) {
+    if (text.length <= maxLen) return text;
+    return text.substring(0, maxLen - 1) + '\u2026';
+  }
+
+  function _extractExcerptFromLines(lines) {
+    for (var i = 0; i < lines.length; i++) {
+      var clean = lines[i].replace(/^[\s#>*\-+`!?]+/, '').replace(/[*_~`]+/g, '').trim();
+      if (clean.length > 2) return _truncateExcerpt(clean, 45);
+    }
+    return '';
   }
 
   function _groupMarkdownConstructs(diff, newLines) {
@@ -9643,9 +9737,9 @@
     if (_historyLastMd === null || _historyCurrentId === null) return;
     if (markdown === _historyLastMd) return;
 
-    if (!_doubleRenderCheck(markdown)) {
-      console.log('[UNDO] history capture skipped: double-render corruption detected');
-      return;
+    var htmlSnapshot = null;
+    if (wysiwygEditor && wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor.editableArea) {
+      htmlSnapshot = wysiwygEditor.editableArea.innerHTML;
     }
 
     var oldLines = _historyLastMd.split('\n');
@@ -9665,7 +9759,8 @@
       diff: diff,
       cursor: cursor || null,
       timestamp: Date.now(),
-      summary: summary
+      summary: summary,
+      htmlSnapshot: htmlSnapshot
     };
     _historyNodes[nodeId] = node;
 
@@ -9686,11 +9781,29 @@
     var ids = Object.keys(_historyNodes);
     if (ids.length <= _historyMaxNodes) return;
 
+    // Protect: root-to-current path + active redo path from every branch point
     var onPath = {};
     var id = _historyCurrentId;
     while (id !== null && _historyNodes[id]) {
       onPath[id] = true;
       id = _historyNodes[id].parentId;
+    }
+    // Protect the active redo path forward from current
+    var fwd = _historyCurrentId;
+    while (fwd !== null && _historyNodes[fwd]) {
+      onPath[fwd] = true;
+      fwd = _historyNodes[fwd].activeChildId || null;
+    }
+    // Protect every node's activeChildId chain (preserves all active branches)
+    for (var ai = 0; ai < ids.length; ai++) {
+      var aN = _historyNodes[ids[ai]];
+      if (aN && aN.activeChildId && onPath[parseInt(ids[ai], 10)]) {
+        var walk = aN.activeChildId;
+        while (walk !== null && _historyNodes[walk] && !onPath[walk]) {
+          onPath[walk] = true;
+          walk = _historyNodes[walk].activeChildId || null;
+        }
+      }
     }
 
     var leaves = [];
@@ -9768,6 +9881,2253 @@
     return true;
   }
 
+  // --- History Mode (Layer 4) ---
+
+  var _historyModeActive = false;
+  var _historyOverlay = null;
+  var _historyBranchPopup = null;
+  var _historyBranchPopupTimer = null;
+  var _historyBranchPopupHighlight = 0;
+  var _historyBranchPopupNodeId = null;
+  var _historyDagSelectedNodeId = null;
+  var _historyFullsizePreview = null;
+  var _historyPreviewCache = {};
+  var _historyDagExpandedGroups = {};
+  var _historyDagActiveBranchKey = null;
+  var _historyDagVtreeSelectedBranch = {};
+  var _historyDagAnimatingGroup = null;
+  var _historyDagViewMode = 'detailed';
+
+  function _formatRelativeTime(ts) {
+    var diff = Date.now() - ts;
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+    return Math.floor(diff / 86400000) + 'd ago';
+  }
+
+  function _getSnippetForNode(node) {
+    if (!node || !node.diff || !node.diff.ops || node.diff.ops.length === 0) return '';
+    for (var i = 0; i < node.diff.ops.length; i++) {
+      var op = node.diff.ops[i];
+      var lines = op.type === 'replace' ? op.new : (op.type === 'insert' ? op.lines : null);
+      if (lines && lines.length > 0) {
+        var snippet = [];
+        for (var k = 0; k < Math.min(lines.length, 4); k++) {
+          snippet.push(lines[k]);
+        }
+        var text = snippet.join('\n');
+        if (text.length > 120) text = text.substring(0, 117) + '...';
+        return text;
+      }
+    }
+    if (node.diff.ops.length > 0 && node.diff.ops[0].type === 'delete') {
+      var oldLines = node.diff.ops[0].old;
+      if (oldLines && oldLines.length > 0) {
+        var delSnippet = [];
+        for (var d = 0; d < Math.min(oldLines.length, 4); d++) {
+          delSnippet.push(oldLines[d]);
+        }
+        var delText = delSnippet.join('\n');
+        if (delText.length > 120) delText = delText.substring(0, 117) + '...';
+        return '\u2212 ' + delText;
+      }
+    }
+    return '';
+  }
+
+  function _stripFrontmatterForPreview(markdown) {
+    if (!markdown) return '';
+    var parsed = parseFrontmatter(markdown);
+    return parsed.body;
+  }
+
+  function _renderMarkdownPreview(markdown) {
+    var body = _stripFrontmatterForPreview(markdown);
+    if (typeof marked !== 'undefined') {
+      return marked.parse(body, { gfm: true, breaks: false, smartLists: true });
+    }
+    return '<pre>' + body.replace(/</g, '&lt;') + '</pre>';
+  }
+
+  // --- Way 1: Branch Picker Popup ---
+
+  function _dismissHistoryBranchPopup() {
+    if (_historyBranchPopupTimer) {
+      clearTimeout(_historyBranchPopupTimer);
+      _historyBranchPopupTimer = null;
+    }
+    if (_historyBranchPopup) {
+      if (_historyBranchPopup._docHandler) {
+        document.removeEventListener('mousedown', _historyBranchPopup._docHandler, true);
+      }
+      if (_historyBranchPopup.parentNode) _historyBranchPopup.parentNode.removeChild(_historyBranchPopup);
+      _historyBranchPopup = null;
+    }
+    _historyBranchPopupNodeId = null;
+    _historyBranchPopupHighlight = 0;
+  }
+
+  function _showHistoryBranchPopup(branchNodeId) {
+    _dismissHistoryBranchPopup();
+    var node = _historyNodes[branchNodeId];
+    if (!node) return;
+
+    var hasBranches = node.children.length >= 2;
+    var hasRedo = node.children.length >= 1;
+
+    var popup = document.createElement('div');
+    popup.className = 'live-wysiwyg-history-branch-popup';
+    popup.setAttribute('tabindex', '-1');
+
+    var header = document.createElement('div');
+    header.className = 'live-wysiwyg-history-branch-header';
+    var headerLabel = document.createElement('span');
+    headerLabel.textContent = hasBranches ? 'Redo branches' : (hasRedo ? 'Redo' : 'End of history');
+    header.appendChild(headerLabel);
+    popup.appendChild(header);
+
+    var list = document.createElement('div');
+    list.className = 'live-wysiwyg-history-branch-list';
+    var activeIdx = 0;
+    for (var i = 0; i < node.children.length; i++) {
+      var childId = node.children[i];
+      var child = _historyNodes[childId];
+      if (!child) continue;
+      if (childId === node.activeChildId) activeIdx = i;
+      var item = document.createElement('div');
+      item.className = 'live-wysiwyg-history-branch-item';
+      item.setAttribute('data-child-id', childId);
+      if (childId === node.activeChildId) item.classList.add('active');
+
+      var summarySpan = document.createElement('span');
+      summarySpan.className = 'live-wysiwyg-history-branch-summary';
+      summarySpan.textContent = child.summary || 'edit';
+      item.appendChild(summarySpan);
+
+      var snippetSpan = document.createElement('span');
+      snippetSpan.className = 'live-wysiwyg-history-branch-snippet';
+      snippetSpan.textContent = _getSnippetForNode(child);
+      item.appendChild(snippetSpan);
+
+      var timeSpan = document.createElement('span');
+      timeSpan.className = 'live-wysiwyg-history-branch-time';
+      timeSpan.textContent = _formatRelativeTime(child.timestamp);
+      item.appendChild(timeSpan);
+
+      list.appendChild(item);
+    }
+    if (!hasRedo) {
+      activeIdx = 0;
+    }
+
+    var showAllItem = document.createElement('div');
+    showAllItem.className = 'live-wysiwyg-history-branch-item show-all-history';
+    showAllItem.setAttribute('data-child-id', 'show-all');
+    var showAllIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    showAllIcon.setAttribute('width', '14');
+    showAllIcon.setAttribute('height', '14');
+    showAllIcon.setAttribute('viewBox', '0 0 14 14');
+    showAllIcon.style.verticalAlign = 'middle';
+    showAllIcon.style.marginRight = '6px';
+    showAllIcon.style.flexShrink = '0';
+    var iconPath1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    iconPath1.setAttribute('d', 'M1 5 L1 1 L5 1');
+    iconPath1.setAttribute('stroke', 'currentColor');
+    iconPath1.setAttribute('stroke-width', '1.5');
+    iconPath1.setAttribute('fill', 'none');
+    iconPath1.setAttribute('stroke-linecap', 'round');
+    iconPath1.setAttribute('stroke-linejoin', 'round');
+    var iconPath2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    iconPath2.setAttribute('d', 'M13 9 L13 13 L9 13');
+    iconPath2.setAttribute('stroke', 'currentColor');
+    iconPath2.setAttribute('stroke-width', '1.5');
+    iconPath2.setAttribute('fill', 'none');
+    iconPath2.setAttribute('stroke-linecap', 'round');
+    iconPath2.setAttribute('stroke-linejoin', 'round');
+    var iconLine1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    iconLine1.setAttribute('x1', '1'); iconLine1.setAttribute('y1', '1');
+    iconLine1.setAttribute('x2', '7'); iconLine1.setAttribute('y2', '7');
+    iconLine1.setAttribute('stroke', 'currentColor');
+    iconLine1.setAttribute('stroke-width', '1.5');
+    iconLine1.setAttribute('stroke-linecap', 'round');
+    var iconLine2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    iconLine2.setAttribute('x1', '13'); iconLine2.setAttribute('y1', '13');
+    iconLine2.setAttribute('x2', '7'); iconLine2.setAttribute('y2', '7');
+    iconLine2.setAttribute('stroke', 'currentColor');
+    iconLine2.setAttribute('stroke-width', '1.5');
+    iconLine2.setAttribute('stroke-linecap', 'round');
+    showAllIcon.appendChild(iconPath1);
+    showAllIcon.appendChild(iconPath2);
+    showAllIcon.appendChild(iconLine1);
+    showAllIcon.appendChild(iconLine2);
+    var showAllLabel = document.createElement('span');
+    showAllLabel.className = 'live-wysiwyg-history-branch-summary';
+    showAllLabel.appendChild(showAllIcon);
+    showAllLabel.appendChild(document.createTextNode('Show All Redo History'));
+    showAllItem.appendChild(showAllLabel);
+    list.appendChild(showAllItem);
+
+    popup.appendChild(list);
+
+    _historyBranchPopupNodeId = branchNodeId;
+    _historyBranchPopupHighlight = activeIdx;
+
+    var caretRect = null;
+    var sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      var rng = sel.getRangeAt(0);
+      caretRect = rng.getBoundingClientRect();
+      if (caretRect.width === 0 && caretRect.height === 0) caretRect = null;
+    }
+    var popupW = 380;
+    var popupH = 260;
+    var posLeft, posTop;
+    if (caretRect) {
+      posLeft = caretRect.right + 12;
+      posTop = caretRect.top - 20;
+    } else {
+      var editorRect = (wysiwygEditor && wysiwygEditor.editableArea)
+        ? wysiwygEditor.editableArea.getBoundingClientRect()
+        : { top: 100, right: window.innerWidth - 20 };
+      posLeft = editorRect.right - popupW;
+      posTop = editorRect.top;
+    }
+    if (posLeft + popupW > window.innerWidth - 8) posLeft = window.innerWidth - popupW - 8;
+    if (posLeft < 8) posLeft = 8;
+    if (posTop + popupH > window.innerHeight - 8) posTop = window.innerHeight - popupH - 8;
+    if (posTop < 8) posTop = 8;
+    popup.style.position = 'fixed';
+    popup.style.left = posLeft + 'px';
+    popup.style.top = posTop + 'px';
+    popup.style.zIndex = '99999';
+
+    var appendTarget = _focusOverlay || document.body;
+    appendTarget.appendChild(popup);
+    _historyBranchPopup = popup;
+
+    _updateBranchPopupHighlight();
+
+    popup.addEventListener('keydown', function (e) {
+      if ((e.key === 'z' || e.key === 'y') && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        _dismissHistoryBranchPopup();
+        if (e.key === 'y' || e.shiftKey) {
+          _contentRedo();
+        } else {
+          _contentUndo();
+        }
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        var items = list.querySelectorAll('.live-wysiwyg-history-branch-item');
+        _historyBranchPopupHighlight = Math.min(_historyBranchPopupHighlight + 1, items.length - 1);
+        _updateBranchPopupHighlight();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        _historyBranchPopupHighlight = Math.max(_historyBranchPopupHighlight - 1, 0);
+        _updateBranchPopupHighlight();
+      } else if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault();
+        _confirmBranchPopupSelection();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        _dismissHistoryBranchPopup();
+      }
+    });
+
+    list.addEventListener('click', function (e) {
+      var item = e.target.closest('.live-wysiwyg-history-branch-item');
+      if (!item) return;
+      var items = list.querySelectorAll('.live-wysiwyg-history-branch-item');
+      for (var j = 0; j < items.length; j++) {
+        if (items[j] === item) { _historyBranchPopupHighlight = j; break; }
+      }
+      _updateBranchPopupHighlight();
+      _confirmBranchPopupSelection();
+    });
+
+    var docHandler = function (ev) {
+      if (popup.contains(ev.target)) return;
+      _dismissHistoryBranchPopup();
+    };
+    popup._docHandler = docHandler;
+    document.addEventListener('mousedown', docHandler, true);
+
+    popup.focus();
+  }
+
+  function _updateBranchPopupHighlight() {
+    if (!_historyBranchPopup) return;
+    var items = _historyBranchPopup.querySelectorAll('.live-wysiwyg-history-branch-item');
+    for (var i = 0; i < items.length; i++) {
+      items[i].classList.toggle('highlighted', i === _historyBranchPopupHighlight);
+    }
+  }
+
+  function _resetBranchPopupTimer() {
+    // No-op: popup persists until typing or explicit dismiss
+  }
+
+  function _confirmBranchPopupSelection() {
+    if (!_historyBranchPopup || _historyBranchPopupNodeId === null) return;
+    var items = _historyBranchPopup.querySelectorAll('.live-wysiwyg-history-branch-item');
+    var selectedItem = items[_historyBranchPopupHighlight];
+    if (!selectedItem) { _dismissHistoryBranchPopup(); return; }
+    if (selectedItem.classList.contains('show-all-history')) {
+      _dismissHistoryBranchPopup();
+      _enterHistoryMode();
+      return;
+    }
+    var node = _historyNodes[_historyBranchPopupNodeId];
+    if (!node) { _dismissHistoryBranchPopup(); return; }
+    var selectedChildId = parseInt(selectedItem.getAttribute('data-child-id'), 10);
+    if (selectedChildId === node.activeChildId) {
+      _dismissHistoryBranchPopup();
+      return;
+    }
+    _contentUndo();
+    _switchHistoryBranch(_historyBranchPopupNodeId, selectedChildId);
+    _dismissHistoryBranchPopup();
+    _contentRedo();
+  }
+
+  // --- Way 2: History Mode — Full-Screen Document History Overlay (Layer 4) ---
+
+  function _enterHistoryMode() {
+    if (_historyModeActive) return;
+    if (_mermaidModeActive) return;
+    _historyModeActive = true;
+    _historyPreviewCache = {};
+    _historyDagSelectedNodeId = null;
+    _historyDagExpandedGroups = {};
+    _historyDagActiveBranchKey = null;
+    _historyDagVtreeSelectedBranch = {};
+    _historyDagAnimatingGroup = null;
+    _historyDagViewMode = 'detailed';
+    _buildHistoryOverlay();
+  }
+
+  function _exitHistoryMode() {
+    if (!_historyModeActive) return;
+    _historyModeActive = false;
+    _dismissHistoryFullsizePreview();
+    if (_historyOverlay && _historyOverlay.parentNode) {
+      _historyOverlay.parentNode.removeChild(_historyOverlay);
+    }
+    _historyOverlay = null;
+    _historyDagSelectedNodeId = null;
+    _historyPreviewCache = {};
+  }
+
+  function _buildHistoryOverlay() {
+    if (_historyOverlay) _exitHistoryMode();
+
+    var overlay = document.createElement('div');
+    overlay.className = 'live-wysiwyg-history-overlay';
+    overlay.setAttribute('tabindex', '-1');
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'live-wysiwyg-history-backdrop';
+    backdrop.addEventListener('click', function () { _exitHistoryMode(); });
+    overlay.appendChild(backdrop);
+
+    var modal = document.createElement('div');
+    modal.className = 'live-wysiwyg-history-modal';
+
+    var modalHeader = document.createElement('div');
+    modalHeader.className = 'live-wysiwyg-history-modal-header';
+    var title = document.createElement('h2');
+    title.textContent = 'Document History';
+    modalHeader.appendChild(title);
+    var toggleBtn = document.createElement('button');
+    toggleBtn.className = 'live-wysiwyg-history-toggle-view-btn';
+    toggleBtn.textContent = _historyDagViewMode === 'organic' ? 'Detailed View' : 'Tree View';
+    toggleBtn.title = 'Switch between detailed and compact tree view';
+    toggleBtn.addEventListener('click', function () {
+      _historyDagViewMode = _historyDagViewMode === 'organic' ? 'detailed' : 'organic';
+      toggleBtn.textContent = _historyDagViewMode === 'organic' ? 'Detailed View' : 'Tree View';
+      var dagC = modal.querySelector('.live-wysiwyg-history-dag-container');
+      if (dagC) {
+        dagC.classList.add('live-wysiwyg-dag-transitioning');
+        _renderDag(dagC);
+        setTimeout(function () { dagC.classList.remove('live-wysiwyg-dag-transitioning'); }, 350);
+      }
+    });
+    modalHeader.appendChild(toggleBtn);
+
+    var closeBtn = document.createElement('button');
+    closeBtn.className = 'live-wysiwyg-history-close-btn';
+    closeBtn.textContent = '\u00D7';
+    closeBtn.title = 'Close';
+    closeBtn.addEventListener('click', function () { _exitHistoryMode(); });
+    modalHeader.appendChild(closeBtn);
+    modal.appendChild(modalHeader);
+
+    var body = document.createElement('div');
+    body.className = 'live-wysiwyg-history-modal-body';
+
+    var dagContainer = document.createElement('div');
+    dagContainer.className = 'live-wysiwyg-history-dag-container';
+    body.appendChild(dagContainer);
+
+    var previewPanel = document.createElement('div');
+    previewPanel.className = 'live-wysiwyg-history-preview-panel';
+    body.appendChild(previewPanel);
+
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+
+    var appendTarget = _focusOverlay || document.body;
+    appendTarget.appendChild(overlay);
+    _historyOverlay = overlay;
+
+    _renderDag(dagContainer);
+    _attachHistoryOverlayKeyboard(overlay);
+    overlay.focus();
+  }
+
+  // --- Container Detection & Grouping ---
+
+  function _detectEditContainer(lines, diff) {
+    if (!lines || !diff || !diff.ops || diff.ops.length === 0) return [];
+    var editStart = Infinity, editEnd = -1;
+    for (var i = 0; i < diff.ops.length; i++) {
+      var op = diff.ops[i];
+      var opLine = op.type === 'insert' ? (op.afterLine != null ? op.afterLine : 0) : (op.line || 0);
+      if (opLine < editStart) editStart = opLine;
+      var opEnd = opLine;
+      if (op.type === 'replace') opEnd = opLine + Math.max(op.count, op['new'].length) - 1;
+      else if (op.type === 'insert') opEnd = opLine + op.lines.length - 1;
+      else if (op.type === 'delete') opEnd = opLine + op.count - 1;
+      if (opEnd > editEnd) editEnd = opEnd;
+    }
+    if (editStart === Infinity) return [];
+
+    var containers = [];
+    var inFence = false, fenceStart = -1, fenceLang = '';
+    var listStack = [];
+    var admonitionStack = [];
+    var blockquoteStart = -1, blockquoteActive = false;
+
+    for (var L = 0; L < lines.length; L++) {
+      var ln = lines[L];
+      if (/^(`{3,}|~{3,})/.test(ln) && !inFence) {
+        inFence = true;
+        fenceStart = L;
+        fenceLang = ln.replace(/^(`{3,}|~{3,})\s*/, '').split(/\s/)[0] || '';
+        continue;
+      }
+      if (inFence && /^(`{3,}|~{3,})\s*$/.test(ln)) {
+        if (editStart <= L && editEnd >= fenceStart) {
+          var label = fenceLang === 'mermaid' ? 'mermaid diagram'
+            : fenceLang ? fenceLang + ' code block' : 'code block';
+          containers.push({ type: 'code', lang: fenceLang, label: label, startLine: fenceStart, endLine: L });
+        }
+        inFence = false;
+        fenceStart = -1;
+        fenceLang = '';
+        continue;
+      }
+      if (inFence) continue;
+
+      if (/^(!{3}|\?{3}\+?)\s/.test(ln)) {
+        var admType = ln.replace(/^(?:!{3}|\?{3}\+?)\s+/, '').split(/\s/)[0] || 'note';
+        var admEnd = L;
+        for (var aL = L + 1; aL < lines.length; aL++) {
+          if (/^\S/.test(lines[aL]) && !/^\s/.test(lines[aL])) break;
+          if (lines[aL].trim() === '' && aL + 1 < lines.length && /^\S/.test(lines[aL + 1]) && !/^\s/.test(lines[aL + 1])) {
+            admEnd = aL;
+            break;
+          }
+          admEnd = aL;
+        }
+        if (editStart <= admEnd && editEnd >= L) {
+          containers.push({ type: 'admonition', label: admType + ' admonition', startLine: L, endLine: admEnd });
+        }
+      }
+
+      if (/^>\s/.test(ln)) {
+        if (!blockquoteActive) {
+          blockquoteStart = L;
+          blockquoteActive = true;
+        }
+      } else if (blockquoteActive) {
+        var bqEnd = L - 1;
+        if (editStart <= bqEnd && editEnd >= blockquoteStart) {
+          containers.push({ type: 'blockquote', label: 'blockquote', startLine: blockquoteStart, endLine: bqEnd });
+        }
+        blockquoteActive = false;
+      }
+
+      if (/^(\s*[-*+]|\s*\d+\.)\s/.test(ln)) {
+        if (listStack.length === 0 || L > listStack[listStack.length - 1].end + 1) {
+          listStack.push({ start: L, end: L });
+        } else {
+          listStack[listStack.length - 1].end = L;
+        }
+      } else if (listStack.length > 0 && ln.trim() !== '') {
+        if (!/^\s/.test(ln)) {
+          var lst = listStack[listStack.length - 1];
+          if (editStart <= lst.end && editEnd >= lst.start) {
+            containers.push({ type: 'list', label: 'list', startLine: lst.start, endLine: lst.end });
+          }
+          listStack = [];
+        } else if (listStack.length > 0) {
+          listStack[listStack.length - 1].end = L;
+        }
+      }
+    }
+
+    if (blockquoteActive) {
+      var finalBqEnd = lines.length - 1;
+      if (editStart <= finalBqEnd && editEnd >= blockquoteStart) {
+        containers.push({ type: 'blockquote', label: 'blockquote', startLine: blockquoteStart, endLine: finalBqEnd });
+      }
+    }
+    if (inFence) {
+      if (editStart <= lines.length - 1 && editEnd >= fenceStart) {
+        var pendingLabel = fenceLang === 'mermaid' ? 'mermaid diagram'
+          : fenceLang ? fenceLang + ' code block' : 'code block';
+        containers.push({ type: 'code', lang: fenceLang, label: pendingLabel, startLine: fenceStart, endLine: lines.length - 1 });
+      }
+    }
+    for (var ls = 0; ls < listStack.length; ls++) {
+      var lItem = listStack[ls];
+      if (editStart <= lItem.end && editEnd >= lItem.start) {
+        containers.push({ type: 'list', label: 'list', startLine: lItem.start, endLine: lItem.end });
+      }
+    }
+
+    containers.sort(function (a, b) { return (a.startLine - b.startLine) || (b.endLine - a.endLine); });
+    return containers;
+  }
+
+  function _computeContainerGroups(pathNodeIds) {
+    if (!pathNodeIds || pathNodeIds.length === 0) return [];
+    var result = [];
+    var currentLines = _historyRootMd ? _historyRootMd.split('\n') : [];
+
+    var pending = null;
+
+    for (var i = 0; i < pathNodeIds.length; i++) {
+      var nid = pathNodeIds[i];
+      var node = _historyNodes[nid];
+      if (!node) {
+        if (pending) { result.push(pending); pending = null; }
+        result.push({ type: null, label: null, nodeIds: [nid] });
+        continue;
+      }
+      if (node.parentId === null) {
+        if (pending) { result.push(pending); pending = null; }
+        result.push({ type: null, label: null, nodeIds: [nid] });
+        if (node.diff) currentLines = _applyDiff(currentLines, node.diff);
+        continue;
+      }
+
+      var containers = [];
+      if (node.diff) {
+        containers = _detectEditContainer(currentLines, node.diff);
+      }
+
+      var innermost = containers.length > 0 ? containers[containers.length - 1] : null;
+      var containerKey = innermost ? (innermost.type + ':' + innermost.startLine) : null;
+
+      var keyMatch = false;
+      if (pending && containerKey && pending.type === innermost.type) {
+        var prevStart = parseInt(pending.key.split(':')[1], 10);
+        keyMatch = Math.abs(innermost.startLine - prevStart) <= 5;
+      }
+
+      if (pending && keyMatch) {
+        pending.nodeIds.push(nid);
+        pending.containers = containers;
+        pending.key = containerKey;
+      } else {
+        if (pending) result.push(pending);
+        if (containerKey) {
+          pending = {
+            type: innermost.type,
+            label: innermost.label,
+            key: containerKey,
+            nodeIds: [nid],
+            containers: containers
+          };
+        } else {
+          pending = null;
+          result.push({ type: null, label: null, nodeIds: [nid] });
+        }
+      }
+
+      if (node.diff) currentLines = _applyDiff(currentLines, node.diff);
+    }
+    if (pending) result.push(pending);
+
+    return result;
+  }
+
+  // --- DAG SVG Helpers ---
+
+  function _createCrumpleSvg() {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('width', '40');
+    svg.setAttribute('height', '14');
+    svg.setAttribute('viewBox', '0 0 40 14');
+    svg.setAttribute('class', 'live-wysiwyg-dag-crumple-svg');
+    var p = document.createElementNS(ns, 'path');
+    p.setAttribute('d', 'M1 7 L6 2 L12 12 L18 2 L24 12 L30 2 L35 7 L39 7');
+    p.setAttribute('stroke', 'currentColor');
+    p.setAttribute('stroke-width', '2');
+    p.setAttribute('stroke-linecap', 'round');
+    p.setAttribute('stroke-linejoin', 'round');
+    p.setAttribute('fill', 'none');
+    svg.appendChild(p);
+    return svg;
+  }
+
+  function _createVtreeForkSvg() {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('width', '22');
+    svg.setAttribute('height', '20');
+    svg.setAttribute('viewBox', '0 0 22 20');
+    svg.setAttribute('class', 'live-wysiwyg-dag-vtree-svg');
+    var makeArrow = function (d) {
+      var p = document.createElementNS(ns, 'path');
+      p.setAttribute('d', d);
+      p.setAttribute('stroke', 'currentColor');
+      p.setAttribute('stroke-width', '1.5');
+      p.setAttribute('stroke-linecap', 'round');
+      p.setAttribute('stroke-dasharray', '3 2');
+      p.setAttribute('fill', 'none');
+      return p;
+    };
+    svg.appendChild(makeArrow('M1 10 L18 10'));
+    svg.appendChild(makeArrow('M1 10 L14 3'));
+    svg.appendChild(makeArrow('M1 10 L14 17'));
+    var makeHead = function (x, y, angle) {
+      var head = document.createElementNS(ns, 'path');
+      var rad = angle * Math.PI / 180;
+      var dx1 = -5 * Math.cos(rad) - 3 * Math.sin(rad);
+      var dy1 = -5 * Math.sin(rad) + 3 * Math.cos(rad);
+      var dx2 = -5 * Math.cos(rad) + 3 * Math.sin(rad);
+      var dy2 = -5 * Math.sin(rad) - 3 * Math.cos(rad);
+      head.setAttribute('d', 'M' + (x + dx1) + ' ' + (y + dy1) + ' L' + x + ' ' + y + ' L' + (x + dx2) + ' ' + (y + dy2));
+      head.setAttribute('stroke', 'currentColor');
+      head.setAttribute('stroke-width', '1.5');
+      head.setAttribute('stroke-linecap', 'round');
+      head.setAttribute('stroke-linejoin', 'round');
+      head.setAttribute('fill', 'none');
+      return head;
+    };
+    svg.appendChild(makeHead(18, 10, 0));
+    svg.appendChild(makeHead(14, 3, -28));
+    svg.appendChild(makeHead(14, 17, 28));
+    return svg;
+  }
+
+  // --- DAG Layout Algorithm ---
+
+  function _countSubtreeNodes(nodeId) {
+    var node = _historyNodes[nodeId];
+    if (!node) return 0;
+    var count = 1;
+    for (var i = 0; i < node.children.length; i++) {
+      count += _countSubtreeNodes(node.children[i]);
+    }
+    return count;
+  }
+
+  function _computeDagLayout() {
+    var rootId = null;
+    var ids = Object.keys(_historyNodes);
+    for (var i = 0; i < ids.length; i++) {
+      var n = _historyNodes[ids[i]];
+      if (n.parentId === null) { rootId = n.id; break; }
+    }
+    if (rootId === null) return { nodes: [], edges: [], width: 0, height: 0, groups: [] };
+
+    var NODE_W = 300;
+    var NODE_H = 60;
+    var CRUMPLE_H = 40;
+    var H_GAP = 28;
+    var V_GAP = 20;
+
+    // === PHASE 1: Full tree layout (bottom-to-top) ===
+
+    // 1a. Build active path: root → current → latest active leaf
+    // First, find path from root to _historyCurrentId
+    var rootToCurrent = [];
+    var walkBack = _historyCurrentId;
+    while (walkBack !== null && _historyNodes[walkBack]) {
+      rootToCurrent.push(walkBack);
+      walkBack = _historyNodes[walkBack].parentId;
+    }
+    rootToCurrent.reverse();
+
+    // Then extend forward from current via activeChildId
+    var activePath = {};
+    var activePathList = rootToCurrent.slice();
+    for (var rtc = 0; rtc < rootToCurrent.length; rtc++) {
+      activePath[rootToCurrent[rtc]] = true;
+    }
+    var fwdId = _historyCurrentId;
+    if (_historyNodes[fwdId]) {
+      fwdId = _historyNodes[fwdId].activeChildId || null;
+    }
+    while (fwdId !== null && _historyNodes[fwdId]) {
+      if (!activePath[fwdId]) {
+        activePath[fwdId] = true;
+        activePathList.push(fwdId);
+      }
+      fwdId = _historyNodes[fwdId].activeChildId || null;
+    }
+
+    // 1b. Assign rows to active path: root=row 0 (bottom), latest leaf=highest row (top)
+    var activeLen = activePathList.length;
+    var fullPositions = {};
+    for (var ap = 0; ap < activeLen; ap++) {
+      fullPositions[activePathList[ap]] = { col: 0, row: ap };
+    }
+
+    // 1c. Lay out all branch subtrees vertically
+    var maxCol = { val: 0 };
+    var colOccupied = {};
+    for (var apb = 0; apb < activeLen; apb++) {
+      var bpNode = _historyNodes[activePathList[apb]];
+      if (!bpNode) continue;
+      var nonActiveKids = [];
+      for (var bc = 0; bc < bpNode.children.length; bc++) {
+        if (!activePath[bpNode.children[bc]]) nonActiveKids.push(bpNode.children[bc]);
+      }
+      if (nonActiveKids.length === 0) continue;
+      var forkRow = fullPositions[activePathList[apb]].row;
+      for (var nk = 0; nk < nonActiveKids.length; nk++) {
+        _layoutBranchVertical(nonActiveKids[nk], 1, forkRow, fullPositions, maxCol, colOccupied);
+      }
+    }
+
+    // === PHASE 2: Crumple zones (overlay on full tree) ===
+
+    var groups = _computeContainerGroups(activePathList);
+    var hiddenByZone = {};
+    var crumpleZones = [];
+    for (var gi = 0; gi < groups.length; gi++) {
+      var grp = groups[gi];
+      if (!grp.type || grp.nodeIds.length < 2) continue;
+      var groupKey = 'g-' + grp.nodeIds[0];
+      var groupExpanded = !!_historyDagExpandedGroups[groupKey];
+      if (!groupExpanded) {
+        crumpleZones.push({
+          key: groupKey, type: grp.type, label: grp.label,
+          nodeIds: grp.nodeIds, repId: grp.nodeIds[0]
+        });
+        for (var gh = 1; gh < grp.nodeIds.length; gh++) {
+          hiddenByZone[grp.nodeIds[gh]] = groupKey;
+        }
+      }
+    }
+
+    // Build branch metadata for collapsed branch display
+    var branchMeta = {};
+    for (var apbm = 0; apbm < activeLen; apbm++) {
+      var bmNode = _historyNodes[activePathList[apbm]];
+      if (!bmNode) continue;
+      for (var bmc = 0; bmc < bmNode.children.length; bmc++) {
+        var bmChildId = bmNode.children[bmc];
+        if (!activePath[bmChildId]) {
+          branchMeta[activePathList[apbm] + '-' + bmChildId] = {
+            parentId: activePathList[apbm],
+            childId: bmChildId,
+            subtreeCount: _countSubtreeNodes(bmChildId)
+          };
+        }
+      }
+    }
+
+    // Build synthetic nodes for collapsed branches
+    var syntheticId = -100;
+    var syntheticNodes = {};
+    var branchPoints = [];
+
+    for (var apbp = 0; apbp < activeLen; apbp++) {
+      var bpNd = _historyNodes[activePathList[apbp]];
+      if (!bpNd || bpNd.children.length <= 1) continue;
+      var nacList = [];
+      for (var nac = 0; nac < bpNd.children.length; nac++) {
+        if (!activePath[bpNd.children[nac]]) nacList.push(bpNd.children[nac]);
+      }
+      if (nacList.length === 0) continue;
+      var bpKey = 'bp-' + activePathList[apbp];
+      var parentRow = fullPositions[activePathList[apbp]].row;
+      branchPoints.push({
+        parentId: activePathList[apbp], parentRow: parentRow,
+        children: nacList, isVtree: nacList.length >= 2, bpKey: bpKey
+      });
+    }
+
+    // Determine visible rows for compact rendering
+    var visibleRows = {};
+    for (var vap = 0; vap < activeLen; vap++) {
+      var vapId = activePathList[vap];
+      if (!hiddenByZone[vapId]) {
+        visibleRows[fullPositions[vapId].row] = true;
+      }
+    }
+    for (var vz = 0; vz < crumpleZones.length; vz++) {
+      visibleRows[fullPositions[crumpleZones[vz].repId].row] = true;
+    }
+
+    // For expanded branches, mark their rows visible
+    for (var bpi = 0; bpi < branchPoints.length; bpi++) {
+      var bpInfo = branchPoints[bpi];
+      var isExpanded = false;
+      if (bpInfo.isVtree) {
+        if (_historyDagActiveBranchKey === bpInfo.bpKey) isExpanded = true;
+      } else {
+        var sKey = bpInfo.parentId + '-' + bpInfo.children[0];
+        if (_historyDagActiveBranchKey === sKey) isExpanded = true;
+      }
+      if (isExpanded) {
+        var expandChild = bpInfo.isVtree
+          ? (_historyDagVtreeSelectedBranch[bpInfo.bpKey] || null)
+          : bpInfo.children[0];
+        if (expandChild && fullPositions[expandChild]) {
+          var stack = [expandChild];
+          while (stack.length > 0) {
+            var sid = stack.pop();
+            if (fullPositions[sid]) visibleRows[fullPositions[sid].row] = true;
+            var snd = _historyNodes[sid];
+            if (snd) {
+              for (var sc = 0; sc < snd.children.length; sc++) stack.push(snd.children[sc]);
+            }
+          }
+        }
+      }
+    }
+
+    // Also mark synthetic node rows and vtree option rows
+    for (var bpi2 = 0; bpi2 < branchPoints.length; bpi2++) {
+      var bp2 = branchPoints[bpi2];
+      visibleRows[bp2.parentRow] = true;
+      if (bp2.isVtree && _historyDagActiveBranchKey === bp2.bpKey && !_historyDagVtreeSelectedBranch[bp2.bpKey]) {
+        for (var vopt = 0; vopt < bp2.children.length; vopt++) {
+          visibleRows[bp2.parentRow + vopt + 1] = true;
+        }
+      }
+    }
+
+    // Compact row mapping: map full rows to compact sequential rows, skipping hidden
+    var allRows = Object.keys(visibleRows).map(Number).sort(function (a, b) { return a - b; });
+    var compactMap = {};
+    for (var cr = 0; cr < allRows.length; cr++) {
+      compactMap[allRows[cr]] = cr;
+    }
+    var totalCompactRows = allRows.length;
+
+    // Build synthetic positioned nodes
+    for (var bps = 0; bps < branchPoints.length; bps++) {
+      var bpsInfo = branchPoints[bps];
+      var synRow2 = bpsInfo.parentRow;
+      if (bpsInfo.isVtree) {
+        var vtreeId = syntheticId--;
+        syntheticNodes[vtreeId] = {
+          isVtreeFork: true,
+          vtreeParentId: bpsInfo.parentId,
+          vtreeChildIds: bpsInfo.children,
+          vtreeBpKey: bpsInfo.bpKey
+        };
+        fullPositions[vtreeId] = { col: 1, row: synRow2 };
+        if (1 > maxCol.val) maxCol.val = 1;
+
+        var selectedChildId = _historyDagVtreeSelectedBranch[bpsInfo.bpKey] || null;
+        var isThisActive = (_historyDagActiveBranchKey === bpsInfo.bpKey);
+        if (isThisActive && !selectedChildId) {
+          for (var vci = 0; vci < bpsInfo.children.length; vci++) {
+            var pickerId = syntheticId--;
+            syntheticNodes[pickerId] = {
+              isVtreeOption: true,
+              vtreeBpKey: bpsInfo.bpKey,
+              optionChildId: bpsInfo.children[vci],
+              optionSummary: _historyNodes[bpsInfo.children[vci]]
+                ? (_historyNodes[bpsInfo.children[vci]].summary || 'edit')
+                : 'edit',
+              optionCount: branchMeta[bpsInfo.parentId + '-' + bpsInfo.children[vci]]
+                ? branchMeta[bpsInfo.parentId + '-' + bpsInfo.children[vci]].subtreeCount
+                : 1
+            };
+            fullPositions[pickerId] = { col: 2, row: synRow2 + vci + 1 };
+            if (2 > maxCol.val) maxCol.val = 2;
+          }
+        }
+      } else {
+        var brChild = bpsInfo.children[0];
+        var singleKey = bpsInfo.parentId + '-' + brChild;
+        var singleId = syntheticId--;
+        syntheticNodes[singleId] = {
+          isBranchCrumple: true,
+          branchKey: singleKey,
+          branchChildId: brChild,
+          branchCount: branchMeta[singleKey] ? branchMeta[singleKey].subtreeCount : 1
+        };
+        fullPositions[singleId] = { col: 1, row: synRow2 };
+        if (1 > maxCol.val) maxCol.val = 1;
+      }
+    }
+
+    // === PHASE 3: Build layout nodes and edges ===
+
+    var layoutNodes = [];
+    var edges = [];
+    var posKeys = Object.keys(fullPositions);
+
+    for (var p = 0; p < posKeys.length; p++) {
+      var lnid = parseInt(posKeys[p], 10);
+      var pos = fullPositions[lnid];
+      var nd = _historyNodes[lnid];
+      var syn = syntheticNodes[lnid] || null;
+      var isOnActive = !!activePath[lnid];
+      var isHidden = !!hiddenByZone[lnid];
+
+      // Check if this branch node is in an expanded branch
+      var isBranchNodeVisible = false;
+      if (!isOnActive && nd && !syn) {
+        for (var ebp = 0; ebp < branchPoints.length; ebp++) {
+          var ebInfo = branchPoints[ebp];
+          var ebExpanded = false;
+          var ebChildRoot = null;
+          if (ebInfo.isVtree) {
+            if (_historyDagActiveBranchKey === ebInfo.bpKey) {
+              ebChildRoot = _historyDagVtreeSelectedBranch[ebInfo.bpKey] || null;
+              ebExpanded = !!ebChildRoot;
+            }
+          } else {
+            var ebKey = ebInfo.parentId + '-' + ebInfo.children[0];
+            if (_historyDagActiveBranchKey === ebKey) {
+              ebChildRoot = ebInfo.children[0];
+              ebExpanded = true;
+            }
+          }
+          if (ebExpanded && ebChildRoot) {
+            var checkStack = [ebChildRoot];
+            while (checkStack.length > 0) {
+              var checkId = checkStack.pop();
+              if (checkId === lnid) { isBranchNodeVisible = true; break; }
+              var checkNd = _historyNodes[checkId];
+              if (checkNd) {
+                for (var csc = 0; csc < checkNd.children.length; csc++) checkStack.push(checkNd.children[csc]);
+              }
+            }
+            if (isBranchNodeVisible) break;
+          }
+        }
+      }
+
+      var skipRender = isHidden || (!isOnActive && !syn && !isBranchNodeVisible);
+      if (skipRender && !syn) continue;
+
+      var compactRow = compactMap[pos.row];
+      if (compactRow === undefined) compactRow = pos.row;
+      var displayRow = totalCompactRows - 1 - compactRow;
+
+      var isCrumpleNode = false;
+      var crInfo = null;
+      for (var czi = 0; czi < crumpleZones.length; czi++) {
+        if (crumpleZones[czi].repId === lnid) {
+          isCrumpleNode = true;
+          crInfo = crumpleZones[czi];
+          break;
+        }
+      }
+
+      var nodeH = (isCrumpleNode || (syn && (syn.isBranchCrumple || syn.isVtreeFork || syn.isVtreeOption))) ? CRUMPLE_H : NODE_H;
+
+      layoutNodes.push({
+        id: lnid,
+        x: pos.col * (NODE_W + H_GAP) + NODE_W / 2,
+        y: displayRow * (NODE_H + V_GAP) + NODE_H / 2,
+        row: pos.row,
+        displayRow: displayRow,
+        col: pos.col,
+        onActivePath: isOnActive,
+        isCurrent: lnid === _historyCurrentId,
+        isBranch: (nd && nd.children.length > 1),
+        isCrumple: isCrumpleNode,
+        crumpleKey: crInfo ? crInfo.key : null,
+        crumpleType: crInfo ? crInfo.type : null,
+        crumpleLabel: crInfo ? crInfo.label : null,
+        crumpleCount: crInfo ? crInfo.nodeIds.length : 0,
+        crumpleNodeIds: crInfo ? crInfo.nodeIds : null,
+        isVtreeFork: syn ? !!syn.isVtreeFork : false,
+        vtreeParentId: syn ? syn.vtreeParentId || null : null,
+        vtreeChildIds: syn ? syn.vtreeChildIds || null : null,
+        vtreeBpKey: syn ? syn.vtreeBpKey || null : null,
+        isVtreeOption: syn ? !!syn.isVtreeOption : false,
+        optionChildId: syn ? syn.optionChildId || null : null,
+        optionSummary: syn ? syn.optionSummary || null : null,
+        optionCount: syn ? syn.optionCount || 0 : 0,
+        isBranchCrumple: syn ? !!syn.isBranchCrumple : false,
+        branchKey: syn ? syn.branchKey || null : null,
+        branchChildId: syn ? syn.branchChildId || null : null,
+        branchCount: syn ? syn.branchCount || 0 : 0,
+        isSynthetic: !!syn
+      });
+    }
+
+    layoutNodes.sort(function (a, b) { return a.displayRow - b.displayRow; });
+
+    // Proper Y positioning with row height awareness
+    var rowMaxH = {};
+    for (var rhi = 0; rhi < layoutNodes.length; rhi++) {
+      var rhLn = layoutNodes[rhi];
+      var rhH = (rhLn.isCrumple || rhLn.isBranchCrumple || rhLn.isVtreeFork || rhLn.isVtreeOption) ? CRUMPLE_H : NODE_H;
+      if (rowMaxH[rhLn.displayRow] === undefined || rhH > rowMaxH[rhLn.displayRow]) {
+        rowMaxH[rhLn.displayRow] = rhH;
+      }
+    }
+    var sortedDisplayRows = Object.keys(rowMaxH).map(Number).sort(function (a, b) { return a - b; });
+    var yAccum = 0;
+    var rowYMap = {};
+    for (var sri = 0; sri < sortedDisplayRows.length; sri++) {
+      var rNum = sortedDisplayRows[sri];
+      var rH = rowMaxH[rNum];
+      if (sri > 0) yAccum += V_GAP;
+      yAccum += rH / 2;
+      rowYMap[rNum] = yAccum;
+      yAccum += rH / 2;
+    }
+    for (var yi = 0; yi < layoutNodes.length; yi++) {
+      var lnY = layoutNodes[yi];
+      lnY.y = rowYMap[lnY.displayRow] !== undefined ? rowYMap[lnY.displayRow] : lnY.y;
+    }
+
+    // Build lookup for edge drawing
+    var lnById = {};
+    for (var lni = 0; lni < layoutNodes.length; lni++) {
+      lnById[layoutNodes[lni].id] = layoutNodes[lni];
+    }
+
+    // Draw edges between visible parent-child pairs (children are above parents)
+    for (var ei = 0; ei < layoutNodes.length; ei++) {
+      var eln = layoutNodes[ei];
+      var eNd = _historyNodes[eln.id];
+      if (!eNd) continue;
+      for (var eci = 0; eci < eNd.children.length; eci++) {
+        var childLn = lnById[eNd.children[eci]];
+        if (!childLn) continue;
+        var yOff1 = (eln.isCrumple || eln.isBranchCrumple) ? 14 : 18;
+        var yOff2 = (childLn.isCrumple || childLn.isBranchCrumple) ? 14 : 18;
+        edges.push({
+          x1: eln.x, y1: eln.y - yOff1,
+          x2: childLn.x, y2: childLn.y + yOff2,
+          active: eln.onActivePath && childLn.onActivePath,
+          collapsed: false
+        });
+      }
+    }
+
+    // Edges from synthetic nodes (upward: synthetic → options/branch children above)
+    for (var sei = 0; sei < layoutNodes.length; sei++) {
+      var seln = layoutNodes[sei];
+      if (seln.isVtreeFork) {
+        for (var voi = 0; voi < layoutNodes.length; voi++) {
+          var voLn = layoutNodes[voi];
+          if (voLn.isVtreeOption && voLn.vtreeBpKey === seln.vtreeBpKey) {
+            edges.push({ x1: seln.x, y1: seln.y - 14, x2: voLn.x, y2: voLn.y + 14, active: false, collapsed: false });
+          }
+        }
+        var vtreeSelChild = _historyDagVtreeSelectedBranch[seln.vtreeBpKey];
+        if (vtreeSelChild && lnById[vtreeSelChild]) {
+          var selLn = lnById[vtreeSelChild];
+          edges.push({ x1: seln.x, y1: seln.y - 14, x2: selLn.x, y2: selLn.y + 18, active: false, collapsed: false });
+        }
+      }
+      if (seln.isBranchCrumple && _historyDagActiveBranchKey === seln.branchKey) {
+        var brFirstLn = lnById[seln.branchChildId];
+        if (brFirstLn) {
+          edges.push({ x1: seln.x, y1: seln.y - 14, x2: brFirstLn.x, y2: brFirstLn.y + 18, active: false, collapsed: false });
+        }
+      }
+    }
+
+    // Edges from active-path fork points to synthetic branch entries
+    for (var bpe = 0; bpe < branchPoints.length; bpe++) {
+      var bpeInfo = branchPoints[bpe];
+      var parentLn = lnById[bpeInfo.parentId];
+      if (!parentLn) {
+        for (var czl = 0; czl < crumpleZones.length; czl++) {
+          for (var czn = 0; czn < crumpleZones[czl].nodeIds.length; czn++) {
+            if (crumpleZones[czl].nodeIds[czn] === bpeInfo.parentId) {
+              parentLn = lnById[crumpleZones[czl].repId];
+              break;
+            }
+          }
+          if (parentLn) break;
+        }
+      }
+      if (!parentLn) continue;
+      var entryLn = null;
+      for (var eli2 = 0; eli2 < layoutNodes.length; eli2++) {
+        var cand = layoutNodes[eli2];
+        if (bpeInfo.isVtree && cand.isVtreeFork && cand.vtreeBpKey === bpeInfo.bpKey) { entryLn = cand; break; }
+        if (!bpeInfo.isVtree && cand.isBranchCrumple && cand.branchKey === (bpeInfo.parentId + '-' + bpeInfo.children[0])) { entryLn = cand; break; }
+      }
+      if (entryLn) {
+        edges.push({ x1: parentLn.x, y1: parentLn.y, x2: entryLn.x, y2: entryLn.y, active: false, collapsed: false });
+      }
+    }
+
+    // Active-path edge continuity through crumple zones
+    var visibleApIds = [];
+    for (var vapi = 0; vapi < activeLen; vapi++) {
+      if (lnById[activePathList[vapi]]) visibleApIds.push(activePathList[vapi]);
+    }
+    for (var vapei = 0; vapei < visibleApIds.length - 1; vapei++) {
+      var vapFrom = visibleApIds[vapei];
+      var vapTo = visibleApIds[vapei + 1];
+      var vapNd = _historyNodes[vapFrom];
+      var isDirect = false;
+      if (vapNd) {
+        for (var vdc = 0; vdc < vapNd.children.length; vdc++) {
+          if (vapNd.children[vdc] === vapTo) { isDirect = true; break; }
+        }
+      }
+      if (isDirect) continue;
+      var fLn = lnById[vapFrom];
+      var tLn = lnById[vapTo];
+      if (fLn && tLn) {
+        var fOff = (fLn.isCrumple || fLn.isBranchCrumple) ? 14 : 18;
+        var tOff = (tLn.isCrumple || tLn.isBranchCrumple) ? 14 : 18;
+        edges.push({ x1: fLn.x, y1: fLn.y - fOff, x2: tLn.x, y2: tLn.y + tOff, active: true, collapsed: false });
+      }
+    }
+
+    var maxY = 0;
+    for (var myi = 0; myi < layoutNodes.length; myi++) {
+      var my = layoutNodes[myi].y + NODE_H / 2;
+      if (my > maxY) maxY = my;
+    }
+    var totalW = (maxCol.val + 1) * (NODE_W + H_GAP);
+    var totalH = maxY + V_GAP;
+
+    return { nodes: layoutNodes, edges: edges, width: totalW, height: totalH, groups: groups };
+  }
+
+  function _layoutBranchVertical(nodeId, preferCol, forkRow, positions, maxCol, colOccupied) {
+    var subtree = [];
+    var stack = [nodeId];
+    while (stack.length > 0) {
+      var sid = stack.pop();
+      var snd = _historyNodes[sid];
+      if (!snd) continue;
+      subtree.push(sid);
+      for (var sc = snd.children.length - 1; sc >= 0; sc--) {
+        stack.push(snd.children[sc]);
+      }
+    }
+    var col = preferCol;
+    var hasCollision = true;
+    while (hasCollision) {
+      hasCollision = false;
+      for (var ci = 0; ci < subtree.length; ci++) {
+        var testRow = forkRow + 1 + ci;
+        var key = col + ':' + testRow;
+        if (colOccupied[key]) { hasCollision = true; break; }
+      }
+      if (hasCollision) col++;
+    }
+    if (col > maxCol.val) maxCol.val = col;
+    for (var pi = 0; pi < subtree.length; pi++) {
+      var r = forkRow + 1 + pi;
+      positions[subtree[pi]] = { col: col, row: r };
+      colOccupied[col + ':' + r] = true;
+    }
+  }
+
+  function _computeYahRoute(startX, startY, layoutNodes, currentNodeId, maxX, maxY) {
+    var PAD = 14;
+    var rects = [];
+    for (var i = 0; i < layoutNodes.length; i++) {
+      var ln = layoutNodes[i];
+      if (ln.id === currentNodeId) continue;
+      var hw = 150;
+      var hh = (ln.isCrumple || ln.isBranchCrumple || ln.isVtreeFork || ln.isVtreeOption) ? 18 : 24;
+      rects.push({ l: ln.x - hw, r: ln.x + hw, t: ln.y - hh, b: ln.y + hh });
+    }
+
+    var endX = Math.max(maxX - 80, startX + 100);
+    var pts = [{ x: startX, y: startY }];
+    var curY = startY;
+
+    var rightRects = [];
+    for (var ri = 0; ri < rects.length; ri++) {
+      if (rects[ri].r > startX && rects[ri].l < endX) rightRects.push(rects[ri]);
+    }
+    rightRects.sort(function (a, b) { return a.l - b.l; });
+
+    for (var oi = 0; oi < rightRects.length; oi++) {
+      var obs = rightRects[oi];
+      if (curY < obs.t - PAD || curY > obs.b + PAD) continue;
+
+      var aboveY = obs.t - PAD - 8;
+      var belowY = obs.b + PAD + 8;
+      var newY;
+      if (aboveY < 10) newY = belowY;
+      else if (belowY > maxY - 10) newY = aboveY;
+      else newY = (Math.abs(curY - aboveY) <= Math.abs(curY - belowY)) ? aboveY : belowY;
+
+      var approachX = Math.max(obs.l - PAD - 20, startX + 10);
+      pts.push({ x: approachX, y: curY });
+      pts.push({ x: (obs.l + obs.r) / 2, y: newY });
+      pts.push({ x: obs.r + PAD + 20, y: newY });
+      curY = newY;
+    }
+
+    pts.push({ x: endX, y: curY });
+    return { points: pts, endY: curY };
+  }
+
+  function _yahPointsToPath(pts) {
+    if (pts.length < 2) return '';
+    var d = 'M' + pts[0].x.toFixed(1) + ' ' + pts[0].y.toFixed(1);
+    for (var i = 1; i < pts.length; i++) {
+      var p = pts[i - 1], c = pts[i];
+      if (Math.abs(p.y - c.y) < 1) {
+        d += ' L' + c.x.toFixed(1) + ' ' + c.y.toFixed(1);
+      } else {
+        var mx = (p.x + c.x) / 2;
+        d += ' C' + mx.toFixed(1) + ' ' + p.y.toFixed(1) + ', ' +
+          mx.toFixed(1) + ' ' + c.y.toFixed(1) + ', ' +
+          c.x.toFixed(1) + ' ' + c.y.toFixed(1);
+      }
+    }
+    return d;
+  }
+
+  function _computeOrganicLayout() {
+    var rootId = null;
+    var ids = Object.keys(_historyNodes);
+    for (var i = 0; i < ids.length; i++) {
+      if (_historyNodes[ids[i]].parentId === null) { rootId = _historyNodes[ids[i]].id; break; }
+    }
+    if (rootId === null) return { nodes: [], edges: [], width: 0, height: 0 };
+
+    var DOT_R = 5;
+    var DOT_GAP = 6;
+    var STEP = DOT_R * 2 + DOT_GAP;
+
+    var rootToCurrent = [];
+    var walkBack = _historyCurrentId;
+    while (walkBack !== null && _historyNodes[walkBack]) {
+      rootToCurrent.push(walkBack);
+      walkBack = _historyNodes[walkBack].parentId;
+    }
+    rootToCurrent.reverse();
+
+    var activePath = {};
+    var activePathList = rootToCurrent.slice();
+    for (var rtc = 0; rtc < rootToCurrent.length; rtc++) {
+      activePath[rootToCurrent[rtc]] = true;
+    }
+    var fwdId = _historyCurrentId;
+    if (_historyNodes[fwdId]) {
+      fwdId = _historyNodes[fwdId].activeChildId || null;
+    }
+    while (fwdId !== null && _historyNodes[fwdId]) {
+      if (!activePath[fwdId]) {
+        activePath[fwdId] = true;
+        activePathList.push(fwdId);
+      }
+      fwdId = _historyNodes[fwdId].activeChildId || null;
+    }
+
+    var positions = {};
+    var allNodes = [];
+    var edges = [];
+    var centerX = 200;
+    var activeLen = activePathList.length;
+
+    for (var ap = 0; ap < activeLen; ap++) {
+      var row = activeLen - 1 - ap;
+      positions[activePathList[ap]] = { x: centerX, y: row * STEP + STEP };
+      allNodes.push(activePathList[ap]);
+    }
+
+    var branchQueue = [];
+    for (var apb = 0; apb < activeLen; apb++) {
+      var bpNode = _historyNodes[activePathList[apb]];
+      if (!bpNode) continue;
+      var leftNext = true;
+      for (var bc = 0; bc < bpNode.children.length; bc++) {
+        if (!activePath[bpNode.children[bc]]) {
+          branchQueue.push({
+            nodeId: bpNode.children[bc],
+            parentPos: positions[activePathList[apb]],
+            side: leftNext ? -1 : 1,
+            depth: 1
+          });
+          leftNext = !leftNext;
+        }
+      }
+    }
+
+    while (branchQueue.length > 0) {
+      var item = branchQueue.shift();
+      var nd = _historyNodes[item.nodeId];
+      if (!nd || positions[item.nodeId]) continue;
+      var xOff = item.side * item.depth * STEP;
+      var yOff = -STEP;
+      positions[item.nodeId] = {
+        x: item.parentPos.x + xOff,
+        y: item.parentPos.y + yOff
+      };
+      allNodes.push(item.nodeId);
+      var childSide = item.side;
+      for (var cc = 0; cc < nd.children.length; cc++) {
+        branchQueue.push({
+          nodeId: nd.children[cc],
+          parentPos: positions[item.nodeId],
+          side: childSide,
+          depth: 1
+        });
+        childSide = -childSide;
+      }
+    }
+
+    var layoutNodes = [];
+    var minX = Infinity, maxX = 0, minY = Infinity, maxY = 0;
+    for (var an = 0; an < allNodes.length; an++) {
+      var nid = allNodes[an];
+      var pos = positions[nid];
+      if (!pos) continue;
+      var nd2 = _historyNodes[nid];
+      layoutNodes.push({
+        id: nid,
+        x: pos.x,
+        y: pos.y,
+        onActivePath: !!activePath[nid],
+        isCurrent: nid === _historyCurrentId,
+        summary: nd2 ? (nd2.summary || (nd2.parentId === null ? 'initial' : 'edit')) : 'edit'
+      });
+      if (pos.x < minX) minX = pos.x;
+      if (pos.x > maxX) maxX = pos.x;
+      if (pos.y < minY) minY = pos.y;
+      if (pos.y > maxY) maxY = pos.y;
+
+      if (nd2) {
+        for (var ec = 0; ec < nd2.children.length; ec++) {
+          var cpos = positions[nd2.children[ec]];
+          if (cpos) {
+            edges.push({
+              x1: pos.x, y1: pos.y,
+              x2: cpos.x, y2: cpos.y,
+              active: !!activePath[nid] && !!activePath[nd2.children[ec]]
+            });
+          }
+        }
+      }
+    }
+
+    var pad = 30;
+    for (var shi = 0; shi < layoutNodes.length; shi++) {
+      layoutNodes[shi].x -= (minX - pad);
+      layoutNodes[shi].y -= (minY - pad);
+    }
+    for (var she = 0; she < edges.length; she++) {
+      edges[she].x1 -= (minX - pad);
+      edges[she].y1 -= (minY - pad);
+      edges[she].x2 -= (minX - pad);
+      edges[she].y2 -= (minY - pad);
+    }
+
+    return {
+      nodes: layoutNodes,
+      edges: edges,
+      width: maxX - minX + pad * 2,
+      height: maxY - minY + pad * 2
+    };
+  }
+
+  function _renderOrganicDag(container) {
+    container.innerHTML = '';
+    var layout = _computeOrganicLayout();
+    if (layout.nodes.length === 0) {
+      container.textContent = 'No history';
+      return;
+    }
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'live-wysiwyg-organic-wrapper';
+    wrapper.style.position = 'relative';
+    wrapper.style.width = Math.max(layout.width, 400) + 'px';
+    wrapper.style.height = layout.height + 'px';
+    wrapper.style.minWidth = '100%';
+
+    var svgNs = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(svgNs, 'svg');
+    svg.setAttribute('class', 'live-wysiwyg-organic-svg');
+    svg.setAttribute('width', Math.max(layout.width, 400));
+    svg.setAttribute('height', layout.height);
+    svg.style.position = 'absolute';
+    svg.style.top = '0';
+    svg.style.left = '0';
+
+    for (var e = 0; e < layout.edges.length; e++) {
+      var edge = layout.edges[e];
+      var ePath = document.createElementNS(svgNs, 'path');
+      var d;
+      if (Math.abs(edge.x1 - edge.x2) < 1) {
+        d = 'M' + edge.x1 + ' ' + edge.y1 + ' L' + edge.x2 + ' ' + edge.y2;
+      } else {
+        var eMidY = (edge.y1 + edge.y2) / 2;
+        d = 'M' + edge.x1 + ' ' + edge.y1 +
+          ' C' + edge.x1 + ' ' + eMidY + ', ' + edge.x2 + ' ' + eMidY + ', ' + edge.x2 + ' ' + edge.y2;
+      }
+      ePath.setAttribute('d', d);
+      ePath.setAttribute('class', edge.active ? 'live-wysiwyg-organic-edge-active' : 'live-wysiwyg-organic-edge');
+      svg.appendChild(ePath);
+    }
+    wrapper.appendChild(svg);
+
+    for (var ni = 0; ni < layout.nodes.length; ni++) {
+      var ln = layout.nodes[ni];
+      var dot = document.createElement('div');
+      dot.className = 'live-wysiwyg-organic-dot';
+      if (ln.onActivePath) dot.classList.add('active-path');
+      if (ln.isCurrent) dot.classList.add('current');
+      dot.style.position = 'absolute';
+      dot.style.left = (ln.x - 5) + 'px';
+      dot.style.top = (ln.y - 5) + 'px';
+      dot.setAttribute('data-node-id', ln.id);
+      dot.title = ln.summary;
+
+      (function (nodeId) {
+        dot.addEventListener('click', function (ev) {
+          if (ev.detail === 2) return;
+          _selectDagNode(nodeId);
+        });
+        dot.addEventListener('dblclick', function () {
+          _restoreToHistoryNode(nodeId);
+          _exitHistoryMode();
+        });
+      })(ln.id);
+
+      wrapper.appendChild(dot);
+    }
+
+    container.appendChild(wrapper);
+
+    var currentDot = container.querySelector('.live-wysiwyg-organic-dot.current');
+    if (currentDot) {
+      currentDot.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+    }
+  }
+
+  function _renderDag(container, opts) {
+    if (_historyDagViewMode === 'organic') {
+      _renderOrganicDag(container);
+      return;
+    }
+    var skipAutoScroll = opts && opts.skipAutoScroll;
+    container.innerHTML = '';
+    var layout = _computeDagLayout();
+    if (layout.nodes.length === 0) {
+      container.textContent = 'No history';
+      return;
+    }
+
+    var yahLabelExtra = 180;
+    var wrapperW = Math.max(layout.width + yahLabelExtra, 400);
+
+    var wrapper = document.createElement('div');
+    wrapper.style.position = 'relative';
+    wrapper.style.width = wrapperW + 'px';
+    wrapper.style.height = layout.height + 'px';
+    wrapper.style.minWidth = '100%';
+
+    var svgNs = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(svgNs, 'svg');
+    svg.setAttribute('class', 'live-wysiwyg-history-dag-svg');
+    svg.setAttribute('width', wrapperW);
+    svg.setAttribute('height', layout.height);
+    svg.style.position = 'absolute';
+    svg.style.top = '0';
+    svg.style.left = '0';
+
+    for (var e = 0; e < layout.edges.length; e++) {
+      var edge = layout.edges[e];
+      if (edge.collapsed) continue;
+      var ePath = document.createElementNS(svgNs, 'path');
+      var d;
+      if (Math.abs(edge.x1 - edge.x2) < 1) {
+        d = 'M' + edge.x1 + ' ' + edge.y1 + ' L' + edge.x2 + ' ' + edge.y2;
+      } else {
+        var eMidY = (edge.y1 + edge.y2) / 2;
+        d = 'M' + edge.x1 + ' ' + edge.y1 +
+          ' C' + edge.x1 + ' ' + eMidY + ', ' + edge.x2 + ' ' + eMidY + ', ' + edge.x2 + ' ' + edge.y2;
+      }
+      ePath.setAttribute('d', d);
+      ePath.setAttribute('class', edge.active ? 'live-wysiwyg-dag-edge-active' : 'live-wysiwyg-dag-edge');
+      svg.appendChild(ePath);
+    }
+    wrapper.appendChild(svg);
+
+    var currentLn = null;
+    for (var ci = 0; ci < layout.nodes.length; ci++) {
+      if (layout.nodes[ci].isCurrent) { currentLn = layout.nodes[ci]; break; }
+    }
+    var yahRoute = null;
+    if (currentLn) {
+      var yahStartX = currentLn.x + 150 + 4;
+      var yahStartY = currentLn.y;
+      var svgW = parseInt(svg.getAttribute('width'), 10) || layout.width;
+      var svgH = parseInt(svg.getAttribute('height'), 10) || layout.height;
+      yahRoute = _computeYahRoute(yahStartX, yahStartY, layout.nodes, currentLn.id, svgW, svgH);
+
+      var yahPathD = _yahPointsToPath(yahRoute.points);
+      if (yahPathD) {
+        var yahPath = document.createElementNS(svgNs, 'path');
+        yahPath.setAttribute('d', yahPathD);
+        yahPath.setAttribute('class', 'live-wysiwyg-dag-yah-path');
+        svg.appendChild(yahPath);
+
+        var arrowSize = 14;
+        var arrowTip = yahRoute.points[0];
+        var arrowD = 'M' + (arrowTip.x - 2).toFixed(1) + ' ' + arrowTip.y.toFixed(1) +
+          ' L' + (arrowTip.x + arrowSize).toFixed(1) + ' ' + (arrowTip.y - arrowSize * 0.55).toFixed(1) +
+          ' L' + (arrowTip.x + arrowSize).toFixed(1) + ' ' + (arrowTip.y + arrowSize * 0.55).toFixed(1) + ' Z';
+        var yahArrow = document.createElementNS(svgNs, 'path');
+        yahArrow.setAttribute('d', arrowD);
+        yahArrow.setAttribute('class', 'live-wysiwyg-dag-yah-arrowhead');
+        svg.appendChild(yahArrow);
+      }
+    }
+
+    var nodesLayer = document.createElement('div');
+    nodesLayer.className = 'live-wysiwyg-history-dag-nodes';
+    nodesLayer.style.position = 'absolute';
+    nodesLayer.style.top = '0';
+    nodesLayer.style.left = '0';
+
+    var animatingKey = _historyDagAnimatingGroup;
+    _historyDagAnimatingGroup = null;
+    var animIdx = 0;
+
+    for (var ni = 0; ni < layout.nodes.length; ni++) {
+      var ln = layout.nodes[ni];
+      var nodeData = _historyNodes[ln.id];
+      var el;
+
+      if (ln.isCrumple) {
+        el = document.createElement('div');
+        el.className = 'live-wysiwyg-dag-crumple';
+        if (ln.crumpleType) el.setAttribute('data-container-type', ln.crumpleType);
+        el.style.position = 'absolute';
+        el.style.left = (ln.x - 150) + 'px';
+        el.style.top = (ln.y - 18) + 'px';
+        el.appendChild(_createCrumpleSvg());
+        var crLabel = document.createElement('span');
+        crLabel.className = 'live-wysiwyg-dag-crumple-label';
+        crLabel.textContent = ln.crumpleLabel + ' (' + ln.crumpleCount + ' edits)';
+        el.appendChild(crLabel);
+        (function (key, dagContainer) {
+          el.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            _historyDagAnimatingGroup = key;
+            _historyDagExpandedGroups[key] = true;
+            _renderDag(dagContainer);
+          });
+        })(ln.crumpleKey, container);
+        nodesLayer.appendChild(el);
+        continue;
+      }
+
+      if (ln.isVtreeFork) {
+        el = document.createElement('div');
+        el.className = 'live-wysiwyg-dag-vtree-fork';
+        el.style.position = 'absolute';
+        el.style.left = (ln.x - 150) + 'px';
+        el.style.top = (ln.y - 18) + 'px';
+        el.appendChild(_createVtreeForkSvg());
+        var vtLabel = document.createElement('span');
+        vtLabel.className = 'live-wysiwyg-dag-vtree-label';
+        vtLabel.textContent = 'Multiple histories (' + (ln.vtreeChildIds ? ln.vtreeChildIds.length : 0) + ')';
+        el.appendChild(vtLabel);
+        (function (bpKey, dagContainer) {
+          el.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            if (_historyDagActiveBranchKey === bpKey) {
+              _historyDagActiveBranchKey = null;
+              _historyDagVtreeSelectedBranch[bpKey] = null;
+            } else {
+              _historyDagActiveBranchKey = bpKey;
+              _historyDagVtreeSelectedBranch[bpKey] = null;
+            }
+            _renderDag(dagContainer);
+          });
+        })(ln.vtreeBpKey, container);
+        if (_historyDagActiveBranchKey === ln.vtreeBpKey) el.classList.add('active');
+        nodesLayer.appendChild(el);
+        continue;
+      }
+
+      if (ln.isVtreeOption) {
+        el = document.createElement('div');
+        el.className = 'live-wysiwyg-dag-vtree-option';
+        el.style.position = 'absolute';
+        el.style.left = (ln.x - 150) + 'px';
+        el.style.top = (ln.y - 18) + 'px';
+        var optIcon = _createCrumpleSvg();
+        el.appendChild(optIcon);
+        var optLabel = document.createElement('span');
+        optLabel.className = 'live-wysiwyg-dag-vtree-option-label';
+        optLabel.textContent = ln.optionSummary + ' (' + ln.optionCount + ' edits)';
+        el.appendChild(optLabel);
+        (function (bpKey, childId, dagContainer) {
+          el.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            _historyDagVtreeSelectedBranch[bpKey] = childId;
+            _historyDagAnimatingGroup = bpKey;
+            _renderDag(dagContainer);
+          });
+        })(ln.vtreeBpKey, ln.optionChildId, container);
+        nodesLayer.appendChild(el);
+        continue;
+      }
+
+      if (ln.isBranchCrumple) {
+        el = document.createElement('div');
+        el.className = 'live-wysiwyg-dag-crumple branch-crumple';
+        el.style.position = 'absolute';
+        el.style.left = (ln.x - 150) + 'px';
+        el.style.top = (ln.y - 18) + 'px';
+        el.appendChild(_createCrumpleSvg());
+        var brLabel = document.createElement('span');
+        brLabel.className = 'live-wysiwyg-dag-crumple-label';
+        var brChildNode = _historyNodes[ln.branchChildId];
+        brLabel.textContent = (brChildNode ? (brChildNode.summary || 'edit') : 'edit') + ' (' + ln.branchCount + ' edits)';
+        el.appendChild(brLabel);
+        (function (brKey, dagContainer) {
+          el.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            if (_historyDagActiveBranchKey === brKey) {
+              _historyDagActiveBranchKey = null;
+            } else {
+              _historyDagActiveBranchKey = brKey;
+            }
+            _historyDagAnimatingGroup = brKey;
+            _renderDag(dagContainer);
+          });
+        })(ln.branchKey, container);
+        if (_historyDagActiveBranchKey === ln.branchKey) el.classList.add('active');
+        nodesLayer.appendChild(el);
+        continue;
+      }
+
+      el = document.createElement('div');
+      el.className = 'live-wysiwyg-history-dag-node';
+      if (ln.isCurrent) el.classList.add('current');
+      if (ln.onActivePath) el.classList.add('active-path');
+      if (ln.isBranch) el.classList.add('branch-point');
+      if (ln.id === _historyDagSelectedNodeId) el.classList.add('selected');
+      el.setAttribute('data-node-id', ln.id);
+      el.style.position = 'absolute';
+      el.style.left = (ln.x - 150) + 'px';
+      el.style.top = (ln.y - 24) + 'px';
+
+      if (animatingKey && ln.crumpleKey === undefined && !ln.isSynthetic) {
+        var isInAnimGroup = false;
+        for (var agi = 0; agi < layout.groups.length; agi++) {
+          var ag = layout.groups[agi];
+          var agKey = 'g-' + ag.nodeIds[0];
+          if (agKey === animatingKey) {
+            for (var agn = 0; agn < ag.nodeIds.length; agn++) {
+              if (ag.nodeIds[agn] === ln.id) { isInAnimGroup = true; break; }
+            }
+            break;
+          }
+        }
+        if (isInAnimGroup) {
+          el.classList.add('group-enter');
+          el.style.animationDelay = (animIdx * 50) + 'ms';
+          animIdx++;
+        }
+      }
+
+      var dot = document.createElement('span');
+      dot.className = 'live-wysiwyg-dag-dot';
+      el.appendChild(dot);
+
+      var info = document.createElement('span');
+      info.className = 'live-wysiwyg-dag-info';
+      var summaryText = nodeData ? (nodeData.summary || (nodeData.parentId === null ? 'initial content' : 'edit')) : 'edit';
+      info.textContent = summaryText;
+      el.appendChild(info);
+
+      var ts = document.createElement('span');
+      ts.className = 'live-wysiwyg-dag-time';
+      ts.textContent = nodeData ? _formatRelativeTime(nodeData.timestamp) : '';
+      el.appendChild(ts);
+
+      (function (nodeId, nodeEl) {
+        var hoverTimer = null;
+        nodeEl.addEventListener('mouseenter', function () {
+          hoverTimer = setTimeout(function () {
+            _showDagHoverPreview(nodeId, nodeEl);
+          }, 200);
+        });
+        nodeEl.addEventListener('mouseleave', function () {
+          if (hoverTimer) clearTimeout(hoverTimer);
+          _dismissDagHoverPreview();
+        });
+        nodeEl.addEventListener('click', function (ev) {
+          if (ev.detail === 2) return;
+          _selectDagNode(nodeId);
+        });
+        nodeEl.addEventListener('dblclick', function () {
+          _restoreToHistoryNode(nodeId);
+          _exitHistoryMode();
+        });
+      })(ln.id, el);
+
+      nodesLayer.appendChild(el);
+    }
+
+    // Block context dotted outlines for all container groups
+    if (layout.groups) {
+      for (var ogi = 0; ogi < layout.groups.length; ogi++) {
+        var og = layout.groups[ogi];
+        if (!og.type) continue;
+        var isActiveGroup = false;
+        for (var ogn = 0; ogn < og.nodeIds.length; ogn++) {
+          if (og.nodeIds[ogn] === _historyCurrentId) { isActiveGroup = true; break; }
+        }
+        var outlineTop = Infinity, outlineBottom = 0;
+        var outlineLeftX = Infinity;
+        for (var oli = 0; oli < layout.nodes.length; oli++) {
+          var oln = layout.nodes[oli];
+          if (oln.col !== 0) continue;
+          var isInGroup = false;
+          for (var oin = 0; oin < og.nodeIds.length; oin++) {
+            if (og.nodeIds[oin] === oln.id) { isInGroup = true; break; }
+          }
+          if (isInGroup || oln.isCrumple) {
+            if (oln.isCrumple && oln.crumpleNodeIds) {
+              var crumpOverlap = false;
+              for (var coi = 0; coi < oln.crumpleNodeIds.length; coi++) {
+                for (var coj = 0; coj < og.nodeIds.length; coj++) {
+                  if (oln.crumpleNodeIds[coi] === og.nodeIds[coj]) { crumpOverlap = true; break; }
+                }
+                if (crumpOverlap) break;
+              }
+              if (!crumpOverlap) continue;
+            }
+            var nodeTop2 = oln.y - 24;
+            var nodeBot2 = oln.y + 24;
+            if (nodeTop2 < outlineTop) outlineTop = nodeTop2;
+            if (nodeBot2 > outlineBottom) outlineBottom = nodeBot2;
+            var nodeLeft = oln.x - 150;
+            if (nodeLeft < outlineLeftX) outlineLeftX = nodeLeft;
+          }
+        }
+        if (outlineTop < outlineBottom) {
+          var outlineEl = document.createElement('div');
+          outlineEl.className = 'live-wysiwyg-dag-block-outline';
+          if (!isActiveGroup) outlineEl.classList.add('inactive');
+          if (og.type) outlineEl.setAttribute('data-container-type', og.type);
+          outlineEl.style.position = 'absolute';
+          outlineEl.style.left = (outlineLeftX - 8) + 'px';
+          outlineEl.style.top = (outlineTop - 6) + 'px';
+          outlineEl.style.width = '316px';
+          outlineEl.style.height = (outlineBottom - outlineTop + 12) + 'px';
+          var outlineTitle = document.createElement('span');
+          outlineTitle.className = 'live-wysiwyg-dag-block-outline-title';
+          outlineTitle.textContent = og.label;
+          outlineEl.appendChild(outlineTitle);
+          nodesLayer.insertBefore(outlineEl, nodesLayer.firstChild);
+        }
+      }
+    }
+
+    wrapper.appendChild(nodesLayer);
+    container.appendChild(wrapper);
+
+    if (yahRoute) {
+      var yahEndPt = yahRoute.points[yahRoute.points.length - 1];
+      var yahLabel = document.createElement('div');
+      yahLabel.className = 'live-wysiwyg-dag-you-are-here-label';
+      yahLabel.style.position = 'absolute';
+      yahLabel.style.top = (yahEndPt.y - 12) + 'px';
+      yahLabel.style.left = (yahEndPt.x + 4) + 'px';
+      var yahArrowIcon = document.createElementNS(svgNs, 'svg');
+      yahArrowIcon.setAttribute('width', '10');
+      yahArrowIcon.setAttribute('height', '12');
+      yahArrowIcon.setAttribute('viewBox', '0 0 10 12');
+      var yahTriIcon = document.createElementNS(svgNs, 'path');
+      yahTriIcon.setAttribute('d', 'M9 1 L1 6 L9 11Z');
+      yahTriIcon.setAttribute('fill', 'currentColor');
+      yahArrowIcon.appendChild(yahTriIcon);
+      yahLabel.appendChild(yahArrowIcon);
+      var yahTxt = document.createElement('span');
+      yahTxt.textContent = 'You Are Here';
+      yahLabel.appendChild(yahTxt);
+      wrapper.appendChild(yahLabel);
+
+      var yahSvgPath = svg.querySelector('.live-wysiwyg-dag-yah-path');
+      var yahDefaultLeft = yahEndPt.x + 4;
+      var yahLabelW = 130;
+      (function (lbl, svgPathEl, routePts, defLeft, lblW, dagCont) {
+        function clampYah() {
+          var visRight = dagCont.scrollLeft + dagCont.clientWidth - 8;
+          var newEndX = visRight - lblW - 4;
+          if (newEndX >= defLeft) newEndX = defLeft;
+          if (newEndX < routePts[0].x + 20) newEndX = routePts[0].x + 20;
+          lbl.style.left = (newEndX + 4) + 'px';
+
+          if (svgPathEl) {
+            var truncPts = [];
+            for (var ti = 0; ti < routePts.length - 1; ti++) {
+              if (routePts[ti].x <= newEndX) truncPts.push(routePts[ti]);
+              else break;
+            }
+            truncPts.push({ x: newEndX, y: truncPts.length > 0 ? truncPts[truncPts.length - 1].y : routePts[0].y });
+            svgPathEl.setAttribute('d', _yahPointsToPath(truncPts));
+          }
+        }
+        dagCont.addEventListener('scroll', clampYah);
+        var resObs = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(clampYah) : null;
+        if (resObs) resObs.observe(dagCont);
+        clampYah();
+      })(yahLabel, yahSvgPath, yahRoute.points, yahDefaultLeft, yahLabelW, container);
+    }
+
+    if (!skipAutoScroll) {
+      var currentEl = container.querySelector('.live-wysiwyg-history-dag-node.current');
+      if (currentEl) {
+        currentEl.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+      }
+    }
+  }
+
+  // --- Hover Preview ---
+
+  var _dagHoverPreviewEl = null;
+
+  function _dismissDagHoverPreview() {
+    if (_dagHoverPreviewEl && _dagHoverPreviewEl.parentNode) {
+      _dagHoverPreviewEl.parentNode.removeChild(_dagHoverPreviewEl);
+    }
+    _dagHoverPreviewEl = null;
+  }
+
+  function _showDagHoverPreview(nodeId, anchorEl) {
+    _dismissDagHoverPreview();
+    var md = _historyPreviewCache[nodeId];
+    if (!md) {
+      md = _reconstructContentAtNode(nodeId);
+      if (md !== null) _historyPreviewCache[nodeId] = md;
+    }
+    if (md === null) return;
+
+    var tooltip = document.createElement('div');
+    tooltip.className = 'live-wysiwyg-history-hover-preview';
+
+    var snippetEl = document.createElement('div');
+    snippetEl.className = 'live-wysiwyg-history-hover-snippet';
+    var snippetBody = _stripFrontmatterForPreview(md);
+    var snippetLines = snippetBody.split('\n').slice(0, 3).join('\n');
+    snippetEl.textContent = snippetLines;
+    tooltip.appendChild(snippetEl);
+
+    var rendered = document.createElement('div');
+    rendered.className = 'live-wysiwyg-history-hover-rendered';
+    rendered.innerHTML = _renderMarkdownPreview(md);
+    tooltip.appendChild(rendered);
+
+    var fullBtn = document.createElement('button');
+    fullBtn.className = 'live-wysiwyg-history-hover-fullscreen-btn';
+    fullBtn.textContent = 'Full Screen';
+    fullBtn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      _showHistoryFullsizePreview(nodeId);
+    });
+    tooltip.appendChild(fullBtn);
+
+    var rect = anchorEl.getBoundingClientRect();
+    tooltip.style.position = 'fixed';
+    tooltip.style.left = (rect.right + 8) + 'px';
+    tooltip.style.top = rect.top + 'px';
+    tooltip.style.zIndex = '99999';
+
+    if (rect.right + 320 > window.innerWidth) {
+      tooltip.style.left = '';
+      tooltip.style.right = (window.innerWidth - rect.left + 8) + 'px';
+    }
+
+    var appendTarget = _historyOverlay || _focusOverlay || document.body;
+    appendTarget.appendChild(tooltip);
+    _dagHoverPreviewEl = tooltip;
+  }
+
+  // --- Click Selection & Preview Panel ---
+
+  function _selectDagNode(nodeId) {
+    _historyDagSelectedNodeId = nodeId;
+    if (_historyOverlay) {
+      var allNodes = _historyOverlay.querySelectorAll('.live-wysiwyg-history-dag-node');
+      for (var i = 0; i < allNodes.length; i++) {
+        allNodes[i].classList.toggle('selected', parseInt(allNodes[i].getAttribute('data-node-id'), 10) === nodeId);
+      }
+    }
+    _updatePreviewPanel(nodeId);
+  }
+
+  function _updatePreviewPanel(nodeId) {
+    if (!_historyOverlay) return;
+    var panel = _historyOverlay.querySelector('.live-wysiwyg-history-preview-panel');
+    if (!panel) return;
+    var wasAlreadyOpen = panel.classList.contains('open');
+    panel.innerHTML = '';
+
+    var md = _historyPreviewCache[nodeId];
+    if (!md) {
+      md = _reconstructContentAtNode(nodeId);
+      if (md !== null) _historyPreviewCache[nodeId] = md;
+    }
+    if (md === null) {
+      panel.textContent = 'Cannot reconstruct content';
+      panel.classList.add('open');
+      return;
+    }
+    panel.classList.add('open');
+
+    if (!wasAlreadyOpen) {
+      var dagC = _historyOverlay.querySelector('.live-wysiwyg-history-dag-container');
+      if (dagC) {
+        var onTransEnd = function (ev) {
+          if (ev.target !== panel) return;
+          panel.removeEventListener('transitionend', onTransEnd);
+          _renderDag(dagC, { skipAutoScroll: true });
+        };
+        panel.addEventListener('transitionend', onTransEnd);
+      }
+    }
+
+    var nodeData = _historyNodes[nodeId];
+    var panelHeader = document.createElement('div');
+    panelHeader.className = 'live-wysiwyg-history-preview-header';
+    var summaryEl = document.createElement('span');
+    summaryEl.textContent = (nodeData ? (nodeData.summary || 'edit') : 'edit') +
+      (nodeData ? ' \u2014 ' + _formatRelativeTime(nodeData.timestamp) : '');
+    panelHeader.appendChild(summaryEl);
+
+    var fullBtn = document.createElement('button');
+    fullBtn.className = 'live-wysiwyg-history-preview-fullscreen-btn';
+    fullBtn.textContent = 'Full Screen';
+    fullBtn.addEventListener('click', function () {
+      _showHistoryFullsizePreview(nodeId);
+    });
+    panelHeader.appendChild(fullBtn);
+
+    var restoreBtn = document.createElement('button');
+    restoreBtn.className = 'live-wysiwyg-history-preview-restore-btn';
+    restoreBtn.textContent = 'Restore';
+    restoreBtn.addEventListener('click', function () {
+      _restoreToHistoryNode(nodeId);
+      _exitHistoryMode();
+    });
+    panelHeader.appendChild(restoreBtn);
+    panel.appendChild(panelHeader);
+
+    var content = document.createElement('div');
+    content.className = 'live-wysiwyg-history-preview-content';
+    content.setAttribute('contenteditable', 'false');
+    var panelBody = _stripFrontmatterForPreview(md);
+    if (wysiwygEditor && wysiwygEditor._markdownToHtml) {
+      content.innerHTML = wysiwygEditor._markdownToHtml(panelBody);
+    } else {
+      content.innerHTML = _renderMarkdownPreview(md);
+    }
+    _enhancePreviewContent(content);
+    _applyDiffHighlightToPreview(content, nodeData, md);
+    panel.appendChild(content);
+  }
+
+  function _applyDiffHighlightToPreview(contentEl, nodeData, md) {
+    if (!nodeData || !nodeData.diff || !nodeData.diff.ops) return;
+    var body = _stripFrontmatterForPreview(md);
+    var bodyLines = body.split('\n');
+    var changedLines = {};
+    var diff = nodeData.diff;
+    var fmOffset = md.length - body.length > 0 ? md.substring(0, md.length - body.length).split('\n').length - 1 : 0;
+
+    for (var oi = 0; oi < diff.ops.length; oi++) {
+      var op = diff.ops[oi];
+      if (op.type === 'insert') {
+        var insStart = op.afterLine - fmOffset;
+        for (var il = 0; il < op.lines.length; il++) {
+          changedLines[insStart + il] = true;
+        }
+      } else if (op.type === 'replace') {
+        var repStart = op.line - fmOffset;
+        for (var rl = 0; rl < op['new'].length; rl++) {
+          changedLines[repStart + rl] = true;
+        }
+      }
+    }
+
+    var hasChanges = false;
+    for (var k in changedLines) { hasChanges = true; break; }
+    if (!hasChanges) return;
+
+    // Map markdown lines to top-level block elements
+    var blocks = [];
+    for (var ci = 0; ci < contentEl.children.length; ci++) {
+      var child = contentEl.children[ci];
+      if (child.nodeType === 1) blocks.push(child);
+    }
+
+    var mdLine = 0;
+    for (var bi = 0; bi < blocks.length; bi++) {
+      var block = blocks[bi];
+      var blockText = block.textContent || '';
+      var blockLineCount = (blockText.match(/\n/g) || []).length + 1;
+
+      // Scan past blank lines between blocks
+      while (mdLine < bodyLines.length && bodyLines[mdLine] !== undefined && bodyLines[mdLine].trim() === '') {
+        mdLine++;
+      }
+
+      var blockStart = mdLine;
+      // Estimate how many markdown source lines this block spans
+      var srcLines = 0;
+      var tmpLine = mdLine;
+      while (tmpLine < bodyLines.length && srcLines < blockLineCount + 4) {
+        if (bodyLines[tmpLine].trim() === '' && srcLines >= blockLineCount) break;
+        tmpLine++;
+        srcLines++;
+      }
+      var blockEnd = tmpLine;
+      mdLine = blockEnd;
+
+      // Check if any changed line overlaps this block's source range
+      var overlaps = false;
+      for (var cl = blockStart; cl < blockEnd; cl++) {
+        if (changedLines[cl]) { overlaps = true; break; }
+      }
+      if (overlaps) {
+        block.classList.add('live-wysiwyg-diff-highlight');
+      }
+    }
+  }
+
+  // --- Way 3: Full-Size Readonly Preview ---
+
+  function _dismissHistoryFullsizePreview() {
+    if (_historyFullsizePreview && _historyFullsizePreview.parentNode) {
+      _historyFullsizePreview.parentNode.removeChild(_historyFullsizePreview);
+    }
+    _historyFullsizePreview = null;
+    if (_historyOverlay) _historyOverlay.focus();
+  }
+
+  function _enhancePreviewContent(container) {
+    var pres = container.querySelectorAll('pre');
+    for (var i = 0; i < pres.length; i++) {
+      var pre = pres[i];
+      var codeEl = pre.querySelector('code');
+      if (!codeEl) continue;
+      var langClass = (codeEl.className || '').match(/language-(\S+)/);
+      var lang = langClass ? langClass[1] : '';
+      if (lang === 'mermaid') {
+        var mermaidCode = codeEl.textContent || '';
+        if (mermaidCode.trim()) {
+          var mWrapper = document.createElement('div');
+          mWrapper.className = 'md-mermaid-block';
+          mWrapper.setAttribute('contenteditable', 'false');
+          var mPreview = document.createElement('div');
+          mPreview.className = 'md-mermaid-preview';
+          mWrapper.appendChild(mPreview);
+          pre.parentNode.insertBefore(mWrapper, pre);
+          pre.style.display = 'none';
+          mWrapper.appendChild(pre);
+          (function (pv, code) {
+            _loadMermaidJs(function () { _renderMermaidPreview(pv, code); });
+          })(mPreview, mermaidCode);
+        }
+      } else if (lang) {
+        pre.setAttribute('data-lang', lang);
+        var codeBlockWrapper = document.createElement('div');
+        codeBlockWrapper.className = 'md-code-block';
+        var langBar = document.createElement('div');
+        langBar.className = 'md-code-lang';
+        langBar.setAttribute('contenteditable', 'false');
+        langBar.textContent = lang;
+        codeBlockWrapper.appendChild(langBar);
+        pre.parentNode.insertBefore(codeBlockWrapper, pre);
+        codeBlockWrapper.appendChild(pre);
+      }
+    }
+    var admonitions = container.querySelectorAll('.admonition');
+    for (var a = 0; a < admonitions.length; a++) {
+      admonitions[a].removeAttribute('contenteditable');
+    }
+    var btns = container.querySelectorAll('.md-admonition-settings-btn, .md-mermaid-expand-btn, .md-code-block .md-code-lang[contenteditable]');
+    for (var b = 0; b < btns.length; b++) {
+      if (btns[b].classList.contains('md-admonition-settings-btn') ||
+          btns[b].classList.contains('md-mermaid-expand-btn')) {
+        btns[b].parentNode.removeChild(btns[b]);
+      } else {
+        btns[b].setAttribute('contenteditable', 'false');
+      }
+    }
+    var editables = container.querySelectorAll('[contenteditable="true"]');
+    for (var e = 0; e < editables.length; e++) {
+      editables[e].setAttribute('contenteditable', 'false');
+    }
+  }
+
+  function _showHistoryFullsizePreview(nodeId) {
+    _dismissHistoryFullsizePreview();
+    _dismissDagHoverPreview();
+
+    var md = _historyPreviewCache[nodeId];
+    if (!md) {
+      md = _reconstructContentAtNode(nodeId);
+      if (md !== null) _historyPreviewCache[nodeId] = md;
+    }
+    if (md === null) return;
+
+    var nodeData = _historyNodes[nodeId];
+    var preview = document.createElement('div');
+    preview.className = 'live-wysiwyg-history-fullsize-preview';
+    preview.setAttribute('tabindex', '-1');
+
+    var fsHeader = document.createElement('div');
+    fsHeader.className = 'live-wysiwyg-history-fullsize-header';
+    var fsTitle = document.createElement('span');
+    fsTitle.textContent = 'Preview: ' + (nodeData ? (nodeData.summary || 'edit') : 'edit') +
+      (nodeData ? ' \u2014 ' + _formatRelativeTime(nodeData.timestamp) : '');
+    fsHeader.appendChild(fsTitle);
+
+    var fsRestoreBtn = document.createElement('button');
+    fsRestoreBtn.className = 'live-wysiwyg-history-fullsize-restore-btn';
+    fsRestoreBtn.textContent = 'Restore to this point';
+    fsRestoreBtn.addEventListener('click', function () {
+      _restoreToHistoryNode(nodeId);
+      _dismissHistoryFullsizePreview();
+      _exitHistoryMode();
+    });
+    fsHeader.appendChild(fsRestoreBtn);
+
+    var fsCloseBtn = document.createElement('button');
+    fsCloseBtn.className = 'live-wysiwyg-history-fullsize-close-btn';
+    fsCloseBtn.textContent = 'Close';
+    fsCloseBtn.addEventListener('click', function () {
+      _dismissHistoryFullsizePreview();
+    });
+    fsHeader.appendChild(fsCloseBtn);
+    preview.appendChild(fsHeader);
+
+    var fsBody = document.createElement('div');
+    fsBody.className = 'live-wysiwyg-history-fullsize-body';
+    var fsContent = document.createElement('div');
+    fsContent.className = 'live-wysiwyg-history-fullsize-content';
+    fsContent.setAttribute('contenteditable', 'false');
+    var previewBody = _stripFrontmatterForPreview(md);
+    if (wysiwygEditor && wysiwygEditor._markdownToHtml) {
+      fsContent.innerHTML = wysiwygEditor._markdownToHtml(previewBody);
+    } else {
+      fsContent.innerHTML = _renderMarkdownPreview(md);
+    }
+    _enhancePreviewContent(fsContent);
+    fsBody.appendChild(fsContent);
+    preview.appendChild(fsBody);
+
+    preview.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation();
+        _dismissHistoryFullsizePreview();
+      } else if (e.key === 'Enter') {
+        e.preventDefault(); e.stopPropagation();
+        _restoreToHistoryNode(nodeId);
+        _dismissHistoryFullsizePreview();
+        _exitHistoryMode();
+      }
+    });
+
+    var appendTarget = _historyOverlay || _focusOverlay || document.body;
+    appendTarget.appendChild(preview);
+    _historyFullsizePreview = preview;
+    preview.focus();
+  }
+
+  // --- Content Restoration from DAG ---
+
+  function _restoreToHistoryNode(nodeId) {
+    _flushHistoryCapture();
+    var md = _reconstructContentAtNode(nodeId);
+    if (md === null) return;
+    var node = _historyNodes[nodeId];
+    _historyCurrentId = nodeId;
+    _historySetContent(md, node ? node.htmlSnapshot : null);
+    _historyLastMd = wysiwygEditor ? (wysiwygEditor.getValue() || md) : md;
+    if (node && node.cursor) {
+      _restoreHistoryCursor(node.cursor, node.diff, md, false, !!(node && node.htmlSnapshot));
+    }
+    _autoSaveAndPersistHistory();
+  }
+
+  // --- DAG Overlay Keyboard ---
+
+  function _attachHistoryOverlayKeyboard(overlay) {
+    overlay.addEventListener('keydown', function (e) {
+      if (_historyFullsizePreview) return;
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation();
+        _exitHistoryMode();
+        return;
+      }
+      if (e.key === 'Enter' && _historyDagSelectedNodeId !== null) {
+        e.preventDefault(); e.stopPropagation();
+        _restoreToHistoryNode(_historyDagSelectedNodeId);
+        _exitHistoryMode();
+        return;
+      }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        _navigateDag(e.key);
+      }
+    });
+  }
+
+  function _navigateDag(key) {
+    var startId = _historyDagSelectedNodeId !== null ? _historyDagSelectedNodeId : _historyCurrentId;
+    var node = _historyNodes[startId];
+    if (!node) return;
+    var targetId = null;
+    if (key === 'ArrowUp' && node.parentId !== null) {
+      targetId = node.parentId;
+    } else if (key === 'ArrowDown') {
+      if (node.activeChildId) targetId = node.activeChildId;
+      else if (node.children.length > 0) targetId = node.children[0];
+    } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      var parent = node.parentId !== null ? _historyNodes[node.parentId] : null;
+      if (parent && parent.children.length > 1) {
+        var idx = parent.children.indexOf(startId);
+        if (key === 'ArrowLeft' && idx > 0) targetId = parent.children[idx - 1];
+        if (key === 'ArrowRight' && idx < parent.children.length - 1) targetId = parent.children[idx + 1];
+      }
+    }
+    if (targetId !== null) {
+      _selectDagNode(targetId);
+      var selectedEl = _historyOverlay ? _historyOverlay.querySelector('[data-node-id="' + targetId + '"]') : null;
+      if (selectedEl) selectedEl.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+  }
+
   function _estimateMdOffsetFromWysiwyg(ea) {
     var sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || !ea) return 0;
@@ -9792,12 +12152,41 @@
       };
     }
     if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor.editableArea) {
-      var mdOffset = _estimateMdOffsetFromWysiwyg(wysiwygEditor.editableArea);
+      var ea = wysiwygEditor.editableArea;
+      var mdOffset = _estimateMdOffsetFromWysiwyg(ea);
+      var sem = captureSemanticSelection(ea);
+      var sel = window.getSelection();
+      var blockChildIndex = -1;
+      var innerOffset = 0;
+      if (sel && sel.rangeCount > 0) {
+        var r = sel.getRangeAt(0);
+        var node = r.startContainer;
+        innerOffset = r.startOffset;
+        var block = node;
+        while (block && block.parentNode !== ea) {
+          block = block.parentNode;
+        }
+        if (block && block.parentNode === ea) {
+          for (var ci = 0; ci < ea.childNodes.length; ci++) {
+            if (ea.childNodes[ci] === block) { blockChildIndex = ci; break; }
+          }
+          if (node !== block) {
+            var w = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null, false);
+            var tn, tpos = 0;
+            while ((tn = w.nextNode())) {
+              if (tn === node) { innerOffset = tpos + r.startOffset; break; }
+              tpos += tn.textContent.length;
+            }
+          }
+        }
+      }
       return {
         mode: 'wysiwyg',
         start: mdOffset,
         end: mdOffset,
-        semantic: captureSemanticSelection(wysiwygEditor.editableArea)
+        semantic: sem,
+        blockChildIndex: blockChildIndex,
+        innerOffset: innerOffset
       };
     }
     return null;
@@ -9879,8 +12268,45 @@
     }
   }
 
-  function _restoreHistoryCursor(cursor, diff, mdContent, isRedo) {
+  function _restoreHistoryCursor(cursor, diff, mdContent, isRedo, hasHtmlSnapshot) {
     if (!wysiwygEditor) return;
+    if (hasHtmlSnapshot && cursor && cursor.mode === 'wysiwyg' && wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor.editableArea) {
+      var ea = wysiwygEditor.editableArea;
+      ea.focus();
+      if (cursor.blockChildIndex >= 0 && cursor.blockChildIndex < ea.childNodes.length) {
+        var targetBlock = ea.childNodes[cursor.blockChildIndex];
+        try {
+          var range = document.createRange();
+          var w = document.createTreeWalker(targetBlock, NodeFilter.SHOW_TEXT, null, false);
+          var tn, tpos = 0, placed = false;
+          while ((tn = w.nextNode())) {
+            if (tpos + tn.textContent.length >= cursor.innerOffset) {
+              range.setStart(tn, Math.min(cursor.innerOffset - tpos, tn.textContent.length));
+              range.collapse(true);
+              placed = true;
+              break;
+            }
+            tpos += tn.textContent.length;
+          }
+          if (!placed) {
+            range.setStart(targetBlock, 0);
+            range.collapse(true);
+          }
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return;
+        } catch (ex) { /* fall through */ }
+      }
+      if (cursor.semantic && restoreSelectionFromSemantic(ea, cursor.semantic)) {
+        return;
+      }
+      if (cursor.start !== undefined) {
+        _placeCursorAtMdOffset(cursor.start, null);
+        return;
+      }
+      return;
+    }
     if (diff && mdContent) {
       var offset = _diffToMdOffset(diff, mdContent, isRedo);
       _placeCursorAtMdOffset(offset, mdContent);
@@ -9955,18 +12381,28 @@
     if (parentMd === null) return;
 
     var parent = _historyNodes[current.parentId];
+    var parentSnapshot = parent ? parent.htmlSnapshot : null;
     _historyCurrentId = current.parentId;
-    _historyLastMd = parentMd;
 
-    _historySetContent(parentMd);
-    _restoreHistoryCursor(parent ? parent.cursor : null, undoDiff, parentMd, false);
+    _historySetContent(parentMd, parentSnapshot);
+    _historyLastMd = wysiwygEditor.getValue() || parentMd;
+    _restoreHistoryCursor(parent ? parent.cursor : null, undoDiff, parentMd, false, !!parentSnapshot);
     _autoSaveAndPersistHistory();
   }
 
   function _contentRedo() {
     if (_historyCurrentId === null) return;
+
+    var preRedoNodeId = _historyCurrentId;
+    _flushHistoryCapture();
+
     var current = _historyNodes[_historyCurrentId];
-    if (!current || !current.activeChildId) return;
+    if (!current || !current.activeChildId) {
+      _showHistoryBranchPopup(_historyCurrentId);
+      return;
+    }
+
+    var isBranchPoint = current.children.length > 1;
 
     var child = _historyNodes[current.activeChildId];
     if (!child) return;
@@ -9974,17 +12410,22 @@
     var childMd = _reconstructContentAtNode(child.id);
     if (childMd === null) return;
 
+    var childSnapshot = child.htmlSnapshot || null;
     _historyCurrentId = child.id;
-    _historyLastMd = childMd;
 
-    _historySetContent(childMd);
-    _restoreHistoryCursor(child.cursor, child.diff, childMd, true);
+    _historySetContent(childMd, childSnapshot);
+    _historyLastMd = wysiwygEditor.getValue() || childMd;
+    _restoreHistoryCursor(child.cursor, child.diff, childMd, true, !!childSnapshot);
     _autoSaveAndPersistHistory();
+
+    if (isBranchPoint) {
+      _showHistoryBranchPopup(preRedoNodeId);
+    }
   }
 
-  function _historySetContent(markdown) {
+  function _historySetContent(markdown, htmlSnapshot) {
     if (!wysiwygEditor || !wysiwygEditor._historyApplyContent) return;
-    wysiwygEditor._historyApplyContent(markdown);
+    wysiwygEditor._historyApplyContent(markdown, htmlSnapshot || null);
   }
 
   function _persistContentHistory() {
@@ -14849,6 +17290,11 @@
     var actualPath = _resolveChainedRename(itemPath);
     if (_batchDeletedPaths[actualPath]) return Promise.resolve();
     var siblings = _findNavSiblings(op.item).filter(function (s) { return !_isRootIndex(s); });
+    var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
+    var nwDefaults = (nwCfg.enabled && nwCfg.frontmatter_defaults) ? nwCfg.frontmatter_defaults : {};
+    var defaultIndexWeight = nwDefaults.index_weight !== undefined ? nwDefaults.index_weight
+      : (nwCfg.index_weight !== undefined ? nwCfg.index_weight : -10);
+    var defaultPageWeight = nwDefaults.weight !== undefined ? nwDefaults.weight : 0;
     function w(navItem) {
       var v = _getItemWeight(navItem);
       return v != null ? v : 0;
@@ -14861,7 +17307,8 @@
     var isIndex = actualPath.endsWith('index.md');
     return _wsGetContents(actualPath).then(function (content) {
       var fm = _parseFrontmatter(content);
-      var currentWeight = fm.fields.weight !== undefined ? fm.fields.weight : 0;
+      var currentWeight = fm.fields.weight !== undefined ? fm.fields.weight
+        : (isIndex ? defaultIndexWeight : defaultPageWeight);
       var newWeight;
       if (op.type === 'move-up') {
         if (idx > 0) {
@@ -15100,8 +17547,11 @@
     if (op.skipIndex) return Promise.resolve();
     var parentDir = op.item && op.item.src_path ? _getDir(op.item.src_path) : '';
     var indexPath = (parentDir ? parentDir + '/' : '') + op.folderName + '/index.md';
+    var sectionWeight = op.syntheticSection && op.syntheticSection.index_meta
+      ? op.syntheticSection.index_meta.weight : null;
+    if (sectionWeight == null) sectionWeight = 100;
     var indexContent = '---\ntitle: ' + _fmSerialize(op.folderTitle || op.folderName) +
-      '\nretitled: true\nempty: true\n---\nThis section covers information about ' +
+      '\nretitled: true\nempty: true\nweight: ' + sectionWeight + '\n---\nThis section covers information about ' +
       (op.folderTitle || op.folderName) + ' and its contents.\n';
     return _wsNewFile(indexPath, op.folderTitle || op.folderName).then(function () {
       return _wsSetContents(indexPath, indexContent);
@@ -20938,6 +23388,456 @@
         '}';
     }
 
+    // --- History Mode (Layer 4) CSS ---
+    css +=
+      '.live-wysiwyg-history-branch-popup{' +
+        'position:fixed;z-index:99999;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'border:1px solid var(--md-default-fg-color--lightest,#ddd);' +
+        'border-radius:8px;box-shadow:0 4px 24px rgba(0,0,0,.18);' +
+        'min-width:260px;max-width:380px;padding:0;' +
+        'font-family:var(--md-text-font-family,sans-serif);font-size:.8rem;' +
+        'outline:none;' +
+      '}' +
+      '.live-wysiwyg-history-branch-header{' +
+        'display:flex;align-items:center;justify-content:space-between;' +
+        'padding:8px 12px;border-bottom:1px solid var(--md-default-fg-color--lightest,#ddd);' +
+        'font-weight:600;color:var(--md-default-fg-color,#333);' +
+      '}' +
+      '.live-wysiwyg-history-fullscreen-btn{' +
+        'background:var(--md-primary-fg-color,#4051b5);color:#fff;' +
+        'border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:.72rem;' +
+      '}' +
+      '.live-wysiwyg-history-fullscreen-btn:hover{opacity:.85;}' +
+      '.live-wysiwyg-history-branch-list{padding:4px 0;}' +
+      '.live-wysiwyg-history-branch-item{' +
+        'display:flex;flex-direction:column;padding:6px 12px;cursor:pointer;' +
+        'border-left:3px solid transparent;' +
+        'transition:background .12s;' +
+      '}' +
+      '.live-wysiwyg-history-branch-item:hover,' +
+      '.live-wysiwyg-history-branch-item.highlighted{' +
+        'background:var(--md-accent-fg-color--transparent,rgba(82,108,254,.08));' +
+      '}' +
+      '.live-wysiwyg-history-branch-item.active{' +
+        'border-left-color:var(--md-primary-fg-color,#4051b5);' +
+      '}' +
+      '.live-wysiwyg-history-branch-summary{' +
+        'font-weight:500;color:var(--md-default-fg-color,#333);' +
+      '}' +
+      '.live-wysiwyg-history-branch-snippet{' +
+        'color:var(--md-default-fg-color--light,#666);font-size:.72rem;' +
+        'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px;' +
+      '}' +
+      '.live-wysiwyg-history-branch-time{' +
+        'color:var(--md-default-fg-color--lighter,#999);font-size:.68rem;margin-top:1px;' +
+      '}' +
+
+      // History Mode overlay
+      '.live-wysiwyg-history-overlay{' +
+        'position:fixed;inset:0;z-index:99995;display:flex;align-items:center;justify-content:center;' +
+        'outline:none;' +
+      '}' +
+      '.live-wysiwyg-history-backdrop{' +
+        'position:absolute;inset:0;background:rgba(0,0,0,.45);' +
+      '}' +
+      '.live-wysiwyg-history-modal{' +
+        'position:relative;z-index:1;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'border-radius:10px;box-shadow:0 8px 40px rgba(0,0,0,.25);' +
+        'width:92vw;max-width:1200px;height:82vh;' +
+        'display:flex;flex-direction:column;overflow:hidden;' +
+      '}' +
+      '.live-wysiwyg-history-modal-header{' +
+        'display:flex;align-items:center;justify-content:space-between;' +
+        'padding:12px 20px;border-bottom:1px solid var(--md-default-fg-color--lightest,#ddd);' +
+        'flex-shrink:0;' +
+      '}' +
+      '.live-wysiwyg-history-modal-header h2{' +
+        'margin:0;font-size:1.1rem;color:var(--md-default-fg-color,#333);' +
+        'font-family:var(--md-text-font-family,sans-serif);' +
+      '}' +
+      '.live-wysiwyg-history-close-btn{' +
+        'background:none;border:none;font-size:1.5rem;cursor:pointer;' +
+        'color:var(--md-default-fg-color--light,#666);line-height:1;padding:0 4px;' +
+      '}' +
+      '.live-wysiwyg-history-close-btn:hover{color:var(--md-default-fg-color,#333);}' +
+      '.live-wysiwyg-history-modal-body{' +
+        'display:flex;flex:1;overflow:hidden;' +
+      '}' +
+      '.live-wysiwyg-history-dag-container{' +
+        'flex:1;overflow:auto;padding:20px;position:relative;' +
+        'background:var(--md-default-bg-color,#fff);' +
+      '}' +
+
+      // DAG SVG edges (smooth Bézier curves)
+      '.live-wysiwyg-dag-edge{stroke:var(--md-default-fg-color--lightest,#ccc);stroke-width:2;fill:none;}' +
+      '.live-wysiwyg-dag-edge-active{stroke:var(--md-primary-fg-color,#4051b5);stroke-width:3;fill:none;}' +
+
+      // DAG nodes
+      '.live-wysiwyg-history-dag-node{' +
+        'width:300px;height:48px;display:flex;align-items:center;gap:8px;' +
+        'padding:0 12px;border-radius:6px;cursor:pointer;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'border:1px solid var(--md-default-fg-color--lightest,#ddd);' +
+        'transition:border-color .15s,box-shadow .15s;' +
+        'font-family:var(--md-text-font-family,sans-serif);' +
+        'position:relative;z-index:1;' +
+      '}' +
+      '.live-wysiwyg-history-dag-node:hover{' +
+        'border-color:var(--md-accent-fg-color,#7c4dff);' +
+        'box-shadow:0 2px 8px rgba(0,0,0,.1);' +
+      '}' +
+      '.live-wysiwyg-history-dag-node.selected{' +
+        'border-color:var(--md-primary-fg-color,#4051b5);' +
+        'box-shadow:0 0 0 2px var(--md-primary-fg-color--transparent,rgba(64,81,181,.25));' +
+      '}' +
+      '.live-wysiwyg-dag-dot{' +
+        'width:12px;height:12px;border-radius:50%;flex-shrink:0;' +
+        'background:var(--md-default-fg-color--lightest,#ccc);' +
+      '}' +
+      '.live-wysiwyg-history-dag-node.active-path .live-wysiwyg-dag-dot{' +
+        'background:var(--md-primary-fg-color,#4051b5);' +
+      '}' +
+      '.live-wysiwyg-history-dag-node.current .live-wysiwyg-dag-dot{' +
+        'background:var(--md-accent-fg-color,#7c4dff);' +
+        'box-shadow:0 0 0 3px var(--md-accent-fg-color--transparent,rgba(124,77,255,.3));' +
+      '}' +
+      '.live-wysiwyg-history-dag-node.branch-point .live-wysiwyg-dag-dot{' +
+        'border:2px solid var(--md-default-fg-color--light,#999);' +
+      '}' +
+      '.live-wysiwyg-dag-info{' +
+        'flex:1;overflow:hidden;text-overflow:ellipsis;' +
+        'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;' +
+        'font-size:.75rem;line-height:1.3;color:var(--md-default-fg-color,#333);' +
+      '}' +
+      '.live-wysiwyg-dag-time{' +
+        'font-size:.65rem;color:var(--md-default-fg-color--lighter,#999);white-space:nowrap;' +
+      '}' +
+
+      // "You Are Here" snaking SVG path + arrowhead + label
+      '.live-wysiwyg-dag-yah-path{' +
+        'fill:none;stroke:var(--md-accent-fg-color,#7c4dff);' +
+        'stroke-width:3;stroke-dasharray:8 5;' +
+        'pointer-events:none;' +
+      '}' +
+      '.live-wysiwyg-dag-yah-arrowhead{' +
+        'fill:var(--md-accent-fg-color,#7c4dff);pointer-events:none;' +
+      '}' +
+      '.live-wysiwyg-dag-you-are-here-label{' +
+        'display:flex;align-items:center;gap:4px;white-space:nowrap;' +
+        'color:var(--md-accent-fg-color,#7c4dff);' +
+        'font-weight:700;font-size:.73rem;' +
+        'font-family:var(--md-text-font-family,sans-serif);' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'padding:3px 12px 3px 6px;border-radius:12px;' +
+        'border:2px solid var(--md-accent-fg-color,#7c4dff);' +
+        'pointer-events:none;z-index:2;' +
+      '}' +
+      '.live-wysiwyg-dag-you-are-here-label svg{flex-shrink:0;}' +
+
+      // Crumple icon (container groups + branch crumples)
+      '.live-wysiwyg-dag-crumple{' +
+        'width:300px;height:36px;display:flex;align-items:center;gap:8px;' +
+        'padding:0 12px;border-radius:18px;cursor:pointer;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'border:1px dashed var(--md-primary-fg-color,#4051b5);' +
+        'font-family:var(--md-text-font-family,sans-serif);' +
+        'transition:background .15s,border-color .15s,box-shadow .15s;' +
+        'position:relative;z-index:1;' +
+      '}' +
+      '.live-wysiwyg-dag-crumple:hover{' +
+        'background:var(--md-primary-fg-color--transparent,rgba(64,81,181,.08));' +
+        'box-shadow:0 2px 8px rgba(0,0,0,.08);' +
+      '}' +
+      '.live-wysiwyg-dag-crumple.active{' +
+        'border-style:solid;' +
+        'background:var(--md-primary-fg-color--transparent,rgba(64,81,181,.1));' +
+      '}' +
+      '.live-wysiwyg-dag-crumple-svg{flex-shrink:0;color:var(--md-primary-fg-color,#4051b5);}' +
+      '.live-wysiwyg-dag-crumple-label{' +
+        'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+        'font-size:.7rem;font-weight:600;color:var(--md-primary-fg-color,#4051b5);' +
+      '}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="code"]{border-color:#0d7377;}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="code"] .live-wysiwyg-dag-crumple-svg,' +
+      '.live-wysiwyg-dag-crumple[data-container-type="code"] .live-wysiwyg-dag-crumple-label{color:#0d7377;}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="code"]:hover{background:rgba(13,115,119,.08);}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="admonition"]{border-color:#bf6900;}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="admonition"] .live-wysiwyg-dag-crumple-svg,' +
+      '.live-wysiwyg-dag-crumple[data-container-type="admonition"] .live-wysiwyg-dag-crumple-label{color:#bf6900;}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="admonition"]:hover{background:rgba(191,105,0,.08);}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="blockquote"]{border-color:#7b1fa2;}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="blockquote"] .live-wysiwyg-dag-crumple-svg,' +
+      '.live-wysiwyg-dag-crumple[data-container-type="blockquote"] .live-wysiwyg-dag-crumple-label{color:#7b1fa2;}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="blockquote"]:hover{background:rgba(123,31,162,.08);}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="list"]{border-color:#2e7d32;}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="list"] .live-wysiwyg-dag-crumple-svg,' +
+      '.live-wysiwyg-dag-crumple[data-container-type="list"] .live-wysiwyg-dag-crumple-label{color:#2e7d32;}' +
+      '.live-wysiwyg-dag-crumple[data-container-type="list"]:hover{background:rgba(46,125,50,.08);}' +
+      '.live-wysiwyg-dag-crumple.branch-crumple{border-color:#b07d2b;}' +
+      '.live-wysiwyg-dag-crumple.branch-crumple .live-wysiwyg-dag-crumple-svg,' +
+      '.live-wysiwyg-dag-crumple.branch-crumple .live-wysiwyg-dag-crumple-label{color:#b07d2b;}' +
+      '.live-wysiwyg-dag-crumple.branch-crumple:hover{background:rgba(176,125,43,.08);}' +
+      '.live-wysiwyg-dag-crumple.branch-crumple.active{border-style:solid;background:rgba(176,125,43,.1);}' +
+
+      // V-tree fork icon
+      '.live-wysiwyg-dag-vtree-fork{' +
+        'width:300px;height:36px;display:flex;align-items:center;gap:8px;' +
+        'padding:0 12px;border-radius:18px;cursor:pointer;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'border:1px dashed #6d4c9f;' +
+        'font-family:var(--md-text-font-family,sans-serif);' +
+        'transition:background .15s,box-shadow .15s;' +
+        'position:relative;z-index:1;' +
+      '}' +
+      '.live-wysiwyg-dag-vtree-fork:hover{background:rgba(109,76,159,.08);box-shadow:0 2px 8px rgba(0,0,0,.08);}' +
+      '.live-wysiwyg-dag-vtree-fork.active{border-style:solid;background:rgba(109,76,159,.1);}' +
+      '.live-wysiwyg-dag-vtree-svg{flex-shrink:0;color:#6d4c9f;}' +
+      '.live-wysiwyg-dag-vtree-label{' +
+        'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+        'font-size:.7rem;font-weight:600;color:#6d4c9f;' +
+      '}' +
+
+      // V-tree option (branch picker item)
+      '.live-wysiwyg-dag-vtree-option{' +
+        'width:300px;height:36px;display:flex;align-items:center;gap:8px;' +
+        'padding:0 12px;border-radius:6px;cursor:pointer;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'border:1px solid var(--md-default-fg-color--lightest,#ddd);' +
+        'font-family:var(--md-text-font-family,sans-serif);' +
+        'transition:border-color .15s,box-shadow .15s;' +
+        'position:relative;z-index:1;' +
+      '}' +
+      '.live-wysiwyg-dag-vtree-option:hover{border-color:#6d4c9f;box-shadow:0 2px 8px rgba(0,0,0,.08);}' +
+      '.live-wysiwyg-dag-vtree-option .live-wysiwyg-dag-crumple-svg{color:#b07d2b;}' +
+      '.live-wysiwyg-dag-vtree-option-label{' +
+        'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+        'font-size:.7rem;color:var(--md-default-fg-color,#333);' +
+      '}' +
+
+      // Block context dotted outline
+      '.live-wysiwyg-dag-block-outline{' +
+        'border:2px dashed var(--md-primary-fg-color,#4051b5);' +
+        'border-radius:8px;z-index:0;pointer-events:none;' +
+      '}' +
+      '.live-wysiwyg-dag-block-outline[data-container-type="code"]{border-color:#0d7377;}' +
+      '.live-wysiwyg-dag-block-outline[data-container-type="admonition"]{border-color:#bf6900;}' +
+      '.live-wysiwyg-dag-block-outline[data-container-type="blockquote"]{border-color:#7b1fa2;}' +
+      '.live-wysiwyg-dag-block-outline[data-container-type="list"]{border-color:#2e7d32;}' +
+      '.live-wysiwyg-dag-block-outline.inactive{opacity:.35;}' +
+      '.live-wysiwyg-dag-block-outline-title{' +
+        'position:absolute;top:-9px;left:12px;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'padding:0 6px;font-size:.62rem;font-weight:600;' +
+        'font-family:var(--md-text-font-family,sans-serif);' +
+        'color:inherit;white-space:nowrap;' +
+      '}' +
+
+      // Unfold / entrance animation
+      '.live-wysiwyg-history-dag-node.group-enter{' +
+        'animation:liveWysiwygGroupEnter .3s ease-out both;' +
+      '}' +
+      '@keyframes liveWysiwygGroupEnter{' +
+        '0%{transform:scaleY(0);opacity:0;}100%{transform:scaleY(1);opacity:1;}' +
+      '}' +
+
+      // Organic tree view
+      '.live-wysiwyg-organic-wrapper{transition:opacity .3s ease-out;}' +
+      '.live-wysiwyg-dag-transitioning .live-wysiwyg-organic-wrapper,' +
+      '.live-wysiwyg-dag-transitioning > div{' +
+        'animation:liveWysiwygDagFadeIn .3s ease-out both;' +
+      '}' +
+      '@keyframes liveWysiwygDagFadeIn{0%{opacity:0;}100%{opacity:1;}}' +
+      '.live-wysiwyg-organic-svg{pointer-events:none;}' +
+      '.live-wysiwyg-organic-edge{stroke:var(--md-default-fg-color--lightest,#ccc);stroke-width:1.5;fill:none;}' +
+      '.live-wysiwyg-organic-edge-active{stroke:var(--md-primary-fg-color,#4051b5);stroke-width:2;fill:none;}' +
+      '.live-wysiwyg-organic-dot{' +
+        'width:10px;height:10px;border-radius:50%;cursor:pointer;' +
+        'background:var(--md-default-fg-color--lightest,#ccc);' +
+        'transition:transform .15s,box-shadow .15s;' +
+        'z-index:1;' +
+      '}' +
+      '.live-wysiwyg-organic-dot:hover{' +
+        'transform:scale(1.6);' +
+        'box-shadow:0 0 6px rgba(0,0,0,.2);' +
+      '}' +
+      '.live-wysiwyg-organic-dot.active-path{' +
+        'background:var(--md-primary-fg-color,#4051b5);' +
+      '}' +
+      '.live-wysiwyg-organic-dot.current{' +
+        'width:14px;height:14px;margin:-2px 0 0 -2px;' +
+        'background:var(--md-accent-fg-color,#7c4dff);' +
+        'box-shadow:0 0 0 4px var(--md-accent-fg-color--transparent,rgba(124,77,255,.35)),' +
+                  '0 0 12px var(--md-accent-fg-color--transparent,rgba(124,77,255,.25));' +
+        'animation:liveWysiwygOrganicGlow 2s ease-in-out infinite;' +
+      '}' +
+      '@keyframes liveWysiwygOrganicGlow{' +
+        '0%,100%{box-shadow:0 0 0 4px var(--md-accent-fg-color--transparent,rgba(124,77,255,.35)),0 0 12px var(--md-accent-fg-color--transparent,rgba(124,77,255,.25));}' +
+        '50%{box-shadow:0 0 0 6px var(--md-accent-fg-color--transparent,rgba(124,77,255,.2)),0 0 18px var(--md-accent-fg-color--transparent,rgba(124,77,255,.15));}' +
+      '}' +
+
+      // Toggle view button
+      '.live-wysiwyg-history-toggle-view-btn{' +
+        'background:var(--md-primary-fg-color--transparent,rgba(64,81,181,.1));' +
+        'border:1px solid var(--md-primary-fg-color,#4051b5);' +
+        'border-radius:4px;padding:4px 12px;cursor:pointer;' +
+        'font-size:.72rem;font-weight:600;' +
+        'color:var(--md-primary-fg-color,#4051b5);' +
+        'font-family:var(--md-text-font-family,sans-serif);' +
+        'transition:background .15s;margin-right:8px;' +
+      '}' +
+      '.live-wysiwyg-history-toggle-view-btn:hover{' +
+        'background:var(--md-primary-fg-color--transparent,rgba(64,81,181,.2));' +
+      '}' +
+
+      // "Show All Redo History" popup item
+      '.live-wysiwyg-history-branch-item.show-all-history{' +
+        'border-top:1px solid var(--md-default-fg-color--lightest,#eee);' +
+        'margin-top:2px;padding-top:8px;' +
+        'flex-direction:row;align-items:center;' +
+      '}' +
+      '.live-wysiwyg-history-branch-item.show-all-history .live-wysiwyg-history-branch-summary{' +
+        'display:flex;align-items:center;' +
+        'color:var(--md-primary-fg-color,#4051b5);font-weight:600;' +
+      '}' +
+
+      // Hover preview tooltip
+      '.live-wysiwyg-history-hover-preview{' +
+        'position:fixed;z-index:99999;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'border:1px solid var(--md-default-fg-color--lightest,#ddd);' +
+        'border-radius:6px;box-shadow:0 4px 20px rgba(0,0,0,.15);' +
+        'width:300px;max-height:280px;overflow:hidden;' +
+        'font-family:var(--md-text-font-family,sans-serif);' +
+      '}' +
+      '.live-wysiwyg-history-hover-snippet{' +
+        'padding:8px 10px;font-size:.7rem;font-family:var(--md-code-font-family,monospace);' +
+        'color:var(--md-default-fg-color--light,#666);' +
+        'border-bottom:1px solid var(--md-default-fg-color--lightest,#eee);' +
+        'white-space:pre;overflow:hidden;max-height:52px;' +
+      '}' +
+      '.live-wysiwyg-history-hover-rendered{' +
+        'padding:8px 10px;font-size:.78rem;overflow:hidden;max-height:160px;' +
+        'color:var(--md-default-fg-color,#333);' +
+      '}' +
+      '.live-wysiwyg-history-hover-rendered h1,.live-wysiwyg-history-hover-rendered h2,' +
+      '.live-wysiwyg-history-hover-rendered h3{font-size:.85rem;margin:.3em 0;}' +
+      '.live-wysiwyg-history-hover-rendered p{margin:.3em 0;}' +
+      '.live-wysiwyg-history-hover-rendered pre{' +
+        'font-size:.68rem;background:var(--md-code-bg-color,#f5f5f5);padding:4px;border-radius:3px;overflow:hidden;' +
+      '}' +
+      '.live-wysiwyg-history-hover-fullscreen-btn{' +
+        'display:block;width:100%;padding:5px;text-align:center;' +
+        'border:none;border-top:1px solid var(--md-default-fg-color--lightest,#eee);' +
+        'background:var(--md-default-bg-color,#fff);cursor:pointer;font-size:.7rem;' +
+        'color:var(--md-primary-fg-color,#4051b5);' +
+      '}' +
+      '.live-wysiwyg-history-hover-fullscreen-btn:hover{' +
+        'background:var(--md-accent-fg-color--transparent,rgba(82,108,254,.06));' +
+      '}' +
+
+      // Preview panel (right side of DAG overlay — hidden until a node is selected)
+      '.live-wysiwyg-history-preview-panel{' +
+        'width:0;min-width:0;overflow:hidden;display:flex;flex-direction:column;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'transition:width .3s ease,min-width .3s ease,border-width .3s ease;' +
+        'border-left:0 solid var(--md-default-fg-color--lightest,#ddd);' +
+      '}' +
+      '.live-wysiwyg-history-preview-panel.open{' +
+        'width:40%;min-width:280px;overflow-y:auto;' +
+        'border-left-width:1px;' +
+      '}' +
+      '.live-wysiwyg-history-preview-header{' +
+        'display:flex;align-items:center;gap:8px;padding:10px 14px;flex-shrink:0;' +
+        'border-bottom:1px solid var(--md-default-fg-color--lightest,#eee);' +
+        'font-size:.78rem;color:var(--md-default-fg-color,#333);flex-wrap:wrap;' +
+      '}' +
+      '.live-wysiwyg-history-preview-fullscreen-btn,' +
+      '.live-wysiwyg-history-preview-restore-btn{' +
+        'border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:.72rem;' +
+      '}' +
+      '.live-wysiwyg-history-preview-fullscreen-btn{' +
+        'background:var(--md-default-fg-color--lightest,#eee);color:var(--md-default-fg-color,#333);' +
+      '}' +
+      '.live-wysiwyg-history-preview-restore-btn{' +
+        'background:var(--md-primary-fg-color,#4051b5);color:#fff;' +
+      '}' +
+      '.live-wysiwyg-history-preview-content{' +
+        'padding:14px;font-size:.85rem;overflow-y:auto;flex:1;' +
+        'color:var(--md-default-fg-color,#333);' +
+      '}' +
+      '.live-wysiwyg-history-preview-content h1,.live-wysiwyg-history-preview-content h2,' +
+      '.live-wysiwyg-history-preview-content h3{margin:.5em 0;}' +
+      '.live-wysiwyg-history-preview-content pre{' +
+        'font-size:.78rem;background:var(--md-code-bg-color,#f5f5f5);padding:8px;border-radius:4px;overflow:auto;' +
+      '}' +
+
+      // Diff highlight overlay for changed/added blocks
+      '.live-wysiwyg-diff-highlight{' +
+        'position:relative;' +
+      '}' +
+      '.live-wysiwyg-diff-highlight::before{' +
+        'content:"";position:absolute;inset:-2px -4px;' +
+        'background:rgba(46,160,67,.13);' +
+        'border-left:3px solid rgba(46,160,67,.6);' +
+        'border-radius:3px;pointer-events:none;z-index:0;' +
+      '}' +
+
+      // Full-size readonly preview
+      '.live-wysiwyg-history-fullsize-preview{' +
+        'position:fixed;inset:0;z-index:99995;' +
+        'background:var(--md-default-bg-color,#fff);' +
+        'display:flex;flex-direction:column;outline:none;' +
+      '}' +
+      '.live-wysiwyg-history-fullsize-header{' +
+        'display:flex;align-items:center;gap:10px;padding:10px 20px;flex-shrink:0;' +
+        'border-bottom:1px solid var(--md-default-fg-color--lightest,#ddd);' +
+        'font-family:var(--md-text-font-family,sans-serif);font-size:.85rem;' +
+        'color:var(--md-default-fg-color,#333);' +
+      '}' +
+      '.live-wysiwyg-history-fullsize-header span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+      '.live-wysiwyg-history-fullsize-restore-btn{' +
+        'background:var(--md-primary-fg-color,#4051b5);color:#fff;' +
+        'border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:.8rem;' +
+      '}' +
+      '.live-wysiwyg-history-fullsize-close-btn{' +
+        'background:var(--md-default-fg-color--lightest,#eee);color:var(--md-default-fg-color,#333);' +
+        'border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:.8rem;' +
+      '}' +
+      '.live-wysiwyg-history-fullsize-body{' +
+        'flex:1;overflow-y:auto;padding:20px;' +
+      '}' +
+      '.live-wysiwyg-history-fullsize-content{' +
+        'max-width:48rem;margin:0 auto;' +
+        'font-family:var(--md-text-font-family,sans-serif);font-size:.95rem;' +
+        'color:var(--md-default-fg-color,#333);line-height:1.6;' +
+      '}' +
+      '.live-wysiwyg-history-fullsize-content h1{font-size:1.6rem;margin:.8em 0 .4em;}' +
+      '.live-wysiwyg-history-fullsize-content h2{font-size:1.3rem;margin:.7em 0 .3em;}' +
+      '.live-wysiwyg-history-fullsize-content h3{font-size:1.1rem;margin:.6em 0 .3em;}' +
+      '.live-wysiwyg-history-fullsize-content pre{' +
+        'background:var(--md-code-bg-color,#f5f5f5);padding:12px;border-radius:4px;overflow:auto;' +
+        'font-family:var(--md-code-font-family,monospace);font-size:.85rem;' +
+      '}' +
+      '.live-wysiwyg-history-fullsize-content code{' +
+        'background:var(--md-code-bg-color,#f5f5f5);padding:.1em .3em;border-radius:3px;' +
+        'font-family:var(--md-code-font-family,monospace);font-size:.85em;' +
+      '}' +
+      '.live-wysiwyg-history-fullsize-content pre code{background:none;padding:0;}' +
+      '.live-wysiwyg-history-fullsize-content blockquote{' +
+        'border-left:3px solid var(--md-default-fg-color--lightest,#ddd);' +
+        'margin:0;padding:.5em 1em;color:var(--md-default-fg-color--light,#666);' +
+      '}' +
+      '.live-wysiwyg-history-fullsize-content img{max-width:100%;height:auto;}' +
+      '.live-wysiwyg-history-fullsize-content table{' +
+        'border-collapse:collapse;width:100%;margin:1em 0;' +
+      '}' +
+      '.live-wysiwyg-history-fullsize-content th,.live-wysiwyg-history-fullsize-content td{' +
+        'border:1px solid var(--md-default-fg-color--lightest,#ddd);padding:6px 10px;text-align:left;' +
+      '}' +
+      '';
+
     return css;
   }
 
@@ -22054,6 +24954,7 @@
 
   function exitFocusMode() {
     if (!isFocusModeActive) return;
+    if (_historyModeActive) _exitHistoryMode();
     if (_mermaidModeActive) exitMermaidMode();
 
     _flushHistoryCapture();
@@ -22173,6 +25074,7 @@
 
   function enterMermaidMode(mermaidBlock) {
     if (_mermaidModeActive) return;
+    if (_historyModeActive) return;
     if (!isFocusModeActive || !wysiwygEditor) return;
 
     var pre = mermaidBlock.querySelector('pre[data-lang="mermaid"]') || mermaidBlock.querySelector('pre');
@@ -23548,7 +26450,7 @@
       _historyReset(markdown);
     };
 
-    wysiwygEditor._historyApplyContent = function (markdown) {
+    wysiwygEditor._historyApplyContent = function (markdown, htmlSnapshot) {
       textarea.value = markdown;
       var parsed = parseFrontmatter(markdown);
       wysiwygEditor._liveWysiwygFrontmatter = parsed.frontmatter;
@@ -23560,8 +26462,12 @@
       wysiwygEditor._liveWysiwygHrData = preprocessHorizontalRules(bodyForPreprocess);
       wysiwygEditor._liveWysiwygInlineCodeData = preprocessInlineCode(bodyForPreprocess);
       if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor.editableArea) {
-        var html = wysiwygEditor._markdownToHtml(parsed.body);
-        wysiwygEditor.editableArea.innerHTML = html;
+        if (htmlSnapshot) {
+          wysiwygEditor.editableArea.innerHTML = htmlSnapshot;
+        } else {
+          var html = wysiwygEditor._markdownToHtml(parsed.body);
+          wysiwygEditor.editableArea.innerHTML = html;
+        }
         populateRawHtmlBlocks(wysiwygEditor.editableArea);
         enhanceCodeBlocks(wysiwygEditor.editableArea);
         enhanceMermaidBlocks(wysiwygEditor.editableArea);
@@ -24162,6 +27068,7 @@
       if (wysiwygEditor._finalizeUpdate) {
         wysiwygEditor._finalizeUpdate(ea.innerHTML);
       }
+      _scheduleHistoryCapture(true);
       return true;
     }
 
@@ -24323,6 +27230,7 @@
             }
             anc = anc.parentNode;
           }
+          _flushHistoryCapture();
           var pre = document.createElement('pre');
           pre.setAttribute('data-md-literal', '```');
           var code = document.createElement('code');
@@ -24357,8 +27265,301 @@
           if (wysiwygEditor._finalizeUpdate) {
             wysiwygEditor._finalizeUpdate(ea.innerHTML);
           }
+          _scheduleHistoryCapture(true);
         }, true);
       }
+
+    // ── Inline element arrow-key escape and Enter splitting ──
+    (function inlineElementEscapeSetup() {
+      var ea = wysiwygEditor.editableArea;
+      if (!ea) return;
+
+      var INLINE_ESCAPE_TAGS = { CODE: 1, STRONG: 1, EM: 1, DEL: 1, A: 1, B: 1 };
+
+      function findInlineAncestor(node) {
+        var n = node;
+        var anc = n.nodeType === 3 ? n.parentNode : n;
+        while (anc && anc !== ea) {
+          if (INLINE_ESCAPE_TAGS[anc.nodeName]) {
+            if (anc.nodeName === 'CODE' && anc.parentNode && anc.parentNode.nodeName === 'PRE') return null;
+            return anc;
+          }
+          if (anc.nodeName === 'PRE') return null;
+          anc = anc.parentNode;
+        }
+        return null;
+      }
+
+      function isAtEnd(inlineEl, anchorNode, anchorOffset) {
+        if (anchorNode === inlineEl) return anchorOffset >= inlineEl.childNodes.length;
+        if (anchorNode.nodeType === 3 && anchorNode.parentNode === inlineEl) {
+          if (anchorOffset < anchorNode.textContent.length) return false;
+          var sib = anchorNode.nextSibling;
+          while (sib) {
+            if (sib.nodeType === 3 && sib.textContent.replace(/[\u200B\u200C\u200D\uFEFF]/g, '').length > 0) return false;
+            if (sib.nodeType === 1) return false;
+            sib = sib.nextSibling;
+          }
+          return true;
+        }
+        return false;
+      }
+
+      function isAtStart(inlineEl, anchorNode, anchorOffset) {
+        if (anchorNode === inlineEl) return anchorOffset === 0;
+        if (anchorNode.nodeType === 3 && anchorNode.parentNode === inlineEl) {
+          var effectiveOffset = anchorOffset;
+          var txt = anchorNode.textContent || '';
+          while (effectiveOffset > 0 && /[\u200B\u200C\u200D\uFEFF]/.test(txt.charAt(effectiveOffset - 1))) effectiveOffset--;
+          if (effectiveOffset > 0) return false;
+          var sib = anchorNode.previousSibling;
+          while (sib) {
+            if (sib.nodeType === 3 && sib.textContent.replace(/[\u200B\u200C\u200D\uFEFF]/g, '').length > 0) return false;
+            if (sib.nodeType === 1) return false;
+            sib = sib.previousSibling;
+          }
+          return true;
+        }
+        return false;
+      }
+
+      function ensureTextNodeAfter(inlineEl) {
+        var next = inlineEl.nextSibling;
+        if (next && next.nodeType === 3) return next;
+        var tn = document.createTextNode('\u200B');
+        if (inlineEl.nextSibling) {
+          inlineEl.parentNode.insertBefore(tn, inlineEl.nextSibling);
+        } else {
+          inlineEl.parentNode.appendChild(tn);
+        }
+        return tn;
+      }
+
+      function ensureTextNodeBefore(inlineEl) {
+        var prev = inlineEl.previousSibling;
+        if (prev && prev.nodeType === 3) return prev;
+        var tn = document.createTextNode('\u200B');
+        inlineEl.parentNode.insertBefore(tn, inlineEl);
+        return tn;
+      }
+
+      _ekh.inlineArrowEscape = function (e) {
+        if (e.shiftKey) return;
+        if (wysiwygEditor.currentMode !== 'wysiwyg') return;
+        var sel = window.getSelection();
+        if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
+        var anchorNode = sel.anchorNode;
+        var anchorOffset = sel.anchorOffset;
+        if (!anchorNode) return;
+        var inlineEl = findInlineAncestor(anchorNode);
+        if (!inlineEl) return;
+
+        var isRight = e.key === 'ArrowRight';
+        if (isRight && isAtEnd(inlineEl, anchorNode, anchorOffset)) {
+          e.preventDefault();
+          var afterNode = ensureTextNodeAfter(inlineEl);
+          var startOff = (afterNode.textContent.length > 0 && /[\u200B\u200C\u200D\uFEFF]/.test(afterNode.textContent.charAt(0))) ? 1 : 0;
+          var range = document.createRange();
+          range.setStart(afterNode, startOff);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } else if (!isRight && isAtStart(inlineEl, anchorNode, anchorOffset)) {
+          e.preventDefault();
+          var beforeNode = ensureTextNodeBefore(inlineEl);
+          var endOff = beforeNode.textContent.length;
+          if (endOff > 0 && /[\u200B\u200C\u200D\uFEFF]/.test(beforeNode.textContent.charAt(endOff - 1))) endOff--;
+          var range = document.createRange();
+          range.setStart(beforeNode, endOff);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      };
+
+      function findContainingBlock(node) {
+        var anc = node;
+        while (anc && anc !== ea) {
+          if (anc.nodeName === 'P' || anc.nodeName === 'LI' || anc.nodeName === 'DIV' ||
+              (anc.nodeName.match && anc.nodeName.match(/^H[1-6]$/))) {
+            if (anc.nodeName === 'DIV' && anc === ea) break;
+            return anc;
+          }
+          anc = anc.parentNode;
+        }
+        return null;
+      }
+
+      function collectNodesAfter(refNode, container) {
+        var nodes = [];
+        var sib = refNode.nextSibling;
+        while (sib) {
+          nodes.push(sib);
+          sib = sib.nextSibling;
+        }
+        if (refNode.parentNode !== container) {
+          var parent = refNode.parentNode;
+          sib = parent.nextSibling;
+          while (sib) {
+            nodes.push(sib);
+            sib = sib.nextSibling;
+          }
+        }
+        return nodes;
+      }
+
+      _ekh.inlineEnterEscape = function (e) {
+        if (e.shiftKey) return;
+        if (wysiwygEditor.currentMode !== 'wysiwyg') return;
+        var sel = window.getSelection();
+        if (!sel || !sel.isCollapsed || !sel.rangeCount) return;
+        var anchorNode = sel.anchorNode;
+        var anchorOffset = sel.anchorOffset;
+        if (!anchorNode) return;
+        var inlineEl = findInlineAncestor(anchorNode);
+        if (!inlineEl) return;
+
+        var block = findContainingBlock(inlineEl);
+        if (!block) return;
+
+        e.preventDefault();
+        _flushHistoryCapture();
+
+        var atEnd = isAtEnd(inlineEl, anchorNode, anchorOffset);
+        var atStart = isAtStart(inlineEl, anchorNode, anchorOffset);
+
+        var newBlock;
+        if (block.nodeName === 'LI') {
+          newBlock = document.createElement('li');
+        } else {
+          newBlock = document.createElement('p');
+        }
+
+        if (atStart) {
+          var nodesFromInline = [];
+          var sib = inlineEl;
+          while (sib) {
+            nodesFromInline.push(sib);
+            sib = sib.nextSibling;
+          }
+          for (var i = 0; i < nodesFromInline.length; i++) {
+            newBlock.appendChild(nodesFromInline[i]);
+          }
+          if (!block.hasChildNodes() || (block.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '').length === 0) {
+            block.innerHTML = '<br>';
+          }
+          if (block.nodeName === 'LI' && block.parentNode) {
+            block.parentNode.insertBefore(newBlock, block.nextSibling);
+          } else {
+            block.parentNode.insertBefore(newBlock, block.nextSibling);
+          }
+          var cursorTarget = newBlock.firstChild;
+          if (!cursorTarget) { cursorTarget = document.createTextNode('\u200B'); newBlock.appendChild(cursorTarget); }
+          var range = document.createRange();
+          if (cursorTarget.nodeType === 3) {
+            range.setStart(cursorTarget, 0);
+          } else {
+            range.setStart(newBlock, 0);
+          }
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } else if (atEnd) {
+          var nodesAfter = collectNodesAfter(inlineEl, block);
+          var hasContentAfter = false;
+          for (var i = 0; i < nodesAfter.length; i++) {
+            var nodeText = (nodesAfter[i].textContent || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '').trim();
+            if (nodeText.length > 0 || (nodesAfter[i].nodeType === 1 && nodesAfter[i].nodeName !== 'BR')) {
+              hasContentAfter = true;
+              break;
+            }
+          }
+          if (hasContentAfter) {
+            for (var i = 0; i < nodesAfter.length; i++) {
+              newBlock.appendChild(nodesAfter[i]);
+            }
+          } else {
+            for (var i = 0; i < nodesAfter.length; i++) {
+              if (nodesAfter[i].parentNode) nodesAfter[i].parentNode.removeChild(nodesAfter[i]);
+            }
+            newBlock.innerHTML = '<br>';
+          }
+          block.parentNode.insertBefore(newBlock, block.nextSibling);
+          var cursorTarget = newBlock.firstChild;
+          if (!cursorTarget) { cursorTarget = document.createTextNode('\u200B'); newBlock.appendChild(cursorTarget); }
+          var range = document.createRange();
+          if (cursorTarget.nodeType === 3) {
+            range.setStart(cursorTarget, 0);
+          } else {
+            range.setStart(newBlock, 0);
+          }
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } else {
+          var text = anchorNode.textContent || '';
+          var leftText = text.substring(0, anchorOffset);
+          var rightText = text.substring(anchorOffset);
+
+          anchorNode.textContent = leftText;
+
+          var cloned = document.createElement(inlineEl.nodeName);
+          for (var ai = 0; ai < inlineEl.attributes.length; ai++) {
+            var attr = inlineEl.attributes[ai];
+            if (attr.name === 'data-md-literal') continue;
+            cloned.setAttribute(attr.name, attr.value);
+          }
+          cloned.textContent = rightText;
+
+          var nodesAfterInline = collectNodesAfter(inlineEl, block);
+          if (rightText.replace(/[\u200B\u200C\u200D\uFEFF]/g, '').length > 0) {
+            newBlock.appendChild(cloned);
+          } else {
+            if (rightText) {
+              newBlock.appendChild(document.createTextNode(rightText));
+            }
+          }
+          for (var i = 0; i < nodesAfterInline.length; i++) {
+            newBlock.appendChild(nodesAfterInline[i]);
+          }
+          if (!newBlock.hasChildNodes()) newBlock.innerHTML = '<br>';
+
+          var trailingInOriginal = inlineEl.nextSibling;
+          while (trailingInOriginal) {
+            var next = trailingInOriginal.nextSibling;
+            if (trailingInOriginal.nodeType === 3) {
+              var trimmed = trailingInOriginal.textContent.replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+              if (trimmed.length === 0) { trailingInOriginal.parentNode.removeChild(trailingInOriginal); }
+            }
+            trailingInOriginal = next;
+          }
+
+          if (leftText.replace(/[\u200B\u200C\u200D\uFEFF]/g, '').length === 0) {
+            if (inlineEl.parentNode) inlineEl.parentNode.removeChild(inlineEl);
+            if (!block.hasChildNodes() || (block.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF\s]/g, '').length === 0) {
+              block.innerHTML = '<br>';
+            }
+          }
+
+          block.parentNode.insertBefore(newBlock, block.nextSibling);
+          var cursorTarget = newBlock.firstChild;
+          if (!cursorTarget) { cursorTarget = document.createTextNode('\u200B'); newBlock.appendChild(cursorTarget); }
+          var range = document.createRange();
+          if (cursorTarget.nodeType === 3) {
+            range.setStart(cursorTarget, 0);
+          } else {
+            range.setStart(newBlock, 0);
+          }
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+
+        if (wysiwygEditor._finalizeUpdate) {
+          wysiwygEditor._finalizeUpdate(ea.innerHTML);
+        }
+      };
+    })();
 
     (function emojiShortcodeSupport() {
       var EMOJI_MAP = (typeof liveWysiwygEmojiMap !== "undefined" ? liveWysiwygEmojiMap : {});
@@ -25008,14 +28209,12 @@
             } else {
               wrapper.parentNode.appendChild(pAfter);
             }
-            requestAnimationFrame(function () {
-              var range = document.createRange();
-              range.setStart(pAfter, 0);
-              range.collapse(true);
-              sel.removeAllRanges();
-              sel.addRange(range);
-              ea.focus();
-            });
+            var range = document.createRange();
+            range.setStart(pAfter, 0);
+            range.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(range);
+            ea.focus();
           }
         } else {
           requestAnimationFrame(function () {
@@ -25320,7 +28519,7 @@
         if (node.nodeType === 3) node = node.parentNode;
         if (!ea.contains(node)) return false;
 
-        // Inline element revert: cursor at start, at end, or immediately after (CODE, STRONG, EM, DEL, A)
+        // Inline element revert: cursor at start/end (non-CODE) or immediately after (all inline elements)
         var anchorNode = sel.anchorNode;
         var anchorOffset = sel.anchorOffset;
         var inlineEl = null;
@@ -25332,11 +28531,13 @@
         while (anc && anc !== ea) {
           if (INLINE_REVERT_TAGS[anc.nodeName]) {
             if (anc.nodeName === 'CODE' && anc.parentNode && anc.parentNode.nodeName === 'PRE') break;
-            inlineEl = anc;
-            var atStart = (n === anc && anchorOffset === 0) || (n.parentNode === anc && anchorOffset === 0);
-            var atEnd = (n === anc && anchorOffset === anc.childNodes.length) ||
-              (n.parentNode === anc && anchorOffset === (n.textContent || '').length);
-            if (atStart || atEnd) atRevertPosition = true;
+            if (anc.nodeName !== 'CODE') {
+              inlineEl = anc;
+              var atStart = (n === anc && anchorOffset === 0) || (n.parentNode === anc && anchorOffset === 0);
+              var atEnd = (n === anc && anchorOffset === anc.childNodes.length) ||
+                (n.parentNode === anc && anchorOffset === (n.textContent || '').length);
+              if (atStart || atEnd) atRevertPosition = true;
+            }
             break;
           }
           if (anc.nodeName === 'PRE') break;
@@ -25695,10 +28896,12 @@
         }
 
         if (e.key === 'Backspace' && !e.defaultPrevented) {
+          _flushHistoryCapture();
           if (handleRevertOnBackspace(sel)) {
             e.preventDefault();
             e.stopImmediatePropagation();
             if (wysiwygEditor._finalizeUpdate) wysiwygEditor._finalizeUpdate(ea.innerHTML);
+            _scheduleHistoryCapture(true);
             return;
           }
         }
@@ -25709,10 +28912,12 @@
         var anchorOffset = sel.anchorOffset;
         if (!anchorNode || anchorNode.nodeType !== 3) return;
         if (isInsidePreOrCode(anchorNode)) return;
+        _flushHistoryCapture();
         var converted = handleBlockConversions(anchorNode, anchorOffset, sel, false);
         if (converted) {
           e.preventDefault();
           if (wysiwygEditor._finalizeUpdate) wysiwygEditor._finalizeUpdate(ea.innerHTML);
+          _scheduleHistoryCapture(true);
         }
       };
 
@@ -25734,7 +28939,10 @@
 
         if (ch === ' ') {
           converted = handleListToChecklist(anchorNode, anchorOffset, sel);
-          if (!converted) converted = handleBlockConversions(anchorNode, anchorOffset, sel, true);
+          if (!converted) {
+            _flushHistoryCapture();
+            converted = handleBlockConversions(anchorNode, anchorOffset, sel, true);
+          }
         }
 
         if (!converted && (ch === '-' || ch === '*' || ch === '_')) {
@@ -25753,8 +28961,9 @@
           converted = handleCloseParen(anchorNode, anchorOffset, sel);
         }
 
-        if (converted && wysiwygEditor._finalizeUpdate) {
-          wysiwygEditor._finalizeUpdate(ea.innerHTML);
+        if (converted) {
+          if (wysiwygEditor._finalizeUpdate) wysiwygEditor._finalizeUpdate(ea.innerHTML);
+          _scheduleHistoryCapture(true);
         }
       });
     })();
@@ -25883,7 +29092,16 @@
         if (node.nodeName === "CODE" && !this._findParentElement(node, 'PRE')) {
           var codeContent = (node.textContent || '').replace(/[\u200B\u200C\u200D\uFEFF]/g, '').trim();
           if (options && options.inTableCell) codeContent = codeContent.replace(/\|/g, '\\|');
-          if (codeContent.indexOf('`') >= 0) return '`` ' + codeContent + ' ``';
+          if (codeContent.indexOf('`') >= 0) {
+            var needed = 1, brun = 0;
+            for (var ci = 0; ci < codeContent.length; ci++) {
+              if (codeContent.charAt(ci) === '`') { brun++; if (brun >= needed) needed = brun + 1; }
+              else { brun = 0; }
+            }
+            var ticks = '';
+            for (var ti = 0; ti < needed; ti++) ticks += '`';
+            return ticks + ' ' + codeContent + ' ' + ticks;
+          }
           return '`' + codeContent + '`';
         }
         if (node.nodeName === "IMG" && node.getAttribute) {
@@ -25968,6 +29186,7 @@
             }
             if (toRemove.length === 0) return;
             e.preventDefault();
+            _flushHistoryCapture();
             var insertionParent = toRemove[0].parentNode;
             var insertionRef = toRemove[0].nextSibling;
             for (var ri = 0; ri < toRemove.length; ri++) {
@@ -26007,6 +29226,7 @@
             if (wysiwygEditor._finalizeUpdate) {
               wysiwygEditor._finalizeUpdate(ea.innerHTML);
             }
+            _scheduleHistoryCapture(true);
             return;
           }
           var node = sel.anchorNode;
@@ -26027,6 +29247,7 @@
             e.preventDefault();
             var preEl = blockContainer.nodeName === 'PRE' ? blockContainer : blockContainer.querySelector('pre');
             var literal = preEl && preEl.getAttribute('data-md-literal');
+            _flushHistoryCapture();
             var parentNode = blockContainer.parentNode;
             var nextSib = blockContainer.nextSibling;
             parentNode.removeChild(blockContainer);
@@ -26056,6 +29277,7 @@
             if (wysiwygEditor._finalizeUpdate) {
               wysiwygEditor._finalizeUpdate(ea.innerHTML);
             }
+            _scheduleHistoryCapture(true);
             return;
           }
 
@@ -27972,6 +31194,8 @@
           e.preventDefault();
           _undoViaBeforeinput = true;
           _contentRedo();
+        } else if (_historyBranchPopup) {
+          _dismissHistoryBranchPopup();
         }
       });
 
@@ -27988,6 +31212,7 @@
         var key = e.key;
 
         if (key === 'Enter') {
+          if (_ekh.inlineEnterEscape) { _ekh.inlineEnterEscape(e); if (e.defaultPrevented) return; }
           if (_ekh.reverseBubble) { _ekh.reverseBubble(e); if (e.defaultPrevented) return; }
           if (_ekh.listEnterExit) { _ekh.listEnterExit(e); if (e.defaultPrevented) return; }
           if (_ekh.admonitionEnterExit) { _ekh.admonitionEnterExit(e); if (e.defaultPrevented) return; }
@@ -28005,6 +31230,7 @@
         } else if (key === ' ') {
           if (_ekh.mdAuto) _ekh.mdAuto(e);
         } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
+          if (_ekh.inlineArrowEscape) { _ekh.inlineArrowEscape(e); if (e.defaultPrevented) return; }
           if (_ekh.checklistArrow) _ekh.checklistArrow(e);
         } else if (key === 'a' && (e.metaKey || e.ctrlKey)) {
           if (_ekh.progressiveSelectAll) _ekh.progressiveSelectAll(e);

@@ -25,6 +25,7 @@ In Focus Mode with "Remain in Focus Mode" enabled, saving triggers a seamless pa
 | **Unfocused** | Inline editor on the rendered page with the controls bar. |
 | **Focus Mode** | Fullscreen editing overlay with nav sidebar, content area, and table of contents. Press ESC to exit. |
 | **Mermaid Mode** | Full-screen diagram editor for mermaid code blocks. Overlays Focus Mode. |
+| **History Mode** | Document History: visual DAG view of undo/redo history. Accessible via redo branch picker popup. |
 
 ### Help
 
@@ -42,12 +43,15 @@ In Focus Mode with "Remain in Focus Mode" enabled, saving triggers a seamless pa
 | Ctrl+S / Cmd+S | Save page | Triggers upstream save |
 | Ctrl+. / Cmd+. | Toggle WYSIWYG / Markdown mode | Works in both modes |
 | Ctrl+Z / Cmd+Z | Undo | DAG content undo |
-| Ctrl+Y / Cmd+Y | Redo | Also Ctrl+Shift+Z / Cmd+Shift+Z |
+| Ctrl+Y / Cmd+Y | Redo | Also Ctrl+Shift+Z / Cmd+Shift+Z. Shows branch picker at branch points |
 | Ctrl+B / Cmd+B | Bold | Toggle bold on selection |
 | Ctrl+I / Cmd+I | Italic | Toggle italic on selection |
 | Ctrl+A / Cmd+A | Select all | Progressive: block → section → document |
 | Enter | New paragraph / bubble exit | See Block Elements tab |
+| Enter (in inline element) | Split / escape inline element | See Inline & Emoji tab |
 | Shift+Enter | Line break | Bypasses bubble behavior |
+| ArrowRight (end of inline element) | Exit inline element rightward | Moves cursor after the element |
+| ArrowLeft (start of inline element) | Exit inline element leftward | Moves cursor before the element |
 | Backspace | Delete / revert markdown element | See Auto-Conversions tab |
 | Tab | Indent list / next table cell / insert spaces | Context-dependent |
 | Shift+Tab | Outdent list / previous table cell | Context-dependent |
@@ -59,7 +63,7 @@ In Focus Mode with "Remain in Focus Mode" enabled, saving triggers a seamless pa
 | Ctrl+S / Cmd+S | Save page | Triggers upstream save |
 | Ctrl+. / Cmd+. | Toggle WYSIWYG / Markdown mode | Works in both modes |
 | Ctrl+Z / Cmd+Z | Undo | DAG content undo |
-| Ctrl+Y / Cmd+Y | Redo | Also Ctrl+Shift+Z / Cmd+Shift+Z |
+| Ctrl+Y / Cmd+Y | Redo | Also Ctrl+Shift+Z / Cmd+Shift+Z. Shows branch picker at branch points |
 | Ctrl+B / Cmd+B | Bold | Wraps selection in `**` |
 | Ctrl+I / Cmd+I | Italic | Wraps selection in `*` |
 | Tab | Indent list / insert spaces | Context-dependent |
@@ -114,6 +118,8 @@ Inline conversions trigger when you type the closing delimiter. The wrapped text
 ### Backspace Revert
 
 **Backspace** on an empty converted element (heading, blockquote, admonition, list item, or the paragraph after a horizontal rule) reverts it to the original literal characters, including the trailing space (e.g. `## ` restores `## `). The cursor is placed at the end of the restored text.
+
+For **inline code** elements, backspace revert only triggers when the cursor is **immediately after** the code element (outside it). When the cursor is inside an inline code element, backspace deletes characters normally. Other inline elements (bold, italic, strikethrough, links) revert on backspace at either edge.
 
 Elements created by toolbar buttons (not by typing markdown) are deleted on backspace instead of reverted.
 
@@ -180,6 +186,21 @@ Available types: note, danger, warning, tip, hint, important, caution, error, at
 - **Triple backtick** inline code: type ` ``` ` then **Backspace** (reverts the code block) then **Space** to open, type content, then **Space** + ` ``` ` to close. Preserves single and double backticks inside the content. Mid-line triple backticks followed by Space also open inline mode directly.
 - **4+ backtick** inline code: same space-delimited pattern works for any number of backticks (4, 5, 6, ...). Use more backticks when the content contains longer consecutive backtick runs.
 - The **Inline Code** toolbar button toggles inline code off if the cursor is on existing inline code.
+
+### Inline Element Navigation
+
+Arrow keys and Enter have special behavior when the cursor is inside any inline element (code, bold, italic, strikethrough, link):
+
+| Key | Cursor Position | Behavior |
+|-----|-----------------|----------|
+| **ArrowRight** | End of inline element | Exits the element — cursor lands after it in the same paragraph |
+| **ArrowLeft** | Start of inline element | Exits the element — cursor lands before it in the same paragraph |
+| **Enter** | Left edge | Moves the inline element (and everything after it) to a new line; original line keeps content before the element |
+| **Enter** | Right edge | Inserts a new line below; content after the element moves to the new line |
+| **Enter** | Middle | Splits the inline element at the cursor; left half stays, right half moves to a new line |
+| **Shift+Enter** | Anywhere | Normal line break (bypasses inline escape) |
+
+Arrow escape and Enter splitting work inside paragraphs, headings, list items, admonitions, and block quotes.
 
 ### Emoji
 

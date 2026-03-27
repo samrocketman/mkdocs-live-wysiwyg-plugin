@@ -19,6 +19,30 @@ const ICON_TABLE_INSERT_ROW_ABOVE = `<svg viewBox="0 0 24 24" fill="none"><g fil
 const ICON_TABLE_INSERT_ROW_BELOW = `<svg viewBox="0 0 24 24" fill="none"><g fill="#999"><rect x="3" y="6" width="5" height="3" rx=".5"/><rect x="9" y="6" width="5" height="3" rx=".5"/><rect x="15" y="6" width="5" height="3" rx=".5"/></g><g fill="#4a90e2"><rect x="3" y="11" width="5" height="3" rx=".5"/><rect x="9" y="11" width="5" height="3" rx=".5"/><rect x="15" y="11" width="5" height="3" rx=".5"/></g><path stroke="#4a90e2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 16v4M10 19l2 2 2-2"/></svg>`;
 const ICON_TABLE_INSERT_COL_LEFT = `<svg viewBox="0 0 24 24" fill="none"><g fill="#4a90e2"><rect x="9" y="6" width="3" height="4" rx=".5"/><rect x="9" y="11" width="3" height="4" rx=".5"/><rect x="9" y="16" width="3" height="4" rx=".5"/></g><g fill="#999"><rect x="14" y="6" width="3" height="4" rx=".5"/><rect x="14" y="11" width="3" height="4" rx=".5"/><rect x="14" y="16" width="3" height="4" rx=".5"/></g><path stroke="#4a90e2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M7 12H3M4 10l-2 2 2 2"/></svg>`;
 const ICON_TABLE_INSERT_COL_RIGHT = `<svg viewBox="0 0 24 24" fill="none"><g fill="#999"><rect x="7" y="6" width="3" height="4" rx=".5"/><rect x="7" y="11" width="3" height="4" rx=".5"/><rect x="7" y="16" width="3" height="4" rx=".5"/></g><g fill="#4a90e2"><rect x="12" y="6" width="3" height="4" rx=".5"/><rect x="12" y="11" width="3" height="4" rx=".5"/><rect x="12" y="16" width="3" height="4" rx=".5"/></g><path stroke="#4a90e2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M17 12h4M20 10l2 2-2 2"/></svg>`;
+const ICON_ALIGN_LEFT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="10" x2="15" y2="10"/><line x1="3" y1="14" x2="18" y2="14"/><line x1="3" y1="18" x2="13" y2="18"/></svg>`;
+const ICON_ALIGN_CENTER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="10" x2="18" y2="10"/><line x1="4" y1="14" x2="20" y2="14"/><line x1="7" y1="18" x2="17" y2="18"/></svg>`;
+const ICON_ALIGN_RIGHT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="9" y1="10" x2="21" y2="10"/><line x1="6" y1="14" x2="21" y2="14"/><line x1="11" y1="18" x2="21" y2="18"/></svg>`;
+const ICON_TABLE_DELETE_ROW = `<svg viewBox="0 0 24 24" fill="none"><g fill="#e25c5c"><rect x="3" y="10" width="5" height="3" rx=".5"/><rect x="9" y="10" width="5" height="3" rx=".5"/><rect x="15" y="10" width="5" height="3" rx=".5"/></g><g fill="#999"><rect x="3" y="15" width="5" height="3" rx=".5"/><rect x="9" y="15" width="5" height="3" rx=".5"/><rect x="15" y="15" width="5" height="3" rx=".5"/></g><path stroke="#e25c5c" stroke-width="2" stroke-linecap="round" d="M8 4l8 0M9 3l6 6M15 3l-6 6"/></svg>`;
+const ICON_TABLE_DELETE_COL = `<svg viewBox="0 0 24 24" fill="none"><g fill="#e25c5c"><rect x="9" y="6" width="3" height="4" rx=".5"/><rect x="9" y="11" width="3" height="4" rx=".5"/><rect x="9" y="16" width="3" height="4" rx=".5"/></g><g fill="#999"><rect x="14" y="6" width="3" height="4" rx=".5"/><rect x="14" y="11" width="3" height="4" rx=".5"/><rect x="14" y="16" width="3" height="4" rx=".5"/></g><path stroke="#e25c5c" stroke-width="2" stroke-linecap="round" d="M4 2v8M1 3l6 6M7 3l-6 6"/></svg>`;
+const ICON_TABLE_SETTINGS = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
+
+function _getCellAlign(cell) {
+    if (!cell) return '';
+    return (cell.style.textAlign || cell.getAttribute('align') || '').toLowerCase();
+}
+
+function _normalizeTableAlignAttrs(container) {
+    if (!container) return;
+    const cells = container.querySelectorAll('th[align], td[align]');
+    for (let i = 0; i < cells.length; i++) {
+        const val = (cells[i].getAttribute('align') || '').toLowerCase();
+        if (val && val !== 'left') {
+            cells[i].style.textAlign = val;
+        }
+        cells[i].removeAttribute('align');
+    }
+}
+window._normalizeTableAlignAttrs = _normalizeTableAlignAttrs;
 
 class MarkdownWYSIWYG {
     constructor(elementId, options = {}) {
@@ -339,14 +363,25 @@ class MarkdownWYSIWYG {
         this.contextualTableToolbar = document.createElement('div');
         this.contextualTableToolbar.classList.add('md-contextual-table-toolbar');
 
-        const buttons = [
+        const insertButtons = [
             { id: 'insertRowAbove', label: ICON_TABLE_INSERT_ROW_ABOVE, title: 'Insert Row Above', action: () => this._insertRowWysiwyg(true) },
             { id: 'insertRowBelow', label: ICON_TABLE_INSERT_ROW_BELOW, title: 'Insert Row Below', action: () => this._insertRowWysiwyg(false) },
             { id: 'insertColLeft', label: ICON_TABLE_INSERT_COL_LEFT, title: 'Insert Column Left', action: () => this._insertColumnWysiwyg(true) },
             { id: 'insertColRight', label: ICON_TABLE_INSERT_COL_RIGHT, title: 'Insert Column Right', action: () => this._insertColumnWysiwyg(false) },
         ];
 
-        buttons.forEach(btnConfig => {
+        const deleteButtons = [
+            { id: 'deleteRow', label: ICON_TABLE_DELETE_ROW, title: 'Delete Row', action: () => this._deleteRowWysiwyg() },
+            { id: 'deleteCol', label: ICON_TABLE_DELETE_COL, title: 'Delete Column', action: () => this._deleteColumnWysiwyg() },
+        ];
+
+        const alignButtons = [
+            { id: 'alignLeft', label: ICON_ALIGN_LEFT, title: 'Align Left', align: 'left' },
+            { id: 'alignCenter', label: ICON_ALIGN_CENTER, title: 'Align Center', align: 'center' },
+            { id: 'alignRight', label: ICON_ALIGN_RIGHT, title: 'Align Right', align: 'right' },
+        ];
+
+        const addButton = (btnConfig) => {
             const button = document.createElement('button');
             button.type = 'button';
             button.classList.add('md-contextual-table-toolbar-button', `md-ctt-button-${btnConfig.id}`);
@@ -355,11 +390,42 @@ class MarkdownWYSIWYG {
             button.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (this.currentTableSelectionInfo) {
-                    btnConfig.action();
+                    if (btnConfig.action) btnConfig.action();
+                    else if (btnConfig.align) this._setColumnAlignment(btnConfig.align);
                 }
             });
             this.contextualTableToolbar.appendChild(button);
+        };
+
+        insertButtons.forEach(addButton);
+
+        const sep0 = document.createElement('span');
+        sep0.classList.add('md-ctt-separator');
+        this.contextualTableToolbar.appendChild(sep0);
+
+        deleteButtons.forEach(addButton);
+
+        const sep = document.createElement('span');
+        sep.classList.add('md-ctt-separator');
+        this.contextualTableToolbar.appendChild(sep);
+
+        alignButtons.forEach(addButton);
+
+        const sep2 = document.createElement('span');
+        sep2.classList.add('md-ctt-separator');
+        this.contextualTableToolbar.appendChild(sep2);
+
+        const gearBtn = document.createElement('button');
+        gearBtn.type = 'button';
+        gearBtn.classList.add('md-contextual-table-toolbar-button', 'md-ctt-button-tableSettings');
+        gearBtn.innerHTML = ICON_TABLE_SETTINGS;
+        gearBtn.title = 'Table Settings';
+        gearBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (this.currentTableSelectionInfo) this._toggleTableSettingsPopover(gearBtn);
         });
+        this.contextualTableToolbar.appendChild(gearBtn);
+
         this.editorWrapper.appendChild(this.contextualTableToolbar);
     }
 
@@ -388,12 +454,15 @@ class MarkdownWYSIWYG {
         this.contextualTableToolbar.style.top = `${top}px`;
         this.contextualTableToolbar.style.left = `${left}px`;
 
+        this._updateAlignmentButtonStates();
+
         this._boundListeners.closeContextualTableToolbarOnEsc = (e) => this._handlePopupEscKey(e, this._hideContextualTableToolbar.bind(this));
         document.addEventListener('click', this._boundListeners.closeContextualTableToolbarOnClickOutside, true);
         document.addEventListener('keydown', this._boundListeners.closeContextualTableToolbarOnEsc, true);
     }
 
     _hideContextualTableToolbar() {
+        this._hideTableSettingsPopover();
         if (this.contextualTableToolbar) {
             this.contextualTableToolbar.style.display = 'none';
         }
@@ -405,6 +474,9 @@ class MarkdownWYSIWYG {
     }
 
     _closeContextualTableToolbarOnClickOutside(event) {
+        if (this._tableSettingsPopover && this._tableSettingsPopover.contains(event.target)) {
+            return;
+        }
         if (this.contextualTableToolbar &&
             !this.contextualTableToolbar.contains(event.target) &&
             !this._findParentElement(event.target, ['TD', 'TH'])) {
@@ -416,6 +488,12 @@ class MarkdownWYSIWYG {
 
     _handlePopupEscKey(event, hideMethod) {
         if (event.key === 'Escape') {
+            if (this._tableSettingsPopover) {
+                this._hideTableSettingsPopover();
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
             hideMethod();
             event.preventDefault();
             event.stopPropagation();
@@ -519,6 +597,234 @@ class MarkdownWYSIWYG {
 
         this._finalizeUpdate(this.editableArea.innerHTML);
         this._showContextualTableToolbar(newFocusedCellInCurrentRow || currentCell);
+    }
+
+    _deleteRowWysiwyg() {
+        if (!this.currentTableSelectionInfo) return;
+        const { row: currentRow, table, cellIndex } = this.currentTableSelectionInfo;
+
+        const allRows = Array.from(table.rows);
+        if (allRows.length <= 2) {
+            const p = document.createElement('p');
+            p.innerHTML = '&#8203;';
+            table.parentNode.insertBefore(p, table);
+            table.parentNode.removeChild(table);
+            this._hideContextualTableToolbar();
+            this._focusCell(p);
+            this._finalizeUpdate(this.editableArea.innerHTML);
+            return;
+        }
+
+        const rowIdx = allRows.indexOf(currentRow);
+        currentRow.parentNode.removeChild(currentRow);
+
+        const remaining = Array.from(table.rows);
+        const nextRow = remaining[Math.min(rowIdx, remaining.length - 1)];
+        const cellToFocus = nextRow ? (nextRow.cells[cellIndex] || nextRow.cells[0]) : null;
+
+        if (cellToFocus) {
+            this._focusCell(cellToFocus);
+            this.currentTableSelectionInfo = {
+                cell: cellToFocus,
+                row: nextRow,
+                table: table,
+                cellIndex: cellToFocus.cellIndex,
+                rowIndex: nextRow.rowIndex
+            };
+            this._finalizeUpdate(this.editableArea.innerHTML);
+            this._showContextualTableToolbar(cellToFocus);
+        } else {
+            this._hideContextualTableToolbar();
+            this._finalizeUpdate(this.editableArea.innerHTML);
+        }
+    }
+
+    _deleteColumnWysiwyg() {
+        if (!this.currentTableSelectionInfo) return;
+        const { table, cellIndex } = this.currentTableSelectionInfo;
+
+        const colCount = table.rows[0] ? table.rows[0].cells.length : 0;
+        if (colCount <= 1) {
+            const p = document.createElement('p');
+            p.innerHTML = '&#8203;';
+            table.parentNode.insertBefore(p, table);
+            table.parentNode.removeChild(table);
+            this._hideContextualTableToolbar();
+            this._focusCell(p);
+            this._finalizeUpdate(this.editableArea.innerHTML);
+            return;
+        }
+
+        for (const row of table.rows) {
+            if (row.cells[cellIndex]) {
+                row.deleteCell(cellIndex);
+            }
+        }
+
+        const focusIdx = Math.min(cellIndex, table.rows[0].cells.length - 1);
+        const currentRow = this.currentTableSelectionInfo.row;
+        const cellToFocus = currentRow.cells[focusIdx] || currentRow.cells[0];
+
+        if (cellToFocus) {
+            this._focusCell(cellToFocus);
+            this.currentTableSelectionInfo = {
+                cell: cellToFocus,
+                row: currentRow,
+                table: table,
+                cellIndex: cellToFocus.cellIndex,
+                rowIndex: currentRow.rowIndex
+            };
+            this._finalizeUpdate(this.editableArea.innerHTML);
+            this._showContextualTableToolbar(cellToFocus);
+        } else {
+            this._hideContextualTableToolbar();
+            this._finalizeUpdate(this.editableArea.innerHTML);
+        }
+    }
+
+    _setColumnAlignment(alignment) {
+        if (!this.currentTableSelectionInfo) return;
+        const { table, cellIndex } = this.currentTableSelectionInfo;
+        for (const row of table.rows) {
+            const cell = row.cells[cellIndex];
+            if (cell) {
+                cell.removeAttribute('align');
+                if (alignment === 'left') {
+                    cell.style.textAlign = '';
+                } else {
+                    cell.style.textAlign = alignment;
+                }
+            }
+        }
+        this._finalizeUpdate(this.editableArea.innerHTML);
+        this._updateAlignmentButtonStates();
+    }
+
+    _updateAlignmentButtonStates() {
+        if (!this.contextualTableToolbar || !this.currentTableSelectionInfo) return;
+        const { table, cellIndex } = this.currentTableSelectionInfo;
+        const headerRow = table.querySelector('thead tr') || table.querySelector('tr');
+        const headerCell = headerRow ? headerRow.cells[cellIndex] : null;
+        const align = _getCellAlign(headerCell);
+        const currentAlign = align || 'left';
+        const btnMap = { alignLeft: 'left', alignCenter: 'center', alignRight: 'right' };
+        for (const [id, val] of Object.entries(btnMap)) {
+            const btn = this.contextualTableToolbar.querySelector(`.md-ctt-button-${id}`);
+            if (btn) {
+                if (val === currentAlign) btn.classList.add('md-ctt-button-active');
+                else btn.classList.remove('md-ctt-button-active');
+            }
+        }
+    }
+
+    _toggleTableSettingsPopover(anchorBtn) {
+        if (this._tableSettingsPopover && this._tableSettingsPopover.parentNode) {
+            this._hideTableSettingsPopover();
+        } else {
+            this._showTableSettingsPopover(anchorBtn);
+        }
+    }
+
+    _showTableSettingsPopover(anchorBtn) {
+        this._hideTableSettingsPopover();
+        const table = this.currentTableSelectionInfo ? this.currentTableSelectionInfo.table : null;
+        if (!table) return;
+
+        const popover = document.createElement('div');
+        popover.classList.add('md-ctt-settings-popover');
+
+        const getGlobal = window._getGlobalTableWidth ? window._getGlobalTableWidth() : 120;
+
+        const widthRow = document.createElement('div');
+        widthRow.classList.add('md-ctt-settings-row');
+
+        const widthLabel = document.createElement('span');
+        widthLabel.classList.add('md-ctt-settings-inline-label');
+        widthLabel.textContent = 'Max width';
+        widthRow.appendChild(widthLabel);
+
+        const widthInput = document.createElement('input');
+        widthInput.type = 'number';
+        widthInput.min = '20';
+        widthInput.classList.add('md-ctt-settings-input');
+        widthInput.value = getGlobal;
+        widthInput.tabIndex = 1;
+        widthInput.addEventListener('change', () => {
+            const v = parseInt(widthInput.value, 10);
+            if (v > 0 && window._setGlobalTableWidth) window._setGlobalTableWidth(v);
+        });
+        widthRow.appendChild(widthInput);
+        popover.appendChild(widthRow);
+
+        const minimalRow = document.createElement('label');
+        minimalRow.classList.add('md-ctt-settings-checkbox-label');
+        const minimalCb = document.createElement('input');
+        minimalCb.type = 'checkbox';
+        minimalCb.tabIndex = 2;
+        minimalCb.checked = window._getMinimalTables ? window._getMinimalTables() : false;
+        minimalCb.addEventListener('change', () => {
+            if (window._setMinimalTables) window._setMinimalTables(minimalCb.checked);
+        });
+        minimalRow.appendChild(minimalCb);
+        minimalRow.appendChild(document.createTextNode(' Minimal tables'));
+        popover.appendChild(minimalRow);
+
+        popover.addEventListener('click', (e) => e.stopPropagation());
+        popover.addEventListener('mousedown', (e) => e.stopPropagation());
+
+        this.editorWrapper.appendChild(popover);
+        this._tableSettingsPopover = popover;
+
+        const btnRect = anchorBtn.getBoundingClientRect();
+        const wrapperRect = this.editorWrapper.getBoundingClientRect();
+        popover.style.top = (btnRect.bottom - wrapperRect.top + 4) + 'px';
+        popover.style.right = (wrapperRect.right - btnRect.right) + 'px';
+
+        if (window._attachDialogKeyboard) {
+            window._attachDialogKeyboard(popover, {
+                category: 'settings',
+                onDismiss: () => { this._hideTableSettingsPopover(); },
+                autoFocus: widthInput
+            });
+        } else {
+            requestAnimationFrame(() => { widthInput.focus(); });
+        }
+
+        this._tableSettingsCloseHandler = (ev) => {
+            if (popover.contains(ev.target) || ev.target === anchorBtn || anchorBtn.contains(ev.target)) return;
+            this._hideTableSettingsPopover();
+        };
+        document.addEventListener('mousedown', this._tableSettingsCloseHandler, true);
+    }
+
+    _hideTableSettingsPopover() {
+        if (this._tableSettingsCloseHandler) {
+            document.removeEventListener('mousedown', this._tableSettingsCloseHandler, true);
+            this._tableSettingsCloseHandler = null;
+        }
+        if (this._tableSettingsPopover && this._tableSettingsPopover.parentNode) {
+            this._tableSettingsPopover.parentNode.removeChild(this._tableSettingsPopover);
+        }
+        this._tableSettingsPopover = null;
+    }
+
+    _computeMinimumTableWidth() {
+        const table = this.currentTableSelectionInfo ? this.currentTableSelectionInfo.table : null;
+        if (!table) return 0;
+        if (window._computeNaturalTableWidth) return window._computeNaturalTableWidth(table);
+        const rows = table.querySelectorAll('tr');
+        if (!rows.length) return 0;
+        const colCount = rows[0].cells.length;
+        const maxWidths = new Array(colCount).fill(3);
+        for (let r = 0; r < rows.length; r++) {
+            for (let c = 0; c < rows[r].cells.length && c < colCount; c++) {
+                const text = (rows[r].cells[c].textContent || '').replace(/[\u200B\u200C\u200D]/g, '').trim();
+                if (text.length > maxWidths[c]) maxWidths[c] = text.length;
+            }
+        }
+        let total = 1;
+        for (let c = 0; c < colCount; c++) total += maxWidths[c] + 3;
+        return total;
     }
 
     _focusCell(cellElement) {
@@ -908,6 +1214,7 @@ class MarkdownWYSIWYG {
         if (mode === 'wysiwyg') {
             if (!isInitialSetup) {
                 this.editableArea.innerHTML = this._markdownToHtml(this.markdownArea.value);
+                _normalizeTableAlignAttrs(this.editableArea);
             }
             this.editableArea.style.display = 'block';
             this.markdownEditorContainer.style.display = 'none';
@@ -1631,6 +1938,7 @@ class MarkdownWYSIWYG {
 
             if (this.currentMode === 'wysiwyg') {
                 this.editableArea.innerHTML = contentToRestore;
+                _normalizeTableAlignAttrs(this.editableArea);
             } else {
                 this.markdownArea.value = contentToRestore;
                 this._updateMarkdownLineNumbers();
@@ -1743,6 +2051,12 @@ class MarkdownWYSIWYG {
         }
     }
 
+    _isEmptyBlock(el) {
+        if (!el) return false;
+        const text = el.textContent || '';
+        return text === '' || text === '\u200B';
+    }
+
     _insertTableWysiwyg(rows, cols) {
         if (isNaN(rows) || isNaN(cols) || rows < 1 || cols < 1) {
             return;
@@ -1792,15 +2106,31 @@ class MarkdownWYSIWYG {
             tbody.appendChild(br);
         }
 
-        rangeToUse.deleteContents();
-        const fragment = document.createDocumentFragment();
-        fragment.appendChild(table);
+        const blockParent = this._findParentElement(
+            rangeToUse.commonAncestorContainer,
+            ['H1','H2','H3','H4','H5','H6','P','BLOCKQUOTE','LI']
+        );
 
         const pAfter = document.createElement('p');
         pAfter.innerHTML = '&#8203;';
-        fragment.appendChild(pAfter);
 
-        rangeToUse.insertNode(fragment);
+        if (blockParent && this.editableArea.contains(blockParent) && blockParent !== this.editableArea) {
+            if (blockParent.nodeName === 'P' && this._isEmptyBlock(blockParent)) {
+                blockParent.parentNode.insertBefore(table, blockParent);
+                blockParent.parentNode.insertBefore(pAfter, blockParent);
+                blockParent.parentNode.removeChild(blockParent);
+            } else {
+                const ref = blockParent.nextSibling;
+                blockParent.parentNode.insertBefore(table, ref);
+                blockParent.parentNode.insertBefore(pAfter, table.nextSibling);
+            }
+        } else {
+            rangeToUse.deleteContents();
+            const fragment = document.createDocumentFragment();
+            fragment.appendChild(table);
+            fragment.appendChild(pAfter);
+            rangeToUse.insertNode(fragment);
+        }
 
         let firstCellToFocus = null;
         if (rows >= 1 && cols >= 1 && thead.firstChild && thead.firstChild.firstChild) {
@@ -1815,10 +2145,11 @@ class MarkdownWYSIWYG {
             this.currentTableSelectionInfo = { cell: firstCellToFocus, row: row, table: table, cellIndex: firstCellToFocus.cellIndex, rowIndex: row.rowIndex };
             this._showContextualTableToolbar(firstCellToFocus);
         } else {
-            rangeToUse.setStart(pAfter, pAfter.childNodes.length > 0 ? 1 : 0);
-            rangeToUse.collapse(true);
+            const newRange = document.createRange();
+            newRange.setStart(pAfter, pAfter.childNodes.length > 0 ? 1 : 0);
+            newRange.collapse(true);
             selection.removeAllRanges();
-            selection.addRange(rangeToUse);
+            selection.addRange(newRange);
         }
         this.savedRangeInfo = null;
         this._finalizeUpdate(this.editableArea.innerHTML);
@@ -2674,6 +3005,28 @@ class MarkdownWYSIWYG {
                     return `\`\`\`\n${preTextContent}\`\`\`\n\n`;
                 }
                 if (node.nodeName.match(/^H[1-6]$/)) {
+                    const hasBlockChild = Array.from(node.childNodes).some(c => this._isBlockElement(c));
+                    if (hasBlockChild) {
+                        const level = parseInt(node.nodeName[1]);
+                        let md = '';
+                        let inlineBuf = '';
+                        for (let ci = 0; ci < node.childNodes.length; ci++) {
+                            const child = node.childNodes[ci];
+                            if (this._isBlockElement(child)) {
+                                if (inlineBuf.trim()) {
+                                    md += `${'#'.repeat(level)} ${inlineBuf.trim()}\n\n`;
+                                    inlineBuf = '';
+                                }
+                                md += this._nodeToMarkdownRecursive(child, options);
+                            } else {
+                                inlineBuf += this._nodeToMarkdownRecursive(child, options);
+                            }
+                        }
+                        if (inlineBuf.trim()) {
+                            md += `${'#'.repeat(level)} ${inlineBuf.trim()}\n\n`;
+                        }
+                        return md;
+                    }
                     return `${'#'.repeat(parseInt(node.nodeName[1]))} ${this._processInlineContainerRecursive(node, options).trim()}\n\n`;
                 }
                 if (node.nodeName === 'HR') {
@@ -2748,9 +3101,21 @@ class MarkdownWYSIWYG {
 
 
                 tableMarkdown = headerMdContent;
-                // Add separator line if there was a header or we have columns
+                // Add separator line with alignment markers from header cell styles
                 if (headerMdContent.trim() !== '' || colCount > 0) {
-                    tableMarkdown += `|${' --- |'.repeat(colCount)}\n`;
+                    let headerRow = tHeadNode ? tHeadNode.querySelector('tr') : null;
+                    if (!headerRow && firstTBodyRowUsedAsHeader && tBodyNode) {
+                        headerRow = tBodyNode.querySelector('tr');
+                    }
+                    const headerCellNodes = headerRow ? Array.from(headerRow.querySelectorAll('th, td')) : [];
+                    let sepParts = '';
+                    for (let ci = 0; ci < colCount; ci++) {
+                        const align = _getCellAlign(headerCellNodes[ci]);
+                        if (align === 'center') sepParts += ' :---: |';
+                        else if (align === 'right') sepParts += ' ---: |';
+                        else sepParts += ' --- |';
+                    }
+                    tableMarkdown += `|${sepParts}\n`;
                 }
 
                 // Process TBODY
@@ -2804,6 +3169,7 @@ class MarkdownWYSIWYG {
     setValue(markdown, isInitialSetup = false) {
         const html = this._markdownToHtml(markdown);
         this.editableArea.innerHTML = html;
+        _normalizeTableAlignAttrs(this.editableArea);
         this.markdownArea.value = markdown || '';
 
         if (this.currentMode === 'markdown') {

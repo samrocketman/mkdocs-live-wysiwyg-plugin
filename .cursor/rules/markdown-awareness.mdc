@@ -7,6 +7,8 @@ alwaysApply: true
 
 The Markdown Awareness subsystem preserves markdown fidelity through the lossy HTML round-trip and ensures all content-loading paths produce a fully enhanced, structurally correct DOM. It has two pillars: the 7 preprocess/postprocess pairs that capture and restore markdown-specific formatting, and the 6 DOM enhancer functions that add interactive UI to raw elements.
 
+The table pair (`preprocessTables` / `postprocessTables`) is the most sophisticated pair. It snapshots entire table blocks and uses normalized content comparison to detect modifications. Unchanged tables with consistent formatting are restored verbatim; unchanged tables with inconsistent formatting and all modified/new tables are balanced via `_formatBalancedTable` (alignment-aware, width-limited). Column alignment (`text-align` on `<th>`/`<td>`) round-trips through GFM markers (`:---`, `:---:`, `---:`).
+
 ## Rules
 
 1. **Every content-loading code path must refresh preprocess data and run DOM enhancers.** If a function sets `editableArea.innerHTML` from markdown, it must update all 7 `_liveWysiwyg*Data` stores and call all 6 enhance functions. Partial loading (setting innerHTML without preprocessing or enhancing) is a bug. Current content-loading paths: `setValue`, `switchToMode`, `_historyApplyContent`.
@@ -27,6 +29,14 @@ The Markdown Awareness subsystem preserves markdown fidelity through the lossy H
 
 9. **Undo history is aware of markdown construct boundaries.** The Content History pre-flush captures intermediate typing states (literal `` ```mermaid `` text, `## ` prefixes, `> ` prefixes) as HTML snapshot nodes before block conversions. This preserves the exact DOM of partially-typed markdown constructs that the parser would reinterpret on round-trip. The always-on HTML snapshot ensures faithful restoration during undo, allowing walkback through every conversion step.
 
+10. **Table column alignment must survive WYSIWYG round-trips.** `_htmlToMarkdown` reads `style.textAlign` from `<th>`/`<td>` and emits GFM alignment markers. `_markdownToHtml` and DOM enhancement parse these markers back into `text-align` styles. The contextual table toolbar provides alignment buttons that set `text-align` on all cells in the selected column.
+
+11. **Unchanged tables with consistent formatting are restored verbatim.** `postprocessTables` compares normalized content against preprocess snapshots. Matching tables with uniform row lengths are restored byte-for-byte. This prevents formatting diffs on content the user did not touch.
+
+12. **Modified or inconsistently formatted tables are balanced.** `_formatBalancedTable` produces evenly padded columns with aligned pipe separators, respecting per-table (`data-table-width`) or global (`localStorage` key `liveWysiwygTableWidthLimit`, default 120) width limits.
+
+13. **Tables must be block-level siblings, never nested inside headings or inline containers.** `_insertTableWysiwyg` inserts tables as siblings after block elements. The heading case in `_nodeToMarkdownRecursive` defensively splits inadvertently nested block children into separate markdown blocks.
+
 ## Preprocess/Postprocess Pairs
 
 | Store | Preprocessor | Postprocessor |
@@ -34,7 +44,7 @@ The Markdown Awareness subsystem preserves markdown fidelity through the lossy H
 | `_liveWysiwygCodeBlockData` | `preprocessCodeBlocks` | `postprocessCodeBlocks` |
 | `_liveWysiwygLinkData` | `preprocessMarkdownLinks` | `postprocessMarkdownLinks` |
 | `_liveWysiwygListMarkerData` | `preprocessListMarkers` | `postprocessListMarkers` |
-| `_liveWysiwygTableSepData` | `preprocessTableSeparators` | `postprocessTableSeparators` |
+| `_liveWysiwygTableData` | `preprocessTables` | `postprocessTables` |
 | `_liveWysiwygHrData` | `preprocessHorizontalRules` | `postprocessHorizontalRules` |
 | `_liveWysiwygInlineCodeData` | `preprocessInlineCode` | `postprocessInlineCode` |
 | `_liveWysiwygRawHtmlData` | `preprocessRawHtml` | `postprocessRawHtml` |

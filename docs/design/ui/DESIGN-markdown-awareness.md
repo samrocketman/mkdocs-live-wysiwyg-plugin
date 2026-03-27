@@ -14,7 +14,7 @@ All code lives in `live-wysiwyg-integration.js`.
 - **Info-string attributes**: `title="foo"`, `linenums="1"`, `hl_lines="2 3"` are stored as `data-*` attributes on `<pre>` but `_htmlToMarkdown` must explicitly read them back
 - **List markers**: `*`, `+` become `-`
 - **Ordered list numbering**: `1.`, `2.`, `3.` become `1.`, `1.`, `1.`
-- **Table separators**: column alignment markers are normalized
+- **Table formatting**: column widths, alignment markers, and cell padding are normalized
 - **Horizontal rule style**: `***`, `___` become `---`
 - **Inline code backtick count**: preserved via run-length fence calculation (longest backtick run + 1)
 - **Reference links**: `[text][ref]` with `[ref]: url` become inline `[text](url)`
@@ -33,12 +33,24 @@ Seven pairs of functions capture markdown-specific formatting before HTML conver
 | `_liveWysiwygCodeBlockData` | `preprocessCodeBlocks` | `postprocessCodeBlocks` | Fence style, language, title, linenums, hl_lines, indented blocks |
 | `_liveWysiwygLinkData` | `preprocessMarkdownLinks` | `postprocessMarkdownLinks` | Inline vs reference links, ref definitions |
 | `_liveWysiwygListMarkerData` | `preprocessListMarkers` | `postprocessListMarkers` | Marker style (`*`, `-`, `+`, `1.`) and checklist syntax |
-| `_liveWysiwygTableSepData` | `preprocessTableSeparators` | `postprocessTableSeparators` | Table separator line formatting |
+| `_liveWysiwygTableData` | `preprocessTables` | `postprocessTables` | Full table formatting: cell padding, column alignment, line width |
 | `_liveWysiwygHrData` | `preprocessHorizontalRules` | `postprocessHorizontalRules` | HR style (`---`, `***`, `___`) |
 | `_liveWysiwygInlineCodeData` | `preprocessInlineCode` | `postprocessInlineCode` | Multi-line inline code spans |
 | `_liveWysiwygRawHtmlData` | `preprocessRawHtml` | `postprocessRawHtml` | Raw HTML blocks and comments |
 
 **Lifecycle**: Preprocessors run when markdown enters the editor (`setValue`, `switchToMode`). Postprocessors run when markdown leaves the editor (`getValue`, `switchToMode` to markdown). The stores must always reflect the current document content — stale stores cause content-matching failures that silently lose formatting.
+
+**Table subsystem details**: The table pair (`preprocessTables` / `postprocessTables`) is more sophisticated than the other pairs. It snapshots entire table blocks (not just separator lines) and uses normalized content comparison (all whitespace stripped) to detect whether the user modified a table. Behavior:
+
+- **Unchanged tables with consistent formatting** (all rows same length): restored verbatim from the original, preserving the author's exact spacing and alignment style.
+- **Unchanged tables with inconsistent formatting** (rows of different lengths): reformatted via `_formatBalancedTable` to produce aligned pipe columns with consistent cell padding.
+- **Modified or new tables**: always reformatted via `_formatBalancedTable` with column-aligned padding.
+
+`_formatBalancedTable` is alignment-aware — it reads GFM alignment markers (`:---`, `:---:`, `---:`) from the separator row and applies directional padding (left-pad for right-aligned columns, split-pad for centered columns). It caps total line width to the global table width (default 120, configurable via localStorage key `liveWysiwygTableWidthLimit` through `_getGlobalTableWidth()` / `_setGlobalTableWidth()`).
+
+The TABLE case in `_htmlToMarkdown` (`editor.js`) reads `style.textAlign` from header `<th>` elements and emits the corresponding alignment markers in the separator line, ensuring alignment survives WYSIWYG round-trips. The contextual table toolbar includes alignment buttons (left/center/right) that set `text-align` on all cells in the selected column.
+
+Per-table width overrides can be stored on DOM table elements via `dataset.tableWidth`, which is read at serialize time and passed through to `_formatBalancedTable` as the width limit for that specific table.
 
 **Special case**: `_liveWysiwygRawHtmlData` is populated automatically inside the `patchMarkdownToHtmlForRawHtml` wrapper on `_markdownToHtml`. Any code path that calls `_markdownToHtml` gets raw HTML data for free. The other 6 stores must be refreshed explicitly.
 
@@ -90,6 +102,7 @@ Any function that loads markdown content into the WYSIWYG editable area must:
 | `data-linenums` | `_markdownToHtml` code renderer | `_htmlToMarkdown` PRE handler | Line number start |
 | `data-hl-lines` | `_markdownToHtml` code renderer | `_htmlToMarkdown` PRE handler | Highlighted lines |
 | `data-md-literal` | Inline typing handlers | Backspace revert handlers | Original markdown syntax for revert |
+| `data-table-width` | `preprocessTables` / settings popover | `postprocessTables` via DOM read | Per-table line width limit override |
 
 `data-md-literal` is documented in [targeted-markdown-revert.mdc](../../../.cursor/rules/targeted-markdown-revert.mdc). It is distinct from the preprocess/postprocess system — it stores the original typed markdown syntax on individual DOM elements so Backspace can revert to the literal markdown text.
 
@@ -134,3 +147,11 @@ Used for diagnostic logging in the Content History subsystem but does **not** ga
 8. **Ordered list numbering style must be preserved across WYSIWYG ↔ Markdown transitions.** If the document uses repeating `1.` markers (the `all-ones` style detected by `preprocessListMarkers`), then switching to markdown via `_htmlToMarkdown` and back must reproduce repeating `1.` markers — never incrementing `1.`, `2.`, `3.`. The `olStyle` field in `_liveWysiwygListMarkerData` records the document's style; `postprocessListMarkers` must honor it.
 
 9. **New ordered lists must follow the document's existing numbering style.** When a document contains any repeating `1.` ordered lists (`olStyle === 'all-ones'`), newly inserted ordered lists (via toolbar, inline typing, or any other mechanism) must use repeating `1.` markers to match. Do not mix incrementing and repeating styles within a single document.
+
+10. **Table column alignment must survive WYSIWYG round-trips.** `_htmlToMarkdown` reads `style.textAlign` from `<th>` and `<td>` elements and emits GFM alignment markers (`:---`, `:---:`, `---:`) in the separator line. `_markdownToHtml` (via the marked renderer) and WYSIWYG DOM enhancement must parse these markers and apply corresponding `text-align` styles so the alignment is visible in the editor and persists when switching modes.
+
+11. **Unchanged tables must be restored verbatim when consistently formatted.** `postprocessTables` compares the normalized content of the serialized table against preprocess snapshots. If the content matches and the original table had consistent row lengths (all lines the same length), the original raw text is restored byte-for-byte. This prevents the editor from introducing formatting diffs on content that the user did not touch.
+
+12. **Modified or inconsistently formatted tables are balanced.** When a table's content has changed or the original had inconsistent row lengths, `postprocessTables` calls `_formatBalancedTable` to produce evenly padded columns with aligned pipe separators, respecting the per-table or global width limit.
+
+13. **Tables must be block-level siblings in the DOM, never nested inside headings or other inline containers.** `_insertTableWysiwyg` must insert `<table>` elements as siblings after block elements (headings, paragraphs), not as children. If the cursor is in an empty paragraph, the paragraph is replaced. The heading case in `_nodeToMarkdownRecursive` includes defensive splitting to emit block children (like inadvertently nested tables) as separate markdown blocks with blank-line separation.

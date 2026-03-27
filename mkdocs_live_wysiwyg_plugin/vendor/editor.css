@@ -458,6 +458,78 @@
  height: 16px;
 }
 
+.md-ctt-separator {
+ display: inline-block;
+ width: 1px;
+ align-self: stretch;
+ margin: 2px 3px;
+ background-color: var(--md-default-fg-color--lighter, #ccc);
+}
+
+.md-ctt-button-active {
+ background-color: var(--md-accent-fg-color--transparent, rgba(0, 123, 255, 0.12));
+ border-color: var(--md-accent-fg-color, #007bff);
+ color: var(--md-accent-fg-color, #007bff);
+}
+
+.md-ctt-settings-popover {
+ position: absolute;
+ background-color: var(--md-default-bg-color, #fff);
+ border: 1px solid var(--md-default-fg-color--lighter, #ccc);
+ box-shadow: var(--md-shadow-z2, 0 4px 12px rgba(0,0,0,0.15));
+ border-radius: 6px;
+ padding: 10px 12px;
+ z-index: 100000;
+ min-width: 180px;
+ font-size: 13px;
+ color: var(--md-default-fg-color, #333);
+}
+
+.md-ctt-settings-label {
+ display: block;
+ font-weight: 600;
+ margin-bottom: 4px;
+ font-size: 12px;
+ color: var(--md-default-fg-color--light, #555);
+}
+
+.md-ctt-settings-row {
+ display: flex;
+ align-items: center;
+ gap: 6px;
+ margin-bottom: 6px;
+}
+
+.md-ctt-settings-inline-label {
+ font-size: 13px;
+ white-space: nowrap;
+}
+
+.md-ctt-settings-input {
+ width: 64px;
+ padding: 3px 6px;
+ border: 1px solid var(--md-default-fg-color--lighter, #ccc);
+ border-radius: 4px;
+ font-size: 13px;
+ background-color: var(--md-default-bg-color, #fff);
+ color: var(--md-default-fg-color, #333);
+}
+
+.md-ctt-settings-input:focus {
+ outline: none;
+ border-color: var(--md-accent-fg-color, #007bff);
+}
+
+.md-ctt-settings-checkbox-label {
+ display: flex;
+ align-items: center;
+ gap: 6px;
+ margin-top: 4px;
+ font-size: 13px;
+ color: var(--md-default-fg-color, #333);
+ cursor: pointer;
+}
+
 .md-image-dialog {
  padding: 20px;
  border: 1px solid var(--md-default-fg-color--lighter, #ccc);

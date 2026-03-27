@@ -5098,37 +5098,250 @@
     return result.join('\n');
   }
 
-  function preprocessTableSeparators(markdown) {
-    if (!markdown || typeof markdown !== 'string') return { separators: [] };
-    var separators = [];
-    var lines = markdown.split('\n');
-    for (var i = 1; i < lines.length; i++) {
-      if (/^\|[\s:=-]+(\|[\s:=-]+)+\|?\s*$/.test(lines[i]) && /\|/.test(lines[i - 1])) {
-        separators.push({ header: lines[i - 1].replace(/\s+/g, ''), separator: lines[i] });
+  var TABLE_WIDTH_DEFAULT = 120;
+  function _getGlobalTableWidth() {
+    var v = parseInt(_getSetting('live_wysiwyg_table_width'), 10);
+    return v > 0 ? v : TABLE_WIDTH_DEFAULT;
+  }
+  function _setGlobalTableWidth(w) {
+    _setSetting('live_wysiwyg_table_width', String(w));
+  }
+  window._getGlobalTableWidth = _getGlobalTableWidth;
+  window._setGlobalTableWidth = _setGlobalTableWidth;
+
+  function _getMinimalTables() { return _getSetting('live_wysiwyg_minimal_tables') === '1'; }
+  function _setMinimalTables(v) { _setSetting('live_wysiwyg_minimal_tables', v ? '1' : '0'); }
+  window._getMinimalTables = _getMinimalTables;
+  window._setMinimalTables = _setMinimalTables;
+
+  function _computeNaturalTableWidth(tableEl) {
+    var rows = tableEl.querySelectorAll('tr');
+    if (!rows.length) return 0;
+    var colCount = rows[0].cells.length;
+    var maxWidths = [];
+    for (var c = 0; c < colCount; c++) maxWidths.push(3);
+    for (var r = 0; r < rows.length; r++) {
+      for (c = 0; c < rows[r].cells.length && c < colCount; c++) {
+        var text = (rows[r].cells[c].textContent || '').replace(/[\u200B\u200C\u200D]/g, '').trim();
+        if (text.length > maxWidths[c]) maxWidths[c] = text.length;
       }
     }
-    return { separators: separators };
+    var total = 1;
+    for (c = 0; c < colCount; c++) total += maxWidths[c] + 3;
+    return total;
+  }
+  window._computeNaturalTableWidth = _computeNaturalTableWidth;
+
+  function _collectTableWidthsFromDOM(editableArea) {
+    if (!editableArea) return [];
+    var domTables = editableArea.querySelectorAll('table');
+    var globalW = _getGlobalTableWidth();
+    var widths = [];
+    for (var t = 0; t < domTables.length; t++) {
+      var stored = parseInt(domTables[t].dataset.tableWidth, 10) || 0;
+      var natural = _computeNaturalTableWidth(domTables[t]);
+      if (natural > stored && natural <= globalW) {
+        stored = natural;
+        domTables[t].dataset.tableWidth = stored;
+      } else if (natural > stored && natural > globalW) {
+        stored = globalW;
+        domTables[t].dataset.tableWidth = stored;
+      }
+      widths.push(stored);
+    }
+    return widths;
   }
 
-  function postprocessTableSeparators(markdown, tableData) {
-    if (!markdown || typeof markdown !== 'string') return markdown;
-    if (!tableData || !tableData.separators || !tableData.separators.length) return markdown;
-    var originals = tableData.separators;
-    var used = 0;
+  function _parseTableCells(line) {
+    var trimmed = line.replace(/[\u200B\u200C\u200D]/g, '').trim();
+    if (trimmed.charAt(0) === '|') trimmed = trimmed.substring(1);
+    if (trimmed.charAt(trimmed.length - 1) === '|') trimmed = trimmed.substring(0, trimmed.length - 1);
+    return trimmed.split('|').map(function (c) { return c.trim(); });
+  }
+
+  function _parseTableCellsRaw(line) {
+    var trimmed = line.trim();
+    if (trimmed.charAt(0) === '|') trimmed = trimmed.substring(1);
+    if (trimmed.charAt(trimmed.length - 1) === '|') trimmed = trimmed.substring(0, trimmed.length - 1);
+    return trimmed.split('|').map(function (c) { return c.trim(); });
+  }
+
+  function _formatBalancedTable(tableLines, widthLimit) {
+    var rows = tableLines.map(_parseTableCells);
+    var rawRows = tableLines.map(_parseTableCellsRaw);
+    var sepIdx = 1;
+    var colCount = rows[0].length;
+    var limit = widthLimit || _getGlobalTableWidth();
+
+    var aligns = [];
+    for (var c = 0; c < colCount; c++) {
+      var sep = (rows[sepIdx] && rows[sepIdx][c]) || '---';
+      var left = sep.charAt(0) === ':';
+      var right = sep.charAt(sep.length - 1) === ':';
+      if (left && right) aligns.push('center');
+      else if (right) aligns.push('right');
+      else aligns.push('left');
+    }
+
+    var widths = [];
+    for (c = 0; c < colCount; c++) {
+      var maxW = 3;
+      for (var r = 0; r < rows.length; r++) {
+        if (r === sepIdx) continue;
+        var cell = (rows[r][c] || '');
+        if (cell.length > maxW) maxW = cell.length;
+      }
+      widths.push(maxW);
+    }
+
+    var overhead = 1 + colCount * 3;
+    var total = overhead;
+    for (c = 0; c < colCount; c++) total += widths[c];
+    if (total > limit) {
+      var available = limit - overhead;
+      var fair = Math.max(3, Math.floor(available / colCount));
+      for (c = 0; c < colCount; c++) {
+        if (widths[c] > fair) widths[c] = fair;
+      }
+    } else if (total < limit && !_getMinimalTables()) {
+      var extra = limit - total;
+      var contentTotal = 0;
+      for (c = 0; c < colCount; c++) contentTotal += widths[c];
+      if (contentTotal > 0) {
+        var distributed = 0;
+        for (c = 0; c < colCount - 1; c++) {
+          var share = Math.floor(extra * widths[c] / contentTotal);
+          widths[c] += share;
+          distributed += share;
+        }
+        widths[colCount - 1] += (extra - distributed);
+      }
+    }
+
+    var out = [];
+    for (var r2 = 0; r2 < rows.length; r2++) {
+      if (r2 === sepIdx) {
+        var sepCells = [];
+        for (c = 0; c < colCount; c++) {
+          var al = aligns[c];
+          var dashCount = widths[c];
+          if (al === 'center') {
+            sepCells.push(':' + '-'.repeat(Math.max(1, dashCount - 2)) + ':');
+          } else if (al === 'right') {
+            sepCells.push('-'.repeat(Math.max(1, dashCount - 1)) + ':');
+          } else {
+            sepCells.push('-'.repeat(dashCount));
+          }
+        }
+        out.push('| ' + sepCells.join(' | ') + ' |');
+      } else {
+        var cells = [];
+        for (c = 0; c < colCount; c++) {
+          var cell2 = rawRows[r2][c] || '';
+          var cleanLen = (rows[r2][c] || '').length;
+          var pad = widths[c] - cleanLen;
+          if (pad <= 0) {
+            cells.push(cell2);
+          } else if (aligns[c] === 'right') {
+            cells.push(' '.repeat(pad) + cell2);
+          } else if (aligns[c] === 'center') {
+            var lpad = Math.floor(pad / 2);
+            cells.push(' '.repeat(lpad) + cell2 + ' '.repeat(pad - lpad));
+          } else {
+            cells.push(cell2 + ' '.repeat(pad));
+          }
+        }
+        out.push('| ' + cells.join(' | ') + ' |');
+      }
+    }
+    return out.join('\n');
+  }
+
+  function preprocessTables(markdown) {
+    if (!markdown || typeof markdown !== 'string') return { tables: [] };
+    var tables = [];
     var lines = markdown.split('\n');
-    for (var i = 1; i < lines.length; i++) {
-      if (/^\|(\s*---\s*\|)+\s*$/.test(lines[i]) && /\|/.test(lines[i - 1])) {
-        var normHeader = lines[i - 1].replace(/\s+/g, '');
+    var i = 0;
+    while (i < lines.length) {
+      if (i + 1 < lines.length &&
+          /\|/.test(lines[i]) &&
+          /^\|[\s:=-]+(\|[\s:=-]+)+\|?\s*$/.test(lines[i + 1])) {
+        var start = i;
+        i += 2;
+        while (i < lines.length && /\|/.test(lines[i]) && !/^\s*$/.test(lines[i])) {
+          i++;
+        }
+        var rawLines = lines.slice(start, i);
+        var raw = rawLines.join('\n');
+        var norm = raw.replace(/\s+/g, '');
+        var allSame = true;
+        for (var k = 1; k < rawLines.length; k++) {
+          if (rawLines[k].length !== rawLines[0].length) { allSame = false; break; }
+        }
+        var dw = allSame ? rawLines[0].length : 0;
+        tables.push({ raw: raw, norm: norm, detectedWidth: dw });
+      } else {
+        i++;
+      }
+    }
+    return { tables: tables };
+  }
+
+  function postprocessTables(markdown, tableData, tableWidths) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+    if (!tableData || !tableData.tables) return markdown;
+    var originals = tableData.tables;
+    var lines = markdown.split('\n');
+    var result = [];
+    var used = 0;
+    var tableIdx = 0;
+    var i = 0;
+    while (i < lines.length) {
+      if (i + 1 < lines.length &&
+          /\|/.test(lines[i]) &&
+          /^\|(\s*:?---+:?\s*\|)+\s*$/.test(lines[i + 1])) {
+        var start = i;
+        i += 2;
+        while (i < lines.length && /\|/.test(lines[i]) && !/^\s*$/.test(lines[i])) {
+          i++;
+        }
+        var tableLines = lines.slice(start, i);
+        var tableText = tableLines.join('\n');
+        var hasCursorMarkers = tableText.indexOf('\u200C\u200C\u200C\u200C\u200C\u200C') >= 0 || tableText.indexOf('\u200D\u200D\u200D\u200D\u200D\u200D') >= 0;
+        var norm = tableText.replace(/[\u200B\u200C\u200D]/g, '').replace(/\s+/g, '');
+        var perTableWidth = (tableWidths && tableWidths[tableIdx]) || 0;
+        var matched = false;
         for (var j = used; j < originals.length; j++) {
-          if (originals[j].header === normHeader) {
-            lines[i] = originals[j].separator;
+          if (originals[j].norm === norm) {
+            var origLines = originals[j].raw.split('\n');
+            var allSameLen = true;
+            for (var k = 1; k < origLines.length; k++) {
+              if (origLines[k].length !== origLines[0].length) { allSameLen = false; break; }
+            }
+            var effectiveWidth = perTableWidth || originals[j].detectedWidth || _getGlobalTableWidth();
+            if (allSameLen && !hasCursorMarkers && (!perTableWidth || perTableWidth === originals[j].detectedWidth)) {
+              result.push(originals[j].raw);
+            } else if (hasCursorMarkers) {
+              result.push(_formatBalancedTable(tableLines, effectiveWidth));
+            } else {
+              result.push(_formatBalancedTable(origLines, effectiveWidth));
+            }
             used = j + 1;
+            matched = true;
             break;
           }
         }
+        if (!matched) {
+          var newWidth = perTableWidth || _getGlobalTableWidth();
+          result.push(_formatBalancedTable(tableLines, newWidth));
+        }
+        tableIdx++;
+      } else {
+        result.push(lines[i]);
+        i++;
       }
     }
-    return lines.join('\n');
+    return result.join('\n');
   }
 
   function preprocessHorizontalRules(markdown) {
@@ -6449,13 +6662,23 @@
         var mdWithRefsExtracted = extractRefDefsFromCommentBlocks(markdown);
         this._liveWysiwygLinkData = preprocessMarkdownLinks(mdWithRefsExtracted);
         this._liveWysiwygListMarkerData = preprocessListMarkers(mdWithRefsExtracted);
-        this._liveWysiwygTableSepData = preprocessTableSeparators(mdWithRefsExtracted);
+        this._liveWysiwygTableData = preprocessTables(mdWithRefsExtracted);
         this._liveWysiwygCodeBlockData = preprocessCodeBlocks(mdWithRefsExtracted);
         this._liveWysiwygHrData = preprocessHorizontalRules(mdWithRefsExtracted);
         this._liveWysiwygInlineCodeData = preprocessInlineCode(mdWithRefsExtracted);
         mdToUse = mdWithRefsExtracted;
       }
-      return origSetValue.apply(this, [mdToUse, isInitialSetup]);
+      var setResult = origSetValue.apply(this, [mdToUse, isInitialSetup]);
+      if (this._liveWysiwygTableData && this.editableArea) {
+        var domTbls = this.editableArea.querySelectorAll('table');
+        var tblArr = this._liveWysiwygTableData.tables;
+        for (var ti = 0; ti < domTbls.length && ti < tblArr.length; ti++) {
+          if (tblArr[ti].detectedWidth > 0) {
+            domTbls[ti].dataset.tableWidth = tblArr[ti].detectedWidth;
+          }
+        }
+      }
+      return setResult;
     };
     proto.switchToMode = function (mode, isInitialSetup) {
       if (mode === 'wysiwyg' && !isInitialSetup && this.markdownArea && this.markdownArea.value) {
@@ -6464,7 +6687,7 @@
         var bodyWithRefsExtracted = extractRefDefsFromCommentBlocks(cleanBody);
         var newLinkData = preprocessMarkdownLinks(bodyWithRefsExtracted);
         var newListData = preprocessListMarkers(cleanBody);
-        this._liveWysiwygTableSepData = preprocessTableSeparators(cleanBody);
+        this._liveWysiwygTableData = preprocessTables(cleanBody);
         this._liveWysiwygCodeBlockData = preprocessCodeBlocks(cleanBody);
         this._liveWysiwygHrData = preprocessHorizontalRules(cleanBody);
         this._liveWysiwygInlineCodeData = preprocessInlineCode(cleanBody);
@@ -6475,7 +6698,17 @@
           this._liveWysiwygListMarkerData = newListData;
         }
       }
+      var tableWidthsForSwitch = _collectTableWidthsFromDOM(this.editableArea);
       var result = origSwitchToMode.apply(this, arguments);
+      if (mode === 'wysiwyg' && this._liveWysiwygTableData && this.editableArea) {
+        var domTbls2 = this.editableArea.querySelectorAll('table');
+        var tblArr2 = this._liveWysiwygTableData.tables;
+        for (var ti2 = 0; ti2 < domTbls2.length && ti2 < tblArr2.length; ti2++) {
+          if (tblArr2[ti2].detectedWidth > 0) {
+            domTbls2[ti2].dataset.tableWidth = tblArr2[ti2].detectedWidth;
+          }
+        }
+      }
       if (mode === 'markdown') {
         var md = this.markdownArea.value;
         if (this._liveWysiwygRawHtmlData) {
@@ -6487,8 +6720,8 @@
         if (this._liveWysiwygListMarkerData) {
           md = postprocessListMarkers(md, this._liveWysiwygListMarkerData);
         }
-        if (this._liveWysiwygTableSepData) {
-          md = postprocessTableSeparators(md, this._liveWysiwygTableSepData);
+        if (this._liveWysiwygTableData) {
+          md = postprocessTables(md, this._liveWysiwygTableData, tableWidthsForSwitch);
         }
         if (this._liveWysiwygCodeBlockData) {
           md = postprocessCodeBlocks(md, this._liveWysiwygCodeBlockData);
@@ -6534,8 +6767,9 @@
       if (this._liveWysiwygListMarkerData) {
         body = postprocessListMarkers(body, this._liveWysiwygListMarkerData);
       }
-      if (this._liveWysiwygTableSepData) {
-        body = postprocessTableSeparators(body, this._liveWysiwygTableSepData);
+      if (this._liveWysiwygTableData) {
+        var tw = _collectTableWidthsFromDOM(this.editableArea);
+        body = postprocessTables(body, this._liveWysiwygTableData, tw);
       }
       if (this._liveWysiwygCodeBlockData) {
         body = postprocessCodeBlocks(body, this._liveWysiwygCodeBlockData);
@@ -8540,7 +8774,53 @@
     return '---\n' + outLines.join('\n') + '\n---\n';
   }
 
-  function _buildFrontmatterFromFm(fm, isIndex, origFm) {
+  function _fmDeepEqual(a, b) {
+    if (a === b) return true;
+    if (a == null || b == null) return a == b;
+    if (typeof a !== typeof b) return false;
+    if (typeof a !== 'object') return false;
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  function _extractRawFmBlocks(rawFmText) {
+    if (!rawFmText) return {};
+    var inner = rawFmText;
+    if (inner.startsWith('---')) {
+      var startIdx = inner.indexOf('\n');
+      if (startIdx === -1) return {};
+      inner = inner.substring(startIdx + 1);
+    }
+    var endIdx = inner.lastIndexOf('\n---');
+    if (endIdx !== -1) inner = inner.substring(0, endIdx);
+    else {
+      endIdx = inner.lastIndexOf('\n...');
+      if (endIdx !== -1) inner = inner.substring(0, endIdx);
+    }
+
+    var lines = inner.split('\n');
+    var blocks = {};
+    var currentKey = null;
+    var currentLines = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var m = line.match(/^([a-zA-Z_][\w-]*)\s*:/);
+      if (m) {
+        if (currentKey !== null) {
+          blocks[currentKey] = currentLines.join('\n');
+        }
+        currentKey = m[1];
+        currentLines = [line];
+      } else if (currentKey !== null) {
+        currentLines.push(line);
+      }
+    }
+    if (currentKey !== null) {
+      blocks[currentKey] = currentLines.join('\n');
+    }
+    return blocks;
+  }
+
+  function _buildFrontmatterFromFm(fm, isIndex, origFm, rawFmText) {
     if (!fm || typeof fm !== 'object') return '';
     var nwKeys = { weight: 1, headless: 1, retitled: 1, empty: 1 };
     var defaults = (typeof liveWysiwygNavWeightConfig !== 'undefined' && liveWysiwygNavWeightConfig.enabled)
@@ -8565,11 +8845,21 @@
       }
     }
 
+    var rawBlocks = _extractRawFmBlocks(rawFmText);
+
     function makeLine(key) {
       var val = fm[key];
       if (val == null) return null;
       if (key in nwKeys && shouldStrip(key, val)) return null;
-      return key + ': ' + _fmSerialize(val);
+      if (rawBlocks[key] && origFm && origFm.hasOwnProperty(key) && _fmDeepEqual(val, origFm[key])) {
+        return rawBlocks[key];
+      }
+      var serialized = _fmSerialize(val);
+      if (serialized.indexOf('\n') !== -1) {
+        var indented = serialized.split('\n').map(function(l) { return '  ' + l; }).join('\n');
+        return key + ':\n' + indented;
+      }
+      return key + ': ' + serialized;
     }
 
     var outLines = [];
@@ -8603,6 +8893,9 @@
       if (/[:#\[\]{}&*?|>!%@`,]/.test(val) || val === '' || val.trim() !== val)
         return '"' + val.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
       return val;
+    }
+    if (val !== null && typeof val === 'object' && typeof jsyaml !== 'undefined') {
+      return jsyaml.dump(val, { indent: 2, lineWidth: -1, noRefs: true }).trimEnd();
     }
     return String(val);
   }
@@ -14940,6 +15233,7 @@
 
     return { markDirty: function () { dirty = true; } };
   }
+  window._attachDialogKeyboard = _attachDialogKeyboard;
 
   function _promptNewFolder(item, extraItems) {
     var isAsset = item && item.type === 'asset';
@@ -15252,11 +15546,7 @@
             }
             copy[k] = metaCopy;
           } else if (k === '_fm' && item[k] && typeof item[k] === 'object') {
-            var fmCopy = {};
-            for (var fk in item[k]) {
-              if (item[k].hasOwnProperty(fk)) fmCopy[fk] = item[k][fk];
-            }
-            copy[k] = fmCopy;
+            copy[k] = JSON.parse(JSON.stringify(item[k]));
           } else if (k === '_warnings' && Array.isArray(item[k])) {
             copy[k] = item[k].map(function (w) {
               var entry = { reason: w.reason, renames: w.renames || 0 };
@@ -16653,8 +16943,8 @@
       var dFm = p.desiredFm || {};
       var oFm = p.origFm || {};
       var hasSetContent = p.setContent !== null;
-      var hasFmKeys = Object.keys(dFm).length > 0;
-      if (hasFmKeys || hasSetContent) {
+      var fmChanged = !_fmDeepEqual(dFm, oFm);
+      if (fmChanged || hasSetContent) {
         var fmOp = {
           type: 'set-frontmatter', src_path: p.desiredPath,
           fm: dFm, origFm: oFm,
@@ -17654,14 +17944,16 @@
         var scBody = scParsed.hasBlock ? op.setContent.substring(scParsed.bodyStart) : op.setContent;
         var mergedFm = Object.assign({}, scParsed.hasBlock ? scParsed.fields : {}, op.fm);
         var effectiveOrig = scParsed.hasBlock ? scParsed.fields : (op.origFm || {});
-        var newFm = _buildFrontmatterFromFm(mergedFm, op.isIndex, effectiveOrig);
+        var scRaw = scParsed.hasBlock ? scParsed.raw : '';
+        var newFm = _buildFrontmatterFromFm(mergedFm, op.isIndex, effectiveOrig, scRaw);
         var finalContent = newFm + scBody;
         return _wsSetContents(actualPath, finalContent);
       }
       return _wsGetContents(actualPath).then(function (content) {
         var parsed = _parseFrontmatter(content);
         var body = parsed.hasBlock ? content.substring(parsed.bodyStart) : content;
-        var newFm = _buildFrontmatterFromFm(op.fm, op.isIndex, op.origFm);
+        var rawFmText = parsed.hasBlock ? parsed.raw : '';
+        var newFm = _buildFrontmatterFromFm(op.fm, op.isIndex, op.origFm, rawFmText);
         var finalContent = newFm + body;
         return _wsSetContents(actualPath, finalContent);
       });
@@ -26361,8 +26653,9 @@
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygListMarkerData) {
             markdownContent = postprocessListMarkers(markdownContent, wysiwygEditor._liveWysiwygListMarkerData);
           }
-          if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygTableSepData) {
-            markdownContent = postprocessTableSeparators(markdownContent, wysiwygEditor._liveWysiwygTableSepData);
+          if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygTableData) {
+            var twOnUpdate = _collectTableWidthsFromDOM(wysiwygEditor.editableArea);
+            markdownContent = postprocessTables(markdownContent, wysiwygEditor._liveWysiwygTableData, twOnUpdate);
           }
           if (wysiwygEditor.currentMode === 'wysiwyg' && wysiwygEditor._liveWysiwygCodeBlockData) {
             markdownContent = postprocessCodeBlocks(markdownContent, wysiwygEditor._liveWysiwygCodeBlockData);
@@ -26457,7 +26750,7 @@
       var bodyForPreprocess = extractRefDefsFromCommentBlocks(parsed.body);
       wysiwygEditor._liveWysiwygLinkData = preprocessMarkdownLinks(bodyForPreprocess);
       wysiwygEditor._liveWysiwygListMarkerData = preprocessListMarkers(bodyForPreprocess);
-      wysiwygEditor._liveWysiwygTableSepData = preprocessTableSeparators(bodyForPreprocess);
+      wysiwygEditor._liveWysiwygTableData = preprocessTables(bodyForPreprocess);
       wysiwygEditor._liveWysiwygCodeBlockData = preprocessCodeBlocks(bodyForPreprocess);
       wysiwygEditor._liveWysiwygHrData = preprocessHorizontalRules(bodyForPreprocess);
       wysiwygEditor._liveWysiwygInlineCodeData = preprocessInlineCode(bodyForPreprocess);
@@ -26468,6 +26761,7 @@
           var html = wysiwygEditor._markdownToHtml(parsed.body);
           wysiwygEditor.editableArea.innerHTML = html;
         }
+        if (window._normalizeTableAlignAttrs) window._normalizeTableAlignAttrs(wysiwygEditor.editableArea);
         populateRawHtmlBlocks(wysiwygEditor.editableArea);
         enhanceCodeBlocks(wysiwygEditor.editableArea);
         enhanceMermaidBlocks(wysiwygEditor.editableArea);
@@ -29141,6 +29435,7 @@
       var md = wysiwygEditor.markdownArea.value;
       if (md) {
         wysiwygEditor.editableArea.innerHTML = wysiwygEditor._markdownToHtml(md);
+        if (window._normalizeTableAlignAttrs) window._normalizeTableAlignAttrs(wysiwygEditor.editableArea);
         populateRawHtmlBlocks(wysiwygEditor.editableArea);
       }
     }

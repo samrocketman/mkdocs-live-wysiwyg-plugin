@@ -134,6 +134,7 @@ UI Subsystem
   |     |-- Keyboard
   |     |-- Progressive Select All
   |     |-- Markdown Awareness
+  |     |-- Tables
   |     |-- Dialog UX
   |     |-- Table of Contents
   |     |-- Help System (Layer 5 modal, context-sensitive shortcut reference)
@@ -198,6 +199,7 @@ Mermaid-related design documents are organized under `docs/design/mermaid/` whil
 - [DESIGN-centralized-keyboard.md](ui/DESIGN-centralized-keyboard.md) -- Three-tier keyboard handling.
 - [DESIGN-progressive-select-all.md](ui/DESIGN-progressive-select-all.md) -- Progressive Ctrl+A selection and cut/copy auto-expansion.
 - [DESIGN-markdown-awareness.md](ui/DESIGN-markdown-awareness.md) -- Preprocess/postprocess round-trip and DOM enhancement contract.
+- [DESIGN-tables.md](ui/DESIGN-tables.md) -- Table editing, formatting pipeline, alignment, width management, and settings popover.
 - [DESIGN-popup-dialog-ux.md](ui/DESIGN-popup-dialog-ux.md) -- Unified dialog interaction model.
 - [DESIGN-table-of-contents.md](ui/DESIGN-table-of-contents.md) -- Right sidebar TOC panel.
 - [DESIGN-help-system.md](ui/DESIGN-help-system.md) -- Layer 5 help modal, context-sensitive shortcut reference.

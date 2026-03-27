@@ -3,12 +3,18 @@ title: Example WYSIWYG site
 ---
 # Welcome
 
+| Header 1              | Header 2                |
+| --------------------- | ----------------------- |
+| Everything is awesome | Cool when you're part of a yay |
+| living the dream      | team                    |
+
 - foo
 - bar
 
   > abc
 
   bar
+
 - baz
 
 1. Car
@@ -39,6 +45,7 @@ Another item
       ```
 
       test
+
    2. Another
 2. Launch a server on `http://127.0.0.1:8000/`.
 

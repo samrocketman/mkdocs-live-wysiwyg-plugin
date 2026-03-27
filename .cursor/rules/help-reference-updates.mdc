@@ -1,0 +1,30 @@
+---
+description: When to update the WYSIWYG editor help reference documentation
+globs: mkdocs-live-wysiwyg-plugin/mkdocs_live_wysiwyg_plugin/live-wysiwyg-integration.js
+alwaysApply: false
+---
+
+# Help Reference Updates
+
+The file `mkdocs-live-wysiwyg-plugin/mkdocs_live_wysiwyg_plugin/help-reference.md` is the user-facing help documentation for the WYSIWYG editor. It is displayed in-app via Ctrl+? / Cmd+?.
+
+## When to Update
+
+Update `help-reference.md` whenever:
+
+- A new keyboard shortcut or typing shortcut is added
+- An existing shortcut's behavior changes
+- A new auto-conversion pattern is added (inline or block)
+- A new UI element (button, dropdown, mode) is added to the editor
+- An existing UI element's behavior or location changes
+
+## Structure
+
+The file has context-tagged sections (`<!-- context: all -->`, `<!-- context: content -->`, `<!-- context: nav -->`). Place new entries in the appropriate section:
+
+- **General**: modes, saving, global shortcuts
+- **Content Shortcuts**: WYSIWYG/Markdown mode shortcuts
+- **Auto-Conversions**: inline typing patterns (bold, italic, code, links)
+- **Block Elements**: code blocks, admonitions, block quotes, lists, horizontal rules
+- **Inline & Emoji**: inline code, emoji shortcodes
+- **Nav Shortcuts**: focus mode nav menu shortcuts

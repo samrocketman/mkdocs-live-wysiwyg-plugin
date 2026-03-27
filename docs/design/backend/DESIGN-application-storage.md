@@ -48,7 +48,9 @@ Nav-operational data is generated during editing sessions and may become incompa
   "live_wysiwyg_focus_nav_target": "Page Title",
   "live_wysiwyg_migration_result": "success",
   "live_wysiwyg_migration_normalize": "1",
-  "live_wysiwyg_migration_adjust_weight": "1"
+  "live_wysiwyg_migration_adjust_weight": "1",
+  "live_wysiwyg_table_width": "120",
+  "live_wysiwyg_minimal_tables": "0"
 }
 ```
 

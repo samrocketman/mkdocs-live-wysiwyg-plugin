@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # since rapidly developing I'll track this at the top for now
-WYSIWYG_VERSION=0.3.9
+WYSIWYG_VERSION=0.3.10
 YML_INSTALL_FILES_VERSION="v3.8"
 
 # GITHUB_DOWNLOAD_MIRROR=...

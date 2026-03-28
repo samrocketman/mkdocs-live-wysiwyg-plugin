@@ -63,7 +63,7 @@ The following is an annotated screenshot after running `techdocs-preview.sh init
 
 ## Requirements
 
-The following requirements are automtically managed by `techdocs-preview.sh` with `uv`.
+The following requirements are automtically managed by `techdocs-preview.sh` with [uv].
 
 - Python 3.10 or higher.
 - mkdocs-live-edit-plugin (must
@@ -77,7 +77,7 @@ If not using  `techdocs-preview.sh`:
 pip install mkdocs-live-wysiwyg-plugin
 ```
 
-Or with [uv](https://docs.astral.sh/uv/):
+Or with [uv]:
 
 ```bash
 uv pip install mkdocs-live-wysiwyg-plugin
@@ -140,3 +140,4 @@ Collapsible admonitions (`??? type`) and HTML details tags (`!!! details`) are a
 
 [1]: https://www.npmjs.com/package/@celsowm/markdown-wysiwyg
 [2]: https://github.com/eddyluten/mkdocs-live-edit-plugin
+[uv]: https://docs.astral.sh/uv/

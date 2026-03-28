@@ -1,9 +1,8 @@
 # mkdocs-live-wysiwyg-plugin
 
-## Try it out
+This plugin is intended to be used by the [techdocs-preview.sh shell script](techdocs-preview.sh). It is assumed to be in your `$PATH`.
 
-There's a [shell script](techdocs-preview.sh) which makes editing techdocs in this repository really
-quick.
+## Try it out
 
 Run `./techdocs-preview.sh` from this repository to view the documentation for this repository.
 

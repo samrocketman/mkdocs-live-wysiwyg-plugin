@@ -1,6 +1,6 @@
 # mkdocs-live-wysiwyg-plugin
 
-This plugin is intended to be used by the [techdocs-preview.sh shell script](techdocs-preview.sh). It is assumed to be in your `$PATH`.
+This plugin is intended to be used by the [techdocs-preview.sh shell script](https://raw.githubusercontent.com/samrocketman/mkdocs-live-wysiwyg-plugin/refs/heads/main/techdocs-preview.sh). It is assumed to be in your `$PATH`.
 
 ## Try it out
 

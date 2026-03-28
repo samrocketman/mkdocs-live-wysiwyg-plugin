@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - '.github/workflows/**'
       - '.github/download-utilities.yml'
       - 'techdocs-preview.sh'
       - 'example-docs/**'
@@ -92,3 +93,49 @@ jobs:
         run: |
           git push origin main
           git push origin "v${{ steps.version.outputs.version }}"
+
+  build:
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install uv from .github/download-utilities.yml
+        run: |
+          YML_INSTALL_FILES_VERSION="v3.8"
+          curl -fsSL -o download-utilities.sh "https://raw.githubusercontent.com/samrocketman/yml-install-files/${YML_INSTALL_FILES_VERSION}/download-utilities.sh"
+          chmod +x download-utilities.sh
+          ./download-utilities.sh .github/download-utilities.yml uv
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Set up Python
+        run: uv python install 3.10
+
+      - name: Build package
+        run: uv build --no-sources
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi-publish:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: pypi
+      url: https://pypi.org/p/mkdocs-live-wysiwyg-plugin
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

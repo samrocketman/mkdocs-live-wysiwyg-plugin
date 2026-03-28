@@ -1,12 +1,8 @@
 name: Publish to PyPI
 
-# Always publish to PyPI when a version tag (v*) is pushed.
-# workflow_dispatch allows the release workflow to trigger this when it pushes a tag
-# (tag pushes from GITHUB_TOKEN do not trigger workflows).
+# Manual fallback for publishing to PyPI.
+# Automated publishing happens in the release workflow (release.yml).
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 concurrency:

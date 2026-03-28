@@ -141,6 +141,26 @@ uv() {
   fi
 }
 
+yq() {
+  if type -P yq &> /dev/null; then
+    command yq "$@"
+  elif [ -x ~/.techdocs/yq ]; then
+    command ~/.techdocs/yq "$@"
+  else
+    (
+      mkdir -p ~/.techdocs
+      if [ ! -x ~/.techdocs/download-utilities.sh ]; then
+        curl -fsSL -o ~/.techdocs/download-utilities.sh \
+          "${RAW_GITHUB_DOWNLOAD_MIRROR:-https://raw.githubusercontent.com}/samrocketman/yml-install-files/${YML_INSTALL_FILES_VERSION}/download-utilities.sh"
+        chmod +x ~/.techdocs/download-utilities.sh
+      fi
+      export DESTINATION_DIR=~/.techdocs yaml_file='-'
+      uv_download_yaml | ~/.techdocs/download-utilities.sh yq
+    )
+    command ~/.techdocs/yq "$@"
+  fi
+}
+
 pip() (
   if [ -z "${FORCE_PIP:-}" ]; then
     uv pip "$@"

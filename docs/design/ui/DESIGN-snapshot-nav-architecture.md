@@ -730,6 +730,7 @@ Close bulk WebSocket → wait for mkdocs rebuild → reload page.
 | `rename-folder` | `_executeRenameFolderOp` | Batch 1 |
 | `delete-folder` | `_executeDeleteFolderOp` | Batch 1 |
 | `rewrite-links` | `_executeRewriteLinksOp` | Batch 2f |
+| `rewrite-heading-anchor` | `_executeRewriteHeadingAnchorOp` | Batch 2f |
 | `set-headless` | `_executeSetHeadlessOp` | Batch 2f |
 | `set-frontmatter` | `_executeSetFrontmatterOp` | Batch 2f |
 

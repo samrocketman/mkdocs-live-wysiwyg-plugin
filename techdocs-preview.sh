@@ -462,6 +462,76 @@ add_plugins() (
   done
 )
 
+init_data() {
+cat << 'EO_EXAMPLE_DOCS'
+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
+EO_EXAMPLE_DOCS
+}
+
+base64_decode() {
+  if command -v base64 &> /dev/null; then
+    base64 -d 2>/dev/null || base64 -D
+  elif command -v openssl &> /dev/null; then
+    openssl enc -base64 -d -A
+  else
+    echo 'ERROR: No base64 decoder found (need base64 or openssl).' >&2
+    return 1
+  fi
+}
+
+init_docs() {
+  if [ -f mkdocs.yml ]; then
+    echo 'ERROR: mkdocs.yml already exists. Cannot init where documentation is already present.' >&2
+    exit 1
+  fi
+  if [ -d docs ]; then
+    echo 'ERROR: docs/ directory already exists. Cannot init where documentation is already present.' >&2
+    exit 1
+  fi
+  init_data | base64_decode | gzip -d | tar xf -
+  if [ ! -f .gitignore ]; then
+    printf '%s\n' site > .gitignore
+  elif ! grep -qx site .gitignore; then
+    printf '%s\n' site >> .gitignore
+  fi
+  echo 'Initialized example MkDocs documentation.'
+}
+
 #
 # MAIN
 #
@@ -511,6 +581,7 @@ SYNOPSIS
   techdocs-preview.sh add_plugins [mkdocs-pypi-package...]
   techdocs-preview.sh build --help
   techdocs-preview.sh serve --help
+  techdocs-preview.sh init
   techdocs-preview.sh uninstall
   techdocs-preview.sh upgrade
 
@@ -556,6 +627,11 @@ OPTIONS
     theme.palette, and other theme options take precedence.
 
 SUB_COMMANDS
+  init
+    Initialize example MkDocs documentation in the current directory.  Creates
+    mkdocs.yml and docs/ from a built-in template.  Errors if either already
+    exists.  Also adds "site" to .gitignore if not already present.
+
   add_plugin
     Alias to add_plugins.
 
@@ -600,7 +676,7 @@ EOF
 esac
 if {
   case "${1:-}" in
-    add_plugin*|upgrade|uninstall)
+    add_plugin*|upgrade|uninstall|init)
       false
       ;;
     *)
@@ -617,7 +693,7 @@ if {
 fi
 if { [ ! -d docs ] || [ -n "${USE_CURRENT_DIR:-}" ]; } && {
   case "${1:-}" in
-    uninstall|add_plugin*)
+    uninstall|add_plugin*|init)
       false
       ;;
     *)
@@ -669,6 +745,11 @@ if { [ ! -d docs ] || [ -n "${USE_CURRENT_DIR:-}" ]; } && {
     echo 'Edited markdown files restored.' >&2
   fi
   unset DOCS_DIR_AUTO_GENERATED
+  exit
+fi
+if [ "${1:-}" = init ]; then
+  shift
+  init_docs
   exit
 fi
 export expanded_help=1

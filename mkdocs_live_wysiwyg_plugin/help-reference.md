@@ -76,6 +76,7 @@ All shortcuts above apply in Focus Mode, plus:
 | Shortcut | Action |
 |----------|--------|
 | ESC | Exit focus mode (returns to normal edit view) |
+| Ctrl+Shift+F / Cmd+Shift+F | Toggle all panels (nav, toolbar, TOC) — collapse all for distraction-free editing, press again to restore |
 
 ## Auto-Conversions
 <!-- context: content -->
@@ -201,6 +202,26 @@ Arrow keys and Enter have special behavior when the cursor is inside any inline 
 | **Shift+Enter** | Anywhere | Normal line break (bypasses inline escape) |
 
 Arrow escape and Enter splitting work inside paragraphs, headings, list items, admonitions, and block quotes.
+
+### Pasting Links
+
+#### URL into Selected Text
+
+Select text in the editor and paste a URL (`https://...`). The selected text becomes a clickable link to that URL. Works in WYSIWYG mode.
+
+#### Heading Link from Table of Contents
+
+1. In Focus Mode, hover over a heading in the **Table of Contents** panel (right sidebar).
+2. A small link icon appears to the left of the heading — click it to copy the heading link.
+3. Navigate to any page, select text, and paste.
+4. The selected text becomes a link to that heading.
+
+The editor automatically computes the correct link format:
+
+- **Same page**: pastes as `#heading-anchor` (anchor-only link).
+- **Different page**: pastes as a relative path with anchor (e.g. `../other-page.md#heading-anchor`).
+
+This works in both WYSIWYG and Markdown modes.
 
 ### Emoji
 

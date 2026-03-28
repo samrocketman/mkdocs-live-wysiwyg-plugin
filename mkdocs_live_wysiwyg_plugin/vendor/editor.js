@@ -777,7 +777,12 @@ class MarkdownWYSIWYG {
 
         const btnRect = anchorBtn.getBoundingClientRect();
         const wrapperRect = this.editorWrapper.getBoundingClientRect();
-        popover.style.top = (btnRect.bottom - wrapperRect.top + 4) + 'px';
+        var popTop = btnRect.bottom - wrapperRect.top + 4;
+        if (btnRect.bottom + 4 + popover.offsetHeight > window.innerHeight) {
+            popTop = btnRect.top - wrapperRect.top - 4 - popover.offsetHeight;
+        }
+        if (popTop < 0) popTop = 0;
+        popover.style.top = popTop + 'px';
         popover.style.right = (wrapperRect.right - btnRect.right) + 'px';
 
         if (window._attachDialogKeyboard) {
@@ -2922,16 +2927,6 @@ class MarkdownWYSIWYG {
                 const href = node.getAttribute('href') || '';
                 const linkText = this._processInlineContainerRecursive(node, options).trim();
                 return `[${linkText}](${href})`;
-            case 'CODE':
-                // Only handle if not inside a PRE (which handles its own CODE)
-                if (!this._findParentElement(node, 'PRE')) {
-                    let codeContent = node.textContent.trim();
-                    if (options && options.inTableCell) { // Escape pipes if in table cell
-                        codeContent = codeContent.replace(/\|/g, '\\|');
-                    }
-                    return `\`${codeContent}\``;
-                }
-                return ''; // Handled by PRE
             case 'P':
             case 'UL': case 'OL':
             case 'BLOCKQUOTE':

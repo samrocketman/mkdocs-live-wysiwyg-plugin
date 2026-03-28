@@ -1,0 +1,16 @@
+site_name: Your Documentation Site
+plugins:
+  - live-edit
+  - live-wysiwyg
+  - mkdocs-nav-weight
+theme:
+  features:
+    - content.code.annotate
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format

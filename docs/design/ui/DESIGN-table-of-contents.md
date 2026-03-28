@@ -48,6 +48,8 @@ The TOC uses Material theme classes for consistent styling:
 - `heading.scrollIntoView({ behavior: 'smooth', block: 'start' })` for browser-native smooth scrolling
 - Places cursor at the heading for immediate editing
 
+When the user clicks a TOC heading and edits its text, the Heading Migration subsystem detects the rename when the cursor leaves the heading and stages cross-document anchor link rewrites. See [DESIGN-heading-migration.md](DESIGN-heading-migration.md) for the full migration flow.
+
 See [DESIGN-browser-compatibility.md](DESIGN-browser-compatibility.md) for cross-browser considerations around `scrollIntoView` and smooth scrolling.
 
 ## Collapsible Toggle
@@ -67,6 +69,35 @@ During nav edit mode, the TOC remains visible but is non-interactive. The read-o
 ## Dead Link Panel
 
 The dead link panel auto-expands a collapsed TOC before positioning (`_ensureTocUncollapsed`) so the panel can be placed correctly.
+
+## Copy Heading Link
+
+Each TOC entry has a small copy button (link icon) positioned to the left, following the same visibility pattern as nav sidebar settings gears.
+
+### Visibility
+
+- Hidden by default (`opacity: 0; pointer-events: none`)
+- Appears on hover of the individual `md-nav__link` element (`opacity: 0.5`)
+- Full opacity on direct hover of the button itself
+- Positioned absolutely in the left gutter via `left: calc(.6rem - 13px)`, vertically centered
+
+### Copy Behavior
+
+Click copies `srcPath#slug` to the clipboard, where:
+
+- `srcPath` is the current document's source path (from `_getCurrentSrcPath()`)
+- `slug` is the heading's anchor slug (from `_headingSlugify(text)`, stored in `data-toc-slug`)
+
+The last copied link is stored in `_lastCopiedHeadingLink` for the smart paste handler.
+
+### Smart Paste
+
+When the user pastes a copied heading link into selected text (in either WYSIWYG or Markdown mode), the paste handler intercepts and auto-converts the raw `srcPath#slug` into a properly formatted link:
+
+- **Same page** (target `srcPath` matches current page): link is `#slug` (anchor-only)
+- **Different page**: link is a relative path computed via `_computeRelativePath` with the `#slug` appended
+
+In WYSIWYG mode, the selection is wrapped in an `<a>` element. In Markdown mode, the selection is replaced with `[selectedText](relativePath#slug)`.
 
 ## Invariants
 

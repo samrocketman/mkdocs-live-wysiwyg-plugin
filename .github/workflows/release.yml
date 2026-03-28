@@ -54,6 +54,26 @@ jobs:
               f.write(script)
           PYEOF
 
+      - name: Sync example-docs init_data into techdocs-preview.sh
+        run: |
+          python3 << 'PYEOF'
+          import subprocess
+          with open('techdocs-preview.sh') as f:
+              script = f.read()
+          result = subprocess.run(
+              'tar -c --format=ustar mkdocs.yml docs | gzip -9 | base64',
+              shell=True, capture_output=True, text=True, cwd='example-docs'
+          )
+          result.check_returncode()
+          start_marker = "cat << 'EO_EXAMPLE_DOCS'\n"
+          end_marker = "\nEO_EXAMPLE_DOCS"
+          start_idx = script.index(start_marker) + len(start_marker)
+          end_idx = script.index(end_marker, start_idx)
+          script = script[:start_idx] + result.stdout.rstrip('\n') + script[end_idx:]
+          with open('techdocs-preview.sh', 'w') as f:
+              f.write(script)
+          PYEOF
+
       - name: Commit and tag
         run: |
           git config user.name "github-actions[bot]"

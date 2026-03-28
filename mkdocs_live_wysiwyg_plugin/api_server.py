@@ -30,6 +30,37 @@ _RE_MD_IMAGE = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
 _RE_IMG_TAG = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']')
 _RE_REF_DEF = re.compile(r'^\[([^\]]+)\]:\s+(\S+)', re.MULTILINE)
 
+_RE_HEADING = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
+_RE_INLINE_MARKUP = re.compile(r'[*_`~\[\]!]')
+
+
+def _heading_slugify(text: str, separator: str = "-") -> str:
+    """Slugify heading text matching Python-Markdown's default toc algorithm."""
+    import unicodedata
+    value = unicodedata.normalize("NFKD", text)
+    value = _RE_INLINE_MARKUP.sub("", value)
+    value = re.sub(r"[^\w\s-]", "", value).strip().lower()
+    return re.sub(r"[-\s]+", separator, value)
+
+
+def _extract_heading_slugs(content: str) -> set[str]:
+    """Extract all heading slugs from markdown, handling duplicates."""
+    slugs: set[str] = set()
+    counts: dict[str, int] = {}
+    for m in _RE_HEADING.finditer(content):
+        raw = m.group(2).rstrip().rstrip("#").rstrip()
+        slug = _heading_slugify(raw)
+        if not slug:
+            continue
+        if slug in slugs:
+            count = counts.get(slug, 0) + 1
+            counts[slug] = count
+            slugs.add(f"{slug}_{count}")
+        else:
+            slugs.add(slug)
+    return slugs
+
+
 _MERMAID_EDITOR_DIR = Path(__file__).parent / "vendor" / "mermaid-live-editor"
 _MERMAID_MIME_TYPES = {
     ".html": "text/html",
@@ -707,6 +738,7 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
     ) -> dict:
         from_path = item.get("from", "")
         target = item.get("target", "")
+        fragment = item.get("fragment", "")
         if not target:
             return {"ok": False, "error": "Empty target"}
         docs = Path(self.docs_dir)
@@ -718,29 +750,65 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
         except ValueError:
             return {"ok": False, "error": "Path escapes docs_dir"}
 
+        actual_md_path: Path | None = None
+
         if file_layout_set is not None:
             rel = str(resolved.relative_to(docs_resolved)).replace("\\", "/")
+            found = False
             if rel in file_layout_set:
-                return {"ok": True}
-            if not resolved.suffix:
+                found = True
+            elif not resolved.suffix:
                 if (rel + "/index.md") in file_layout_set:
-                    return {"ok": True}
-                if (rel + ".md") in file_layout_set:
-                    return {"ok": True}
-            if resolved.suffix == ".md" and rel.removesuffix(".md") in file_layout_set:
-                return {"ok": True}
-            return {"ok": False, "error": "File not found"}
+                    found = True
+                    rel = rel + "/index.md"
+                elif (rel + ".md") in file_layout_set:
+                    found = True
+                    rel = rel + ".md"
+            elif resolved.suffix == ".md" and rel.removesuffix(".md") in file_layout_set:
+                found = True
+            if not found:
+                return {"ok": False, "error": "File not found"}
+            if fragment and file_layout_set is None:
+                actual_md_path = docs / rel
+        else:
+            found = False
+            if resolved.exists():
+                found = True
+                actual_md_path = resolved
+            elif not resolved.suffix:
+                if (resolved / "index.md").exists():
+                    found = True
+                    actual_md_path = resolved / "index.md"
+                elif resolved.with_suffix(".md").exists():
+                    found = True
+                    actual_md_path = resolved.with_suffix(".md")
+            elif resolved.suffix == ".md" and resolved.with_suffix("").exists():
+                found = True
+                actual_md_path = resolved
+            if not found:
+                return {"ok": False, "error": "File not found"}
 
-        if resolved.exists():
-            return {"ok": True}
-        if not resolved.suffix:
-            if (resolved / "index.md").exists():
-                return {"ok": True}
-            if resolved.with_suffix(".md").exists():
-                return {"ok": True}
-        if resolved.suffix == ".md" and resolved.with_suffix("").exists():
-            return {"ok": True}
-        return {"ok": False, "error": "File not found"}
+        if fragment and file_layout_set is None:
+            if actual_md_path is None:
+                actual_md_path = resolved
+            md_file = actual_md_path
+            if not md_file.suffix:
+                if (md_file / "index.md").exists():
+                    md_file = md_file / "index.md"
+                elif md_file.with_suffix(".md").exists():
+                    md_file = md_file.with_suffix(".md")
+            if md_file.exists() and md_file.suffix == ".md":
+                try:
+                    content = md_file.read_text(encoding="utf-8")
+                    slugs = _extract_heading_slugs(content)
+                    if fragment not in slugs:
+                        return {
+                            "ok": False,
+                            "error": f"Anchor not found: #{fragment}",
+                        }
+                except Exception:
+                    pass
+        return {"ok": True}
 
     def _check_external(self, item: dict) -> dict:
         url = item.get("url", "")

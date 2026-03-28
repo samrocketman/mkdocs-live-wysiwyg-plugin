@@ -206,6 +206,7 @@ function _globalKeydownRouter(e) {
 | Ctrl+S | `_navEditMode` | `_handleNavSave` | Confirms nav save |
 | Ctrl+S | (default) | `_handleDocSave` | Saves doc; falls through to nav save if doc clean |
 | Ctrl+. | (always) | `_handleToggleMode` | Toggles WYSIWYG/Markdown |
+| Ctrl+Shift+F | `isFocusModeActive` | (inline) | Toggle all panels collapsed/expanded for distraction-free editing |
 | Ctrl+? | (always) | `_showHelp` | Context-sensitive help modal (Layer 5). See [DESIGN-help-system.md](DESIGN-help-system.md) |
 | Arrow keys | `_navEditMode` + `_navKeyboardActiveItem` | `_handleNavArrowKeys` | Nav item movement |
 | Enter | `_navEditMode` + `_navKeyboardActiveItem` + no content focus | `_handleNavSave` | Confirms nav save |

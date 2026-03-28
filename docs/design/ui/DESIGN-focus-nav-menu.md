@@ -207,7 +207,7 @@ Each nav item `<li>` has `padding-left:56px; margin-left:-56px` to extend the ho
 
 ### Settings Gears
 
-Two gears: page (current page frontmatter) and folder (parent folder index.md). Fields: title, weight, headless, retitled (index.md only), empty (index.md only), plus Normalize button.
+Three gears: page (current page frontmatter), folder (parent folder index.md), and site (nav title header — `site_name` in mkdocs.yml). Page and folder gears have fields: title, weight, headless, retitled (index.md only), empty (index.md only), plus Normalize button. The site gear (`_showSiteSettingsGear`) has a "Site Title" text input and a "Show hidden files" checkbox. The title input updates `site_name` in mkdocs.yml via `_applyYmlTransform(_replaceSiteName)` — changes flow through the snapshot system and are applied when the user clicks Save (badge: "Change mkdocs.yml site_name"). The checkbox toggles `live_wysiwyg_show_hidden` immediately on change (not deferred to Apply). The text input auto-expands via `_attachContainerExpandBehavior`.
 
 ### Weight Adjustment on Move
 

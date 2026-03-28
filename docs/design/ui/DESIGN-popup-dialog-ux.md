@@ -174,6 +174,7 @@ Triggered on the Insert click or URL blur when alt is empty and a URL has been t
 | Insert/Edit Link | `createLinkDropdown` | urlInput | urlInput -> textInput -> removeBtn -> applyBtn |
 | Insert Image | `createImageInsertDropdown` | urlInput | urlInput -> altInput -> sizeSlider -> applyBtn |
 | Nav Settings Gear | `_buildSettingsContent` | first field | type/weight -> checkboxes -> rename input -> action buttons (Apply, Delete, Create folder index, etc. — Enter only activates these when tabbed to) |
+| Site Settings Gear | `_showSiteSettingsGear` | siteTitleInput | siteTitleInput -> showHiddenCb -> applyBtn |
 
 ### Confirmation Dialogs
 

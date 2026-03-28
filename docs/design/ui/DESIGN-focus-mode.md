@@ -256,6 +256,7 @@ In the drawer controls (Material theme only), a "Page Management" button trigger
 |---|---|
 | **Ctrl/Cmd+S** | Nav save (if nav edits pending), else flush + disk save |
 | **Ctrl/Cmd+.** | Toggle WYSIWYG / Markdown mode |
+| **Ctrl/Cmd+Shift+F** | Toggle all panels (nav, toolbar, TOC) — collapse all for distraction-free editing, press again to restore all |
 | **Escape** | Exit focus mode / dismiss dialogs |
 
 ## Scroll Behavior

@@ -30,7 +30,9 @@ Exclusion zones protect content from link rewriting and other scanning operation
 
 ## Dead Link Scanning
 
-`_scanDeadLinks(mode, options)` scans all pages for broken links via the link-checker server. Results flow through `_processDeadLinkResults` → `_finalizeDeadLinkResults` → `_commitDeadLinkResults`:
+`_scanDeadLinks(mode, options)` scans all pages for broken links via the link-checker server. Results flow through `_processDeadLinkResults` → `_finalizeDeadLinkResults` → `_commitDeadLinkResults`.
+
+**Anchor validation**: When an internal link includes a `#fragment`, the scanner sends the fragment to the server alongside the path. The server reads the target file, extracts headings, computes slugs, and validates the fragment. See [DESIGN-heading-migration.md](../ui/DESIGN-heading-migration.md) for the anchor validation protocol and server-side heading extraction.
 
 1. Set `_suppressWarningSnapshot = true`
 2. For each page with dead links: `_addDeadLinksForPage(path, internal, external)` + `_addCautionPage(path, reason)` — both modify navData without committing

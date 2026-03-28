@@ -458,6 +458,20 @@ Title [text area]
 
 No File name, Weight, Headless, Retitled/Empty, Normalize Weights, or Delete. The root index page cannot be deleted or reweighted through the settings gear.
 
+#### Site Settings Gear (nav title header)
+
+Function: `_showSiteSettingsGear`. Category: form dialog. Triggered by clicking the gear icon in the nav menu title bar (to the left of the site title text).
+
+```
+Site Title [text area]
+[ ] Show hidden files
+(Apply)
+```
+
+The Site Title input is pre-filled from `site_name` in `_virtualMkdocsYml` (via `_extractSiteName`), falling back to `document.title`. On Apply, `_applyYmlTransform(_replaceSiteName)` updates the virtual mkdocs.yml, `_addNavBadge` adds a "Change mkdocs.yml site_name" badge, and `_commitNavSnapshot()` captures the change. The user must click Save in the nav menu to write to disk.
+
+The "Show hidden files" checkbox toggles `_getSetting('live_wysiwyg_show_hidden')` and calls `_renderNavFromSnapshot()` immediately on change (not deferred to Apply). The text input auto-expands via `_attachContainerExpandBehavior`.
+
 #### Settings gear rendering rules
 
 13. **Five rendering variants.** `_buildSettingsContent` branches into 5 item-type variants: page, section-with-index, indexless section, asset, and root index. Indexless section and asset take early-return paths with their own action buttons. Page and section-with-index share the Normalize/Delete/Apply action row.

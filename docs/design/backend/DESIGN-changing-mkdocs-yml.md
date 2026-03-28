@@ -27,6 +27,7 @@ All code lives in `live-wysiwyg-integration.js`.
 | Remove `nav:` key | `_removeNavKeyFromYaml` | String (line-based) | Nav-key migration |
 | Insert `mkdocs-nav-weight` plugin | `_insertNavWeightEntry` | String (regex) | Nav-weight staging |
 | Replace `default_page_weight` | `_replaceDefaultPageWeight` | String (regex) | Settings gear, auto-adjust |
+| Replace `site_name` | `_replaceSiteName` | String (regex) | Site settings gear |
 | Add mermaid superfences | `_addMermaidSuperfencesConfig` | js-yaml round-trip | Caution auto-fix |
 
 ## Virtual Mutation Pattern

@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/download-utilities.yml'
+      - 'techdocs-preview.sh'
+      - 'example-docs/**'
+      - 'mkdocs_live_wysiwyg_plugin/**'
+      - 'pyproject.toml'
 
 jobs:
   release:

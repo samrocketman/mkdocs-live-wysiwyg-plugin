@@ -14,6 +14,12 @@ techdocs-preview.sh init
 
 The `init` command will initialize mkdocs documentation for you.  The default docs serve as a tutorial to the WYSIWYG editor but you could also discard the documentation and use it as a starting point for your own project.  `init` is intended to be a quick way to add documentation to a repository that did not previously have TechDocs.
 
+I modify GitHub documentation for this repository with the following command.
+
+```bash
+techdocs-preview.sh -c -a docs
+```
+
 ## Features
 
 A WYSIWYG (What-You-See-Is-What-You-Get) editor for exiting `mkdocs` documentation.
@@ -63,7 +69,7 @@ The following is an annotated screenshot after running `techdocs-preview.sh init
 
 ## Requirements
 
-The following requirements are automtically managed by `techdocs-preview.sh` with [uv].
+The following requirements are automatically managed by `techdocs-preview.sh` with [uv].
 
 - Python 3.10 or higher.
 - mkdocs-live-edit-plugin (must

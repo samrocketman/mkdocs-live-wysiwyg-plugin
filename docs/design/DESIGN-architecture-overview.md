@@ -124,6 +124,8 @@ UI Subsystem
   |-- Mermaid Subsystem
   |     |-- Mermaid Mode (UI, Layer 3 in mode hierarchy)
   |     |-- Vendor Subsystem (mermaid.js + mermaid-live-editor)
+  |     |-- Monaco Subsystem (embedded code editor API + runtime discovery)
+  |     |-- Mermaid Diagram Selection (SVG click-to-select + load monitor)
   |     |-- MkDocs YAML Mermaid Config (server-side detection + client-side auto-fix)
   |-- Toolbars
   |-- Content Editing
@@ -181,6 +183,8 @@ Mermaid-related design documents are organized under `docs/design/mermaid/` whil
 
 - [DESIGN-mermaid-mode.md](mermaid/DESIGN-mermaid-mode.md) -- Layer 3 UI mode for mermaid diagram editing.
 - [DESIGN-vendor-subsystem.md](mermaid/DESIGN-vendor-subsystem.md) -- Vendored mermaid.js and mermaid-live-editor.
+- [DESIGN-monaco-subsystem.md](mermaid/DESIGN-monaco-subsystem.md) -- Embedded Monaco code editor API, runtime discovery, and content access paths.
+- [DESIGN-mermaid-diagram-selection.md](mermaid/DESIGN-mermaid-diagram-selection.md) -- SVG click-to-select heuristics, text normalization, initial load monitor.
 - [DESIGN-mkdocs-yml-mermaid-config.md](mermaid/DESIGN-mkdocs-yml-mermaid-config.md) -- Server-side config detection and client-side auto-fix.
 
 #### Toolbars

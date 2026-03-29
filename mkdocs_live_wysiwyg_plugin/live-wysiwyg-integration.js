@@ -26129,6 +26129,31 @@
           }
         });
       }
+
+      if (data.type === 'live-wysiwyg-open-url' && typeof data.url === 'string') {
+        var _allowedDomains = [
+          'discord.com',
+          'discord.gg',
+          'github.com',
+          'mermaid.js.org'
+        ];
+        try {
+          var _u = new URL(data.url);
+          if (_u.protocol === 'https:' || _u.protocol === 'http:') {
+            var _allowed = false;
+            for (var _di = 0; _di < _allowedDomains.length; _di++) {
+              if (_u.hostname === _allowedDomains[_di] ||
+                  _u.hostname.endsWith('.' + _allowedDomains[_di])) {
+                _allowed = true;
+                break;
+              }
+            }
+            if (_allowed) {
+              window.open(data.url, '_blank');
+            }
+          }
+        } catch (_urlErr) {}
+      }
     }
     overlay._mermaidMessageHandler = onMermaidMessage;
     window.addEventListener('message', onMermaidMessage);

@@ -96,7 +96,7 @@ The patches address two categories of issues:
 
 | ID | Patch | What it fixes | Files affected |
 |---|---|---|---|
-| **P1** | Bridge script injection | Injects the postMessage bridge into `edit.html` (primary) and `index.html` (fallback) so the iframe can communicate with the parent WYSIWYG editor | `edit.html`, `index.html` |
+| **P1** | Bridge script injection | Injects the postMessage bridge into `edit.html` (primary) and `index.html` (fallback) so the iframe can communicate with the parent WYSIWYG editor. Also includes the SVG load monitor (service 3), diagram selection click handlers (service 4), and the AMD global shim for Monaco discovery (service 5). See [DESIGN-mermaid-diagram-selection.md](DESIGN-mermaid-diagram-selection.md) and [DESIGN-monaco-subsystem.md](DESIGN-monaco-subsystem.md). | `edit.html`, `index.html` |
 | **P2** | Canonical link removal | Removes `<link rel="canonical" href="https://mermaid.ai/live" />` — external reference irrelevant in an iframe | All `.html` files |
 | **P3** | Manifest link removal | Removes `<link rel="manifest">` — PWA features are irrelevant in an iframe, and `manifest.json` contains root-absolute paths (`/favicon.png`, `/edit`) that break under a sub-path | All `.html` files |
 | **P4** | 404.html base path fix | Changes `base: ""` to dynamic `new URL(".", location)` computation and converts all root-absolute paths (`/_app/...`) to relative (`./`) — the upstream adapter-static generates 404.html differently from other pages | `404.html` |
@@ -118,6 +118,10 @@ The upstream codebase may change between versions. After building a new version,
 7. **P7**: Check if `service-worker.js` exists in the build output
 
 8. **P8**: Embedded inside P1 (bridge script). Verify the vendor's keyboard handling hasn't changed in ways that would require adjusting the `_hasVisibleOverlay()` selectors or the `preventDefault` override. Test ESC, Ctrl+S, and Ctrl+. from inside the editor.
+
+9. **SVG Load Monitor** (service 3 in P1): Verify `div#container` still contains the rendered SVG. Verify `<g class="node">` is still present in rendered mermaid SVGs (used to confirm diagram load vs empty SVG shell). Verify `svg-pan-zoom_viewport` class is still used for pan/zoom transforms.
+
+10. **Diagram Selection** (service 4 in P1): Verify `.nodeLabel` and `.edgeLabel` CSS classes are still used in mermaid SVG output for node and edge label text. Verify the Monaco editor still stores its widget reference on the `[data-mode-id]` DOM element (the bridge discovers it via property enumeration looking for `setSelection` and `getModel` methods). Test clicking on SVG text elements to confirm selection works in the Monaco editor.
 
 The patch script reports which patches were applied; if a patch reports "no matching files," the upstream may have changed and the patch should be re-examined.
 
@@ -150,7 +154,7 @@ grep -rn 'https://' vendor/mermaid-live-editor/ --include='*.js' --include='*.ht
 
 ### PostMessage Bridge + Keyboard Isolation Layer
 
-The bridge script is injected into `edit.html` (primary entry point) and `index.html` (fallback) by patch P1. It provides two services:
+The bridge script is injected into `edit.html` (primary entry point) and `index.html` (fallback) by patch P1. It provides four services:
 
 **1. Content Sync via Session API** — reads the diagram code from `localStorage` (where the mermaid-live-editor persists its Svelte store under the `codeStore` key, same-origin with the iframe) and PUTs it to the API server's mermaid session endpoint (`PUT /mermaid-session/{id}`). The parent GETs the code from the same endpoint on exit. See [DESIGN-mermaid-session-server.md](../backend/DESIGN-mermaid-session-server.md) for the full session lifecycle.
 
@@ -169,6 +173,12 @@ The bridge script is injected into `edit.html` (primary entry point) and `index.
 - **Ctrl+. → Suppressed**: `stopImmediatePropagation` prevents vendor handling. Mode toggle is not valid in mermaid mode.
 - **P8 (preventDefault override)**: Monkey-patches `Event.prototype.preventDefault` to no-op for parent-controlled shortcut keys. Defensive layer ensuring no vendor handler can suppress ESC, Ctrl+S, or Ctrl+.
 - **Regular editing keys**: Pass through to the vendor editor normally.
+
+**3. SVG Load Monitor** — polls for `document.querySelector("#container svg")` containing `<g class="node">` to confirm the diagram rendered successfully. If the SVG does not appear within 8 seconds (16 polls at 500ms), reloads the iframe via `window.location.reload()`. Runs once per session — after initial confirmation, no further monitoring. See [DESIGN-mermaid-diagram-selection.md](DESIGN-mermaid-diagram-selection.md) § Initial SVG Load Monitor.
+
+**4. Diagram Selection** — after the SVG load monitor confirms the diagram is rendered, attaches click handlers to all SVG text elements (`.nodeLabel p` for node labels, `.edgeLabel p` for edge labels). When clicked, the handler extracts the text content, searches the mermaid code (via `localStorage`) for the matching line, discovers the Monaco editor instance via `window.monaco.editor.getEditors()`, and calls `editor.setSelection()` + `editor.revealRangeInCenter()` + `editor.focus()` to highlight and scroll to the corresponding code. A `MutationObserver` on `#container` re-attaches handlers when the SVG is replaced (e.g., after code edits). See [DESIGN-mermaid-diagram-selection.md](DESIGN-mermaid-diagram-selection.md) and [DESIGN-monaco-subsystem.md](DESIGN-monaco-subsystem.md).
+
+**5. AMD Global Shim** — defines `window.define` with `define.amd = true` before Monaco loads. This causes Monaco's bundled code to set `globalThis.monaco`, exposing the full public API (`monaco.editor.getEditors()`, `monaco.editor.create()`, etc.) without modifying vendor JS files. See [DESIGN-monaco-subsystem.md](DESIGN-monaco-subsystem.md) § AMD Global Shim.
 
 ### API Server: Sub-Path Routing Support
 

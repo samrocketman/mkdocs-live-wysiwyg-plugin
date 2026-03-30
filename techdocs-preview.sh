@@ -141,7 +141,7 @@ uv() {
   fi
 }
 
-yq() {
+yq() (
   if type -P yq &> /dev/null; then
     command yq "$@"
   elif [ -x ~/.techdocs/yq ]; then
@@ -159,7 +159,7 @@ yq() {
     )
     command ~/.techdocs/yq "$@"
   fi
-}
+)
 
 pip() (
   if [ -z "${FORCE_PIP:-}" ]; then

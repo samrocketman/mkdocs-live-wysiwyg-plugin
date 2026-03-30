@@ -1,7 +1,7 @@
 [project]
 name = "mkdocs-live-wysiwyg-plugin"
 version = "0.3.19"
-description = "WYSIWYG editor for mkdocs-live-edit-plugin based on @celsowm/markdown-wysiwyg"
+description = "WYSIWYG docs editor for Mkdocs Material themed docs. A content editing experience."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -31,9 +31,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/samrocketman/mkdocs-live-edit-wyswyg-plugin"
-Repository = "https://github.com/samrocketman/mkdocs-live-edit-wyswyg-plugin"
-Issues = "https://github.com/samrocketman/mkdocs-live-edit-wyswyg-plugin/issues"
+Homepage = "https://github.com/samrocketman/mkdocs-live-wysiwyg-plugin"
+Repository = "https://github.com/samrocketman/mkdocs-live-wysiwyg-plugin"
+Issues = "https://github.com/samrocketman/mkdocs-live-wysiwyg-plugin/issues"
 
 [project.entry-points."mkdocs.plugins"]
 live-wysiwyg = "mkdocs_live_wysiwyg_plugin.plugin:LiveWysiwygPlugin"

@@ -148,9 +148,64 @@ grep -rn 'https://' vendor/mermaid-live-editor/ --include='*.js' --include='*.ht
 # Remaining matches must be examined and addressed.
 ```
 
+### Full Vendor Audit Results
+
+Comprehensive audit of all vendored software and first-party integration code for external network dependencies.
+
+**Standalone vendored bundles — CLEAN:**
+
+| Component | External URLs? | Network calls? | Verdict |
+|---|---|---|---|
+| `marked.min.js` | License header only | None | Clean |
+| `js-yaml.min.js` | License header only | None | Clean |
+| `editor.js` | `"https://"` as `prompt()` placeholder | None | Clean |
+| `editor.css` | None | None | Clean |
+| `mermaid.min.js` | Thousands (error messages, docs links, SVG namespace URIs) | None — pure client-side SVG rendering | Clean |
+
+**mermaid-live-editor — mitigated external dependencies:**
+
+| Feature | Mitigation | Verified? |
+|---|---|---|
+| Service Worker | Removed by patches P5 (layout register block), P6 (remaining `register()` → `Promise.resolve()`), P7 (`service-worker.js` deleted) | Yes |
+| Plausible Analytics | Built with `MERMAID_ANALYTICS_URL=''`; tracker bundled but empty URL prevents initialization | Yes |
+| Gist Loader (`api.github.com`) | `loadGistData` in `xrKURGDJ.js` gated behind `?gist=` URL param; iframe URL never includes `?gist=` | Yes |
+| mermaid.ink / Kroki renderer | Built with `MERMAID_RENDERER_URL=''` and `MERMAID_KROKI_RENDERER_URL=''` | Yes |
+| Canonical link (`mermaid.ai`) | Removed by patch P2 | Yes |
+| Manifest (root-absolute paths) | `<link rel="manifest">` removed by patch P3 | Yes |
+| `robots.txt` / `sitemap.xml` | Reference `https://mermaid.live/`; static text files never loaded by browser in iframe | Acceptable |
+| All `modulepreload` hrefs | Relative paths (`./_app/immutable/...`), no external origins | Yes |
+| Fonts (Font Awesome 6, Recursive, Codicon) | 12 local files in `_app/immutable/assets/`, CSS uses relative `./` paths | Yes |
+
+**First-party `live-wysiwyg-integration.js`:**
+
+| Feature | Target | External? |
+|---|---|---|
+| All `fetch()` calls | `location.hostname` + `liveWysiwygLinkCheckPort` or same-origin relative paths | No |
+| WebSocket | `location.hostname` + `ws_port` | No |
+| Dynamic `<script>` (mermaid) | `location.hostname` + `liveWysiwygLinkCheckPort` + `/mermaid-editor/mermaid.min.js` | No |
+| XHR hook (`_xhrTrackingHookOpen`) | Wraps existing XHR for local tracking | No |
+| EmojiOne CDN (`cdnjs.cloudflare.com`) | Upstream pymdownx behavior for emoji `<img>` rendering | Accepted (upstream) |
+
+**Server-side `api_server.py`:**
+
+| Feature | Behavior | External? |
+|---|---|---|
+| `_check_external()` | HEAD requests to user-supplied URLs for dead link detection | By design (user-triggered) |
+
 ### Fonts — Verified Self-Contained
 
-`@fontsource-variable/recursive` bundles `.woff2` font files locally via npm. No Google Fonts CDN calls. On upgrade, verify the font package is still `@fontsource-variable/*` (local) and has not been replaced with a CDN import.
+All font files are bundled locally in `_app/immutable/assets/` alongside the CSS that references them (via relative `./` paths). No Google Fonts CDN or other external font loading.
+
+| Font | Files | Format |
+|---|---|---|
+| Font Awesome 6 Free (brands) | `fa-brands-400.*.woff2`, `.ttf` | woff2 + ttf |
+| Font Awesome 6 Free (regular) | `fa-regular-400.*.woff2`, `.ttf` | woff2 + ttf |
+| Font Awesome 6 Free (solid) | `fa-solid-900.*.woff2`, `.ttf` | woff2 + ttf |
+| Font Awesome 6 (v4 compat) | `fa-v4compatibility.*.woff2`, `.ttf` | woff2 + ttf |
+| Recursive (`@fontsource-variable/recursive`) | `recursive-latin-*.woff2`, `recursive-latin-ext-*.woff2`, `recursive-vietnamese-*.woff2` | woff2 |
+| Codicon (Monaco editor icons) | `codicon.*.ttf` | ttf |
+
+On upgrade, verify: (a) the font packages are still `@fontsource-variable/*` (local) and not replaced with CDN imports, (b) all `@font-face` `src: url(...)` paths in CSS resolve to files present in the same directory.
 
 ### PostMessage Bridge + Keyboard Isolation Layer
 

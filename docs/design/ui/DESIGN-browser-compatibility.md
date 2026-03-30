@@ -225,6 +225,20 @@ Safari (WebKit) on macOS shows a momentary horizontal scroll indicator on the `.
 
 **Fix**: `overflow-x: hidden` is set explicitly on both `.md-editable-area` (in `editor.css`) and `.live-wysiwyg-focus-main` (in `_getFocusModeCSS`). This tells the browser horizontal scrolling is not possible, suppressing the elastic bounce indicator. Content already wraps via `word-wrap: break-word`, and child elements that need horizontal scrolling (code blocks, tables) handle their own overflow internally. The focus-main container exhibits the same behavior when a sidebar (e.g., TOC) is hidden, since the flex grid narrows and Safari treats the freed space as scrollable.
 
+### Mermaid Bridge: Monaco Editor Discovery
+
+The mermaid-live-editor iframe embeds a bundled Monaco editor with no global `monaco` object. The bridge script discovers the editor instance by enumerating DOM properties on elements within `div#editor` and `div.monaco-editor`, using both `Object.getOwnPropertyNames()` (for non-enumerable string-keyed properties) and `Object.getOwnPropertySymbols()` (for Symbol-keyed properties). The `getOwnPropertySymbols` call is wrapped in try/catch since it is only needed on engines where Monaco uses Symbol-based storage.
+
+This approach is browser-agnostic: the Monaco bundle is identical across engines, so the minified property names are consistent. No engine-specific branching is needed.
+
+### Mermaid Bridge: SVG foreignObject Click Events
+
+Click handlers are attached to `<p>` elements inside `<foreignObject>` elements within the SVG diagram. These `<p>` elements are HTML-namespace elements, so standard HTML event handling applies. `stopPropagation()` prevents the click from reaching the `svg-pan-zoom` library's event listener on the parent SVG. Behavior is consistent across Blink, Gecko, and WebKit.
+
+### Mermaid Bridge: ES5 Constraint
+
+The bridge script (vendor patch P1) is injected into the mermaid-live-editor's `<head>` before SvelteKit bootstraps. It is written entirely in ES5 (`var`, `function`, no arrow functions, no `let`/`const`, no template literals) to avoid any engine-version requirements beyond what the SvelteKit app itself demands.
+
 ## Cross-References
 
 - `browser-compatibility.mdc` — Rule file with coding standards for using the compat layer
@@ -239,3 +253,4 @@ Safari (WebKit) on macOS shows a momentary horizontal scroll indicator on the `.
 - `DESIGN-focus-nav-menu.md` — Chrome location restrictions
 - `DESIGN-modes-of-operation.md` — Fullscreen API usage
 - `DESIGN-unified-content-undo.md` — `execCommand('undo')` and browser undo stack
+- `DESIGN-mermaid-diagram-selection.md` — Mermaid SVG click-to-select bridge; cross-browser API audit table

@@ -261,6 +261,8 @@ The API server (`api_server.py`) serves the vendored mermaid-live-editor static 
 - **Mermaid Session Server**: [DESIGN-mermaid-session-server.md](../backend/DESIGN-mermaid-session-server.md) — session-based content brokering between parent and iframe via the API server (POST/GET/PUT/DELETE lifecycle, server-mediated content exchange)
 - **Keyboard Isolation**: [DESIGN-centralized-keyboard.md](../ui/DESIGN-centralized-keyboard.md) § Mermaid Mode Keyboard Isolation — two-document keyboard architecture (parent Tier 2 guards + iframe bridge capture-phase interception)
 - **Vendor Subsystem**: [DESIGN-vendor-subsystem.md](DESIGN-vendor-subsystem.md) — bridge script (P1), preventDefault override (P8), upgrade procedures, patch inventory
+- **Monaco Subsystem**: [DESIGN-monaco-subsystem.md](DESIGN-monaco-subsystem.md) — embedded code editor API, runtime discovery, content access paths
+- **Mermaid Diagram Selection**: [DESIGN-mermaid-diagram-selection.md](DESIGN-mermaid-diagram-selection.md) — SVG click-to-select heuristics, initial load monitor, text normalization
 - **Dialog UX**: [DESIGN-popup-dialog-ux.md](../ui/DESIGN-popup-dialog-ux.md) — ESC overlay-escalation pattern reused by the bridge's ESC handler
 - **Modes of Operation**: `docs/design/ui/DESIGN-modes-of-operation.md` — Layer 3 in the mode hierarchy
 - **MkDocs YAML Config**: [DESIGN-mkdocs-yml-mermaid-config.md](DESIGN-mkdocs-yml-mermaid-config.md) — superfences detection and auto-fix

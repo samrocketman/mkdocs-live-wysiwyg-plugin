@@ -22601,6 +22601,7 @@
     }
 
     addCheckbox('Auto-launch editor', 'live_wysiwyg_autolaunch');
+    addCheckbox('Unicode emoji', 'live_wysiwyg_unicode_emoji');
 
     var rect = gearBtn.getBoundingClientRect();
     dropdown.style.position = 'fixed';
@@ -28631,7 +28632,7 @@
         var text = node.textContent;
         var before = text.substring(0, startOffset);
         var after = text.substring(endOffset);
-        if (!shortcode) {
+        if (!shortcode || _getSetting('live_wysiwyg_unicode_emoji') === '1') {
           node.textContent = before + emoji + after;
           return true;
         }
@@ -28869,6 +28870,14 @@
                 var insertEnd = beforeCursor.offset;
                 if (removeColonOnly && replaceRangeWithEmoji(node, beforeCursor.offset - 1, beforeCursor.offset, emoji)) {
                   insertEnd = beforeCursor.offset - 1 + emoji.length;
+                } else if (_getSetting('live_wysiwyg_unicode_emoji') === '1') {
+                  sel.removeAllRanges();
+                  sel.addRange(savedRange);
+                  savedRange.deleteContents();
+                  var uniNode = document.createTextNode(emoji);
+                  savedRange.insertNode(uniNode);
+                  node = uniNode;
+                  insertEnd = emoji.length;
                 } else {
                   sel.removeAllRanges();
                   sel.addRange(savedRange);
@@ -30067,9 +30076,11 @@
         var protected_ = html.replace(/<pre[^>]*>[\s\S]*?<\/pre>/gi, protectBlock);
         protected_ = protected_.replace(/<img[^>]*data-emoji-shortcode[^>]*>/gi, protectBlock);
         protected_ = protected_.replace(/<code[^>]*>[\s\S]*?<\/code>/gi, protectBlock);
+        var useUnicode = _getSetting('live_wysiwyg_unicode_emoji') === '1';
         protected_ = protected_.replace(shortcodeRe, function (m, key) {
           var em = EMOJI_MAP[key];
-          return em ? emojiToImgHtml(":" + key + ":", em) : m;
+          if (!em) return m;
+          return useUnicode ? em : emojiToImgHtml(":" + key + ":", em);
         });
         for (var i = 0; i < protectedBlocks.length; i++) {
           protected_ = protected_.split(ph + i + ph).join(protectedBlocks[i]);

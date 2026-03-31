@@ -36,8 +36,9 @@ Any change to a feature relevant to both subsystems must be updated in both. Thi
 | **Build** | `mkdocs build` with piped config | `build-manager.ts` spawns `mkdocs build` | Same config generation |
 | **Auto-generated docs** | Temp `docs/` from `*.md`, `full_path` frontmatter, asset tar-copy, restore on exit | `auto-docs.ts` same logic, `fs.cpSync` for assets | Frontmatter format, restore behavior |
 | **Init** | Embedded example-docs tarball | `init-manager.ts` equivalent template | Same output structure |
-| **Add plugins** | `pip install` pass-through | `environment.ts` `uv pip install` pass-through | Same venv target |
-| **Upgrade** | `FORCE_UPDATE=1 install_techdocs` | `environment.ts` reinstall with force | Same venv, same packages |
+| **Version tracking** | `~/.techdocs/current` written after install; `dev` sentinel skips all installs | `environment.ts` `isCurrentVersion()` / `isDevMode()` | `~/.techdocs/current` file, `dev` sentinel contract |
+| **Add plugins** | `pip install` pass-through; auto-detects local `mkdocs_live_wysiwyg_plugin/` dir → writes `dev` | `environment.ts` `uv pip install` pass-through; same local dir detection → writes `dev` | Same venv target, same dev detection |
+| **Upgrade** | `FORCE_UPDATE=1 install_techdocs`; respects `dev` guard (no-op) | `environment.ts` reinstall with force; respects `dev` guard (no-op) | Same venv, same packages, same `dev` guard |
 | **Uninstall** | `rm -rf ~/.techdocs` | `environment.ts` removes `~/.techdocs` | Same path |
 
 ## Modules
@@ -115,14 +116,17 @@ Holds `WYSIWYG_VERSION` and the pip package list. Binary versions come from `dow
 
 ## Server Readiness Checks
 
-Before opening the Simple Browser preview, the extension verifies all three companion servers are responding at the application protocol level:
+Before opening the Simple Browser preview, the extension polls `GET /health` on the API server port every 500ms with a 30-second timeout (`preview-panel.ts`).
 
-- **MkDocs HTTP** — `HEAD /` (any non-5xx confirms ready)
-- **API server** — `GET /build-epoch` (exists in all released versions)
-- **WebSocket server** — full WebSocket connection mirroring a real client: upgrade handshake, receive the `{"action":"connected"}` greeting message, then send a proper close frame (opcode `0x8`, status `1000`). This ensures the live-edit plugin logs `disconnected with status OK` rather than `disconnected due to an error`.
+The API server's `/health` endpoint performs protocol-aware checks server-side and returns a JSON response:
 
-These three checks run in parallel every 500ms with a 30-second timeout (`preview-panel.ts`).
+```json
+{"api": true, "mkdocs": true, "websocket": true, "ready": true}
+```
 
-### Future: unified `/health` endpoint
+- **`api`** — always `true` (the API server itself is responding).
+- **`mkdocs`** — `true` when an HTTP HEAD to the MkDocs server returns a non-5xx status.
+- **`websocket`** — `true` when a full WebSocket handshake succeeds: upgrade, receive the `{"action":"connected"}` greeting, then clean close with status 1000. This ensures the live-edit plugin logs `disconnected with status OK` rather than `disconnected due to an error`.
+- **`ready`** — `true` when all of the above are `true`.
 
-The API server now exposes `GET /health` which performs these same checks server-side (HTTP HEAD for MkDocs, WebSocket upgrade for the WebSocket server) and returns a single JSON response with per-service status and an aggregate `ready` boolean (`200` when ready, `503` otherwise). Once a plugin release containing the `/health` endpoint is generally available, the extension should switch to polling `GET /health` on the API port as the sole readiness check, replacing the three individual probes. This simplifies the extension and centralizes the readiness logic in the Python plugin.
+The endpoint returns HTTP `200` when `ready` is `true` and `503` otherwise. The extension opens the Simple Browser only after receiving a `200` with `ready: true`.

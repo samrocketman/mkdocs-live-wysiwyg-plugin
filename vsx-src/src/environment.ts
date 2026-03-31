@@ -10,7 +10,7 @@ import {
   executableName,
   downloadUtility,
 } from './platform';
-import { PYTHON_VERSION, PIP_PACKAGES } from './constants';
+import { WYSIWYG_VERSION, PYTHON_VERSION, PIP_PACKAGES } from './constants';
 
 function uvPath(): string {
   return getBinaryPath('uv');
@@ -22,6 +22,29 @@ function hasUv(): boolean {
 
 function hasVenv(): boolean {
   return fs.existsSync(getVenvPath());
+}
+
+function currentVersionFile(): string {
+  return path.join(getTechdocsHome(), 'current');
+}
+
+function readCurrentVersion(): string {
+  const versionFile = currentVersionFile();
+  if (!fs.existsSync(versionFile)) { return ''; }
+  return fs.readFileSync(versionFile, 'utf8').trim();
+}
+
+function isDevMode(): boolean {
+  return readCurrentVersion() === 'dev';
+}
+
+function isCurrentVersion(): boolean {
+  const installed = readCurrentVersion();
+  return installed === WYSIWYG_VERSION || installed === 'dev';
+}
+
+function writeCurrentVersion(): void {
+  fs.writeFileSync(currentVersionFile(), WYSIWYG_VERSION, 'utf8');
 }
 
 function runUv(args: string[], cwd?: string): Promise<string> {
@@ -66,8 +89,13 @@ export async function ensureEnvironment(
     output.appendLine('Virtual environment created.');
   }
 
+  if (isCurrentVersion()) {
+    output.appendLine(`Packages already at version ${WYSIWYG_VERSION}, skipping install.`);
+    return;
+  }
+
   progress?.report({ message: 'Installing Python packages...' });
-  output.appendLine('Installing packages...');
+  output.appendLine(`Installing packages (${WYSIWYG_VERSION})...`);
 
   const venvBin = getVenvBinDir();
   const pythonPath = path.join(venvBin, executableName('python'));
@@ -78,6 +106,7 @@ export async function ensureEnvironment(
     ...PIP_PACKAGES,
   ]);
 
+  writeCurrentVersion();
   output.appendLine('All packages installed.');
 }
 
@@ -86,6 +115,11 @@ export async function upgradeEnvironment(
   output: vscode.OutputChannel,
   progress?: vscode.Progress<{ message?: string }>
 ): Promise<void> {
+  if (isDevMode()) {
+    output.appendLine('Dev install detected (~/.techdocs/current is "dev"); skipping upgrade.');
+    return;
+  }
+
   progress?.report({ message: 'Downloading latest uv...' });
   output.appendLine('Upgrading uv...');
   await downloadUtility(extensionPath, 'uv', getTechdocsHome());
@@ -102,6 +136,7 @@ export async function upgradeEnvironment(
     ...PIP_PACKAGES,
   ]);
 
+  writeCurrentVersion();
   output.appendLine('Upgrade complete.');
 }
 
@@ -126,6 +161,19 @@ export async function addPlugins(
   const pythonPath = path.join(venvBin, executableName('python'));
   output.appendLine(`Installing: ${packages.join(', ')}`);
   await runUv(['pip', 'install', '--python', pythonPath, ...packages]);
+
+  for (const pkg of packages) {
+    if (pkg.startsWith('-')) { continue; }
+    const pluginDir = path.join(pkg, 'mkdocs_live_wysiwyg_plugin');
+    try {
+      if (fs.statSync(pluginDir).isDirectory()) {
+        fs.writeFileSync(currentVersionFile(), 'dev', 'utf8');
+        output.appendLine('Local wysiwyg plugin detected; marked as dev install.');
+        break;
+      }
+    } catch { /* not a local directory — skip */ }
+  }
+
   output.appendLine('Plugins installed.');
 }
 

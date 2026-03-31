@@ -501,7 +501,8 @@ BRIDGE_SCRIPT = r'''<script>
         /\{"([^"]*?)"\}/g,
         /\{([^}]*?)\}/g,
         /\|"([^"]*?)"\|/g,
-        /\|([^|]*?)\|/g
+        /\|([^|]*?)\|/g,
+        /"([^"]*?)"/g
       ];
       for (var p = 0; p < bracketPatterns.length; p++) {
         var rx = bracketPatterns[p];

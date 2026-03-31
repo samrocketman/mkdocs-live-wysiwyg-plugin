@@ -167,17 +167,18 @@ Mermaid diagram code uses specific syntax patterns for labeling nodes and edges:
 | Node bare ID | `navData` | `navData` |
 | Edge label with pipes | `-->\|"commits as"\|` | `commits as` |
 | Edge label with pipes (unquoted) | `-->\|commits as\|` | `commits as` |
+| Standalone quoted string | `state "Press<br>BACKSPACE" as Moving` | `Press BACKSPACE` |
 
 The search scans each line of the code using a four-tier strategy. All tiers collect **all** matches and apply context-aware disambiguation when multiple matches exist (see § Context-Aware Disambiguation below).
 
 #### Tier 1: Bracket/Delimiter Extraction
 
-1. Extract text content from within `["..."]`, `("...")`, `{"..."}`, and `|"..."|` / `|...|` delimiters
+1. Extract text content from within `["..."]`, `("...")`, `{"..."}`, `|"..."|` / `|...|`, and standalone `"..."` delimiters
 2. Strip `<br>` / `<br/>` tags from the extracted content and normalize whitespace
 3. Compare the normalized extracted text against the normalized clicked text
 4. On match, return `{ lineNumber, startColumn, endColumn }` pointing to the full delimiter expression (1-based, for Monaco)
 
-This tier handles Flowchart, Block, and other bracket-based diagram syntaxes.
+This tier handles Flowchart, Block, and other bracket-based diagram syntaxes, as well as State diagram `state "Label" as Alias` declarations where the label is in standalone double quotes.
 
 #### Tier 2: Whole-Line Match
 

@@ -19,6 +19,7 @@ RUN node -e " \
   const p = JSON.parse(require('fs').readFileSync('package.json', 'utf8')); \
   p.version = process.env.VSIX_VERSION || '0.0.0'; \
   require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2));"
+RUN sed -i "s/^export const WYSIWYG_VERSION = '.*'/export const WYSIWYG_VERSION = '${VSIX_VERSION}'/" src/constants.ts
 
 RUN npm run compile
 RUN mkdir -p /out && vsce package -o /out/

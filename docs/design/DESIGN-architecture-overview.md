@@ -17,6 +17,7 @@ Cardinal rules are cross-cutting constraints that apply across multiple subsyste
 | 7 | **In-Place Extension Replacement** | `DESIGN-changing-mkdocs-yml.md` | When upgrading a `markdown_extensions` list item from bare string to dict form (e.g., `pymdownx.superfences` to `pymdownx.superfences: {custom_fences: [...]}`), replace the item in-place at its current index. Never add a new entry alongside the old one. |
 | 8 | **In-Place Plugin Replacement** | `DESIGN-changing-mkdocs-yml.md` | When upgrading a `plugins` list item from bare string to dict form (e.g., `mkdocs-nav-weight` to `mkdocs-nav-weight: {default_page_weight: 1000}`), replace the item in-place at its current index. Never add a new entry alongside the old one. |
 | 9 | **Layer-Level Mutual Exclusion for Editor Modes** | `DESIGN-modes-of-operation.md` | Editor modes at the same layer are mutually exclusive. They share a single z-index value and entry into one must be blocked while another at the same layer is active. This applies only to editor modes, not to non-modal UI elements (dropdowns, toasts, popups, progress bars). |
+| 10 | **Public Registry Dependencies** | `DESIGN-vscode-extension-subsystem.md` | All Node.js dependency manifests (`package.json`, `package-lock.json`) must resolve from public registries only. No private or corporate registry URLs may appear in committed files. |
 
 ## High-Level Pipeline
 
@@ -165,6 +166,16 @@ Backend Subsystem
   |-- WebSocket Server (upstream live-edit-plugin)
   |-- Application Storage
 
+VS Code Extension Subsystem
+  |-- Binary Download Engine (TS port of yml-install-files)
+  |-- Environment Manager (venv, packages, upgrade, uninstall)
+  |-- Configuration Generator (mkdocs.yml generation via js-yaml)
+  |-- Port Manager (cross-platform port availability)
+  |-- Server Manager (mkdocs serve lifecycle)
+  |-- Auto-Docs Manager (temp docs, frontmatter, asset detection)
+  |-- Build / Init Managers
+  |-- UI (commands, context menus, status bar, sidebar panel)
+
 Development Workflow (project conventions)
 ```
 
@@ -251,7 +262,13 @@ Mermaid-related design documents are organized under `docs/design/mermaid/` whil
 
 #### API Server
 
-- [DESIGN-mermaid-session-server.md](backend/DESIGN-mermaid-session-server.md) -- Session-based content brokering between parent and mermaid-live-editor iframe.
+The WYSIWYG API server (`api_server.py`) exposes the following endpoint groups:
+
+- **Link checking & file operations**: `POST /check-links`, `/file-exists`, `/list-items`, `/rename-folder`, `/delete-folder`, `/move-file`, `/delete-file`, `/unreferenced-files` — documented in [DESIGN-content-scanning.md](backend/DESIGN-content-scanning.md).
+- **Build coordination**: `GET /link-index`, `GET /build-epoch`.
+- **Mermaid sessions**: `POST|GET|PUT|DELETE /mermaid-session` — documented in [DESIGN-mermaid-session-server.md](backend/DESIGN-mermaid-session-server.md).
+- **Mermaid editor assets**: `GET /mermaid-editor/*` — serves vendored mermaid-live-editor static files.
+- **Health**: `GET /health` — unified readiness check. Probes the companion MkDocs HTTP server (HTTP HEAD) and WebSocket server (full WebSocket connect, receive `{"action":"connected"}` greeting, clean close with status 1000) and returns a JSON object with per-service status and an aggregate `ready` boolean. Returns `200` when all services are ready, `503` otherwise. Requires `http_port` and `websocket_port` to be passed at server start time; when either is `0` the corresponding check is skipped and reported as `false`.
 
 #### Application Storage
 
@@ -259,5 +276,9 @@ Mermaid-related design documents are organized under `docs/design/mermaid/` whil
 
 ### CLI Utility
 
-- DESIGN-cli-utility.md -- `techdocs-preview.sh` server lifecycle, configuration generation, dual mkdocs.yml mechanism, and mermaid superfences integration.
+- [DESIGN-cli-utility.md](DESIGN-cli-utility.md) -- `techdocs-preview.sh` server lifecycle, configuration generation, dual mkdocs.yml mechanism, and mermaid superfences integration.
+
+### VS Code Extension Subsystem
+
+- [DESIGN-vscode-extension-subsystem.md](DESIGN-vscode-extension-subsystem.md) -- Cross-platform TypeScript extension reimplementing CLI features. Feature parity table, shared contracts, binary download engine, UI surface, build and publishing.
 

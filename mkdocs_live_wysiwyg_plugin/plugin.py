@@ -120,6 +120,7 @@ class LiveWysiwygPlugin(BasePlugin):
     config_scheme = (
         ("autoload_wysiwyg", config_options.Type(bool, default=True)),
         ("user_docs_dir", config_options.Type(str, default="")),
+        ("api_port", config_options.Type(int, default=0)),
     )
 
     is_serving: bool = False
@@ -148,11 +149,25 @@ class LiveWysiwygPlugin(BasePlugin):
 
         dev_addr = config.get("dev_addr")
         host = dev_addr.host if dev_addr else "127.0.0.1"
+        http_port = dev_addr.port if dev_addr else 0
         docs_dir = str(config["docs_dir"])
         walk_dir = self._resolve_docs_dir(config, docs_dir)
+        api_port = self.config.get("api_port", 0) or 0
+
+        websocket_port = 0
+        plugins = config.get("plugins", {})
+        live_edit = plugins.get("live-edit") if plugins else None
+        if live_edit is not None:
+            websocket_port = getattr(live_edit, "config", {}).get(
+                "websockets_port", 0
+            ) or 0
+
         server, port = start_link_check_server(
             host, docs_dir, self._link_index, walk_dir=walk_dir,
             build_epoch=self._build_epoch,
+            port=api_port,
+            http_port=http_port,
+            websocket_port=websocket_port,
         )
         self._link_check_server = server
         self._link_check_port = port

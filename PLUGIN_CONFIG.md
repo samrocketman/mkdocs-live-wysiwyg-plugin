@@ -43,5 +43,6 @@ plugins:
 | ------------------ | ------- | ------- | -------------------------- |
 | `autoload_wysiwyg` | boolean | `true`  | Default behavior when no user preference cookie exists. If `true`, the WYSIWYG editor loads automatically when entering edit mode. If `false`, the plain textarea is shown initially with an "Enable Editor" button. Once the user explicitly enables or disables the editor, their preference is stored in a cookie and takes priority over this setting. |
 | `user_docs_dir`    | string  | `""`    | Override the docs source directory path. Useful when the monorepo plugin (e.g. techdocs-core) replaces `docs_dir` with a temporary directory. Falls back to the upstream `mkdocs-live-edit-plugin`'s `user_docs_dir`, then to the MkDocs `docs_dir`. |
+| `api_port`         | integer | `0`     | Port for the API server (link checking, mermaid sessions, file operations). When `0` (default) the OS picks a free port. Set to a specific port number to enable pre-allocation — used by the VS Code extension to map all three server ports into the embedded preview. |
 
 [1]: https://docs.astral.sh/uv/

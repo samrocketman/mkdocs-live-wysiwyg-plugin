@@ -1,0 +1,11 @@
+.gitignore
+src/**
+test/**
+tsconfig.json
+esbuild.mjs
+Makefile
+Dockerfile
+dist/
+node_modules/
+*.ts
+!out/**

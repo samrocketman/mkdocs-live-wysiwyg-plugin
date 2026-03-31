@@ -1,7 +1,5 @@
 site_name: Your Documentation Site
 plugins:
-  - live-edit
-  - live-wysiwyg
   - mkdocs-nav-weight
 theme:
   features:

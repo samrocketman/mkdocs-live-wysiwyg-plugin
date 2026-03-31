@@ -3,12 +3,12 @@ title: Example WYSIWYG site
 ---
 # Welcome
 
-| Header 1              | Header 2                |
-| --------------------- | ----------------------- |
+| Header 1              | Header 2                       |
+| --------------------- | ------------------------------ |
 | Everything is awesome | Cool when you're part of a yay |
-| living the dream      | team                    |
+| living the dream      | team                           |
 
-- foo
+- [foo](#checklist-support)
 - bar
 
   > abc

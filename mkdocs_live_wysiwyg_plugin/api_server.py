@@ -4,7 +4,7 @@ Runs in a daemon thread alongside the MkDocs dev server.  Exposes
 ``POST /check-links``, ``POST /file-exists``, ``POST /list-items``,
 ``POST /rename-folder``, ``POST /delete-folder``, ``POST /move-file``,
 ``POST /delete-file``, ``POST /unreferenced-files``,
-``GET /link-index``, ``GET /build-epoch``,
+``GET /link-index``, ``GET /build-epoch``, ``GET /health``,
 ``GET /mermaid-editor/*``, and
 ``POST|GET|PUT|DELETE /mermaid-session`` endpoints.
 """
@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import threading
 import urllib.error
 import urllib.request
@@ -103,12 +104,14 @@ def _parse_frontmatter(text: str) -> dict:
 class _LinkCheckHandler(BaseHTTPRequestHandler):
     """Handles POST /check-links, POST /file-exists, POST /list-items,
     POST /rename-folder, POST /delete-folder, GET /link-index,
-    and GET /build-epoch."""
+    GET /build-epoch, and GET /health."""
 
     docs_dir: str = ""
     walk_dir: str = ""
     link_index: dict = {}
     build_epoch: list[int] = [1]
+    http_port: int = 0
+    websocket_port: int = 0
     _rename_state: dict[tuple[str, str], str] = {}
     _rename_lock: threading.Lock = threading.Lock()
 
@@ -124,6 +127,8 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def do_GET(self):
+        if self.path == "/health":
+            return self._handle_health()
         if self.path == "/link-index":
             payload = json.dumps(self.link_index).encode("utf-8")
             self.send_response(200)
@@ -146,6 +151,118 @@ class _LinkCheckHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/mermaid-session/"):
             return self._handle_mermaid_session_get()
         self.send_error(404)
+
+    # ------------------------------------------------------------------
+    # GET /health — unified readiness check for all three servers
+    # ------------------------------------------------------------------
+
+    def _handle_health(self):
+        host = self.server.server_address[0] or "127.0.0.1"
+        result: dict[str, object] = {"api": True, "mkdocs": False, "websocket": False}
+
+        if self.http_port:
+            result["mkdocs"] = self._http_probe(host, self.http_port, "/")
+        if self.websocket_port:
+            result["websocket"] = self._ws_probe(host, self.websocket_port)
+
+        result["ready"] = all(result.values())
+        payload = json.dumps(result).encode("utf-8")
+        status = 200 if result["ready"] else 503
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    @staticmethod
+    def _http_probe(host: str, port: int, path: str, timeout: float = 2.0) -> bool:
+        """Return True if an HTTP HEAD to *host*:*port*/*path* returns non-5xx."""
+        try:
+            url = f"http://{host}:{port}{path}"
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status < 500
+        except urllib.error.HTTPError as exc:
+            return exc.code < 500
+        except (OSError, urllib.error.URLError):
+            return False
+
+    @staticmethod
+    def _ws_probe(host: str, port: int, timeout: float = 2.0) -> bool:
+        """Connect like a real client: upgrade, receive the greeting, close cleanly.
+
+        Mirrors the live-edit plugin's expected flow so the server logs
+        "disconnected with status OK" rather than "disconnected due to an error".
+        """
+        import base64 as _b64
+        import struct
+
+        sock = None
+        try:
+            sock = socket.create_connection((host, port), timeout=timeout)
+            key = _b64.b64encode(os.urandom(16)).decode()
+            handshake = (
+                f"GET / HTTP/1.1\r\n"
+                f"Host: {host}:{port}\r\n"
+                f"Upgrade: websocket\r\n"
+                f"Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Version: 13\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                f"\r\n"
+            )
+            sock.sendall(handshake.encode())
+
+            # Read HTTP response until end of headers
+            resp = b""
+            while b"\r\n\r\n" not in resp:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    return False
+                resp += chunk
+            if not resp.startswith(b"HTTP/1.1 101"):
+                return False
+
+            # Read one WebSocket text frame (the {"action":"connected"} greeting)
+            extra = resp.split(b"\r\n\r\n", 1)[1]
+            buf = extra
+            while True:
+                if len(buf) >= 2:
+                    payload_len = buf[1] & 0x7F
+                    header_len = 2
+                    if payload_len == 126:
+                        header_len = 4
+                    elif payload_len == 127:
+                        header_len = 10
+                    if len(buf) >= header_len:
+                        if payload_len == 126:
+                            payload_len = struct.unpack("!H", buf[2:4])[0]
+                        elif payload_len == 127:
+                            payload_len = struct.unpack("!Q", buf[2:10])[0]
+                        total = header_len + payload_len
+                        if len(buf) >= total:
+                            payload = buf[header_len:total]
+                            msg = json.loads(payload)
+                            if msg.get("action") != "connected":
+                                return False
+                            break
+                chunk = sock.recv(4096)
+                if not chunk:
+                    return False
+                buf += chunk
+
+            # Send a proper close frame (opcode 0x8, status 1000)
+            mask = os.urandom(4)
+            status = struct.pack("!H", 1000)
+            masked = bytes(status[i] ^ mask[i] for i in range(2))
+            close_frame = b"\x88\x82" + mask + masked
+            sock.sendall(close_frame)
+            return True
+        except (OSError, json.JSONDecodeError, struct.error):
+            return False
+        finally:
+            if sock:
+                sock.close()
 
     # ------------------------------------------------------------------
     # GET /mermaid-editor/*  — serve vendored Mermaid Live Editor assets
@@ -906,8 +1023,20 @@ def start_link_check_server(
     *,
     walk_dir: str | None = None,
     build_epoch: list[int] | None = None,
+    port: int = 0,
+    http_port: int = 0,
+    websocket_port: int = 0,
 ) -> tuple[HTTPServer, int]:
-    """Start the link-check HTTP server on *host* (port chosen by the OS).
+    """Start the link-check HTTP server on *host*.
+
+    When *port* is ``0`` (the default) the OS picks a free port.  Pass a
+    specific port number to bind to that port (used by the VS Code
+    extension to pre-allocate all three server ports).
+
+    *http_port* and *websocket_port* are the companion MkDocs and
+    WebSocket server ports.  When set, the ``GET /health`` endpoint uses
+    TCP probes to report the readiness of all three servers in a single
+    request.
 
     Returns ``(server, port)``.  The server runs in a daemon thread and
     will be torn down automatically when the main process exits.
@@ -931,9 +1060,11 @@ def start_link_check_server(
             "walk_dir": scan_dir,
             "link_index": link_index,
             "build_epoch": build_epoch,
+            "http_port": http_port,
+            "websocket_port": websocket_port,
         },
     )
-    server = _ThreadedHTTPServer((host, 0), handler)
+    server = _ThreadedHTTPServer((host, port), handler)
     port = server.server_address[1]
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()

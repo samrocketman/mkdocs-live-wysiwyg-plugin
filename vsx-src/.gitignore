@@ -1,0 +1,7 @@
+node_modules/
+out/
+dist/
+resources/icon.png
+resources/download-utilities.yml
+resources/example-docs/
+*.vsix

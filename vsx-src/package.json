@@ -1,0 +1,127 @@
+{
+  "name": "mkdocs-wysiwyg",
+  "displayName": "MkDocs WYSIWYG",
+  "description": "WYSIWYG editor for MkDocs Material themed docs. Launch and manage the MkDocs live preview server from VS Code.",
+  "version": "0.0.0",
+  "publisher": "samrocketman",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "mkdocs",
+    "wysiwyg",
+    "markdown",
+    "documentation",
+    "material",
+    "live-edit",
+    "preview"
+  ],
+  "icon": "resources/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samrocketman/mkdocs-live-wysiwyg-plugin",
+    "directory": "vsx-src"
+  },
+  "homepage": "https://github.com/samrocketman/mkdocs-live-wysiwyg-plugin/tree/main/vsx-src#readme",
+  "bugs": {
+    "url": "https://github.com/samrocketman/mkdocs-live-wysiwyg-plugin/issues"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/mkdocs.yml",
+    "workspaceContains:**/*.md"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "mkdocs-wysiwyg.serve",
+        "title": "MkDocs WYSIWYG: Start Server"
+      },
+      {
+        "command": "mkdocs-wysiwyg.stop",
+        "title": "MkDocs WYSIWYG: Stop Server"
+      },
+      {
+        "command": "mkdocs-wysiwyg.build",
+        "title": "MkDocs WYSIWYG: Build Site"
+      },
+      {
+        "command": "mkdocs-wysiwyg.init",
+        "title": "MkDocs WYSIWYG: Initialize Docs"
+      },
+      {
+        "command": "mkdocs-wysiwyg.addPlugins",
+        "title": "MkDocs WYSIWYG: Add Plugins"
+      },
+      {
+        "command": "mkdocs-wysiwyg.upgrade",
+        "title": "MkDocs WYSIWYG: Upgrade Environment"
+      },
+      {
+        "command": "mkdocs-wysiwyg.uninstall",
+        "title": "MkDocs WYSIWYG: Uninstall Environment"
+      },
+      {
+        "command": "mkdocs-wysiwyg.openPreview",
+        "title": "MkDocs WYSIWYG: Open Preview"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "when": "resourceFilename == mkdocs.yml",
+          "command": "mkdocs-wysiwyg.serve",
+          "group": "mkdocs-wysiwyg@1"
+        },
+        {
+          "when": "resourceExtname == .md",
+          "command": "mkdocs-wysiwyg.serve",
+          "group": "mkdocs-wysiwyg@1"
+        },
+        {
+          "when": "explorerResourceIsFolder",
+          "command": "mkdocs-wysiwyg.init",
+          "group": "mkdocs-wysiwyg@2"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mkdocs-wysiwyg",
+          "title": "MkDocs WYSIWYG",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "mkdocs-wysiwyg": [
+        {
+          "id": "mkdocs-wysiwyg.serverStatus",
+          "name": "Server Status"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "ovsx": "^0.9.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}

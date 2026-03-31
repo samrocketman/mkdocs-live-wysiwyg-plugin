@@ -1,21 +1,27 @@
 versions:
-  uv: 0.10.7
-  yq: 4.52.4
+  uv: 0.11.2
+  yq: 4.52.5
 checksums:
   uv:
     unknown-linux-gnu:
-      x86_64: 3b9d43bace955a409eb6f012b0932a4935534bdb54b85b9fd696cabbb15979a0
-      aarch64: ad4f54ea470da62875ba5c45d4bd8e0bd0271989c68ce3335bbea26a5a6706e8
+      x86_64: 5c339318bf969cb34848d7616a0c9e6ab27478a8b5cb46dd3ae94d182ea5aa8d
+      aarch64: 6df7e4d21f3bba10f46a202d0bd04e2c59408b0a7c8e71c352384f28a4f050f2
     apple-darwin:
-      aarch64: e7a5bf88df262cdf04ee035ac75dc91b753316dab29730ab4c08e03c40d11c7e
-      x86_64: 9ce2a8d60b251ef51f3469ba80ac362f6dcf5a25f6871024385e2c6aa13e201f
+      aarch64: 65910fd6aad18674516122e077a932248c672ff849dc2946045d69326480e3e6
+      x86_64: 597464488a968dba4f4173ccf95728d000616b2730c8ee00657df5a58f7f3a68
+    pc-windows-msvc:
+      x86_64: 8881afb877996a1373a12e816395122a8d39a3ac06cd066272acdb49510cf0fe
+      aarch64: 45ba7b72a7435343d650c73d21d65d2e8bdda47f6bd39af00e37f3cb70aa79ef
   yq:
     darwin:
-      arm64: 6bfa43a439936644d63c70308832390c8838290d064970eaada216219c218a13
-      amd64: d72a75fe9953c707d395f653d90095b133675ddd61aa738e1ac9a73c6c05e8be
+      arm64: 45a12e64d4bd8a31c72ee1b889e81f1b1110e801baad3d6f030c111db0068de0
+      amd64: 6e399d1eb466860c3202d231727197fdce055888c5c7bec6964156983dd1559d
     linux:
-      arm64: 4c2cc022a129be5cc1187959bb4b09bebc7fb543c5837b93001c68f97ce39a5d
-      amd64: 0c4d965ea944b64b8fddaf7f27779ee3034e5693263786506ccd1c120f184e8c
+      arm64: 90fa510c50ee8ca75544dbfffed10c88ed59b36834df35916520cddc623d9aaa
+      amd64: 75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9
+    windows:
+      arm64: 236867affa7f18701d4c763cf16b6df962cf4f7e89a8570a5954cf94a38f41c7
+      amd64: 47594981f3848a4b4447494adeca9555f908f7cf0a89c4da3fd0243a4631da1c
 
 defaults: &defaults
   dest: '${DESTINATION_DIR:-/usr/local/bin}'
@@ -29,23 +35,34 @@ defaults: &defaults
 utility:
   uv:
     <<: *defaults
-    # uv uses different naming: x86_64/aarch64 and unknown-linux-gnu/apple-darwin
     os:
       Linux: unknown-linux-gnu
       Darwin: apple-darwin
+      Windows: pc-windows-msvc
     arch:
-      Darwin:
-        arm64: aarch64
-    download: '${GITHUB_DOWNLOAD_MIRROR:-https://github.com}/astral-sh/uv/releases/download/${version}/uv-${arch}-${os}.tar.gz'
-    extract: tar -xzC ${dest}/ --no-same-owner --strip-components=1 uv-${arch}-${os}/uv
+      arm64: aarch64
+    extension:
+      default: tar.gz
+      pc-windows-msvc: zip
+    download: '${GITHUB_DOWNLOAD_MIRROR:-https://github.com}/astral-sh/uv/releases/download/${version}/uv-${arch}-${os}.${extension}'
+    extract:
+      default: tar -xzC ${dest}/ --no-same-owner --strip-components=1 uv-${arch}-${os}/uv
+      pc-windows-msvc: |
+        {
+          cat > /tmp/file.zip
+          unzip -o -j -d ${dest} /tmp/file.zip uv.exe
+        }
   yq:
     <<: *defaults
     os:
       Linux: linux
       Darwin: darwin
+      Windows: windows
     arch:
       x86_64: amd64
       aarch64: arm64
       Darwin:
         i386: amd64
-    download: '${GITHUB_DOWNLOAD_MIRROR:-https://github.com}/mikefarah/yq/releases/download/v${version}/yq_${os}_${arch}'
+    extension:
+      windows: .exe
+    download: '${GITHUB_DOWNLOAD_MIRROR:-https://github.com}/mikefarah/yq/releases/download/v${version}/yq_${os}_${arch}${extension}'

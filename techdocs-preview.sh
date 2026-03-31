@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # since rapidly developing I'll track this at the top for now
-WYSIWYG_VERSION=0.3.22
+WYSIWYG_VERSION=0.3.23
 YML_INSTALL_FILES_VERSION="v3.8"
 
 # GITHUB_DOWNLOAD_MIRROR=...
@@ -68,6 +68,7 @@ default_ports() {
 uv_download_yaml() {
 cat <<'UV_DOWNLOAD_YAML'
 versions:
+  gh: 2.89.0
   uv: 0.11.2
   yq: 4.52.5
 checksums:
@@ -91,6 +92,16 @@ checksums:
     windows:
       arm64: 236867affa7f18701d4c763cf16b6df962cf4f7e89a8570a5954cf94a38f41c7
       amd64: 47594981f3848a4b4447494adeca9555f908f7cf0a89c4da3fd0243a4631da1c
+  gh:
+    linux:
+      arm64: cd07f11ff1cfe58ecc6c172c06fa2986d5574b1fe7e1e00229632d1f18b4b63d
+      amd64: 540cffbf2146101a713284bc06427efbf370a40756c0356e3a0f8d1e038e7122
+    macOS:
+      arm64: 91d2de52d3aa2d87fe6b8baf18f20500031b337885642d2df225134bd0544acf
+      amd64: b3cbc5defffe19cfe53b60232d325ed2c5cea57f1c1c1140e3e213e3b832a6c6
+    windows:
+      arm64: ''
+      amd64: ''
 
 defaults: &defaults
   dest: '${DESTINATION_DIR:-/usr/local/bin}'
@@ -135,6 +146,39 @@ utility:
     extension:
       windows: .exe
     download: '${GITHUB_DOWNLOAD_MIRROR:-https://github.com}/mikefarah/yq/releases/download/v${version}/yq_${os}_${arch}${extension}'
+  gh:
+    <<: *defaults
+    os:
+      Linux: linux
+      Darwin: macOS
+      Windows: windows
+    arch:
+      x86_64: amd64
+      aarch64: arm64
+    extension:
+      default: tar.gz
+      macOS: zip
+      windows: zip
+    download: '${GITHUB_DOWNLOAD_MIRROR:-https://github.com}/cli/cli/releases/download/v${version}/gh_${version}_${os}_${arch}.${extension}'
+    default_download_extract: |
+      trap '[ ! -f /tmp/file.zip ] || rm -f /tmp/file.zip' EXIT
+      curl -sSfL ${download} | ${extract}
+    extract:
+      macOS: |
+        {
+          cat > /tmp/file.zip
+          unzip -o -j -d ${dest} /tmp/file.zip '*/bin/gh'
+        }
+      linux: tar -xzC ${dest}/ --no-same-owner --strip-components=2 gh_${version}_${os}_${arch}/bin/gh
+      windows: |
+        {
+          cat > /tmp/file.zip
+          unzip -o -j -d ${dest} /tmp/file.zip 'bin/gh.exe'
+        }
+    pre_command: |
+      if [ "${checksum_failed:-true}" = true ]; then
+        rm -f ${dest}/${utility}
+      fi
 UV_DOWNLOAD_YAML
 }
 
@@ -501,44 +545,44 @@ add_plugins() (
 
 init_data() {
 cat << 'EO_EXAMPLE_DOCS'
-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
-5//5+S+orO0TACgAAA==
+H4sIAAAAAAACA+1aUW/bOBLOs34Fkzy0vcba2I5TwDjsIZduN7m97BXnAEWxWMS0RFtEJFFLUrF9
+v/6+ISlZdlJ0F7hkb7EW0tgihzPDmeHMN0yL+1QlJl4X+cGzPad4zs/O6LP/btTvfrpnNOgf9Ef9
+88H5cOjG+4PR8PyAnR68wFMbyzVU0XVZCv1luq/N/0EfI624K3khxuyzqjV7r5K6EKXlVqqSTTAb
+VXm9kKUZR4z1WOHipVfyh95SyEVmI5sJrMbkXHBba+EIiTRRpQWnOFGpiHlZKjAVUcE1WCzLO7HC
+rIGUwJmnhSoliXWv1bogslWcCstlbrYHTV0JPRdl0ohjLIEnVXG3PUiL/O4KoQsu03YcC3JuzFMT
+c4URO2aHh9XaZqr8xnF4SnbsPu5oh3d+VfQH8z9585tnlkFn/N1o9MXzj2fn/PfPzkcHbLQ//y/j
+/7nKU6GfLQ5+u/+H/cFw7/8X9/9CK+S2tNdk7iJ9ifrfP+sPdvx/Pjo/3df/l3h6vV5kpc1RIS9m
+qrbse4oBWS7YpQ+CyJf5MeufnkZEfbwhCXHCZMk480EURYARLOElc8HEtMhR9dMOqVXM1LMQcnEU
+HR+zH/kDuxFlHUW3mWjfGAAIwAXLxdwynudqadgazMFAC6UXvJT/ES1jblgpRCrSmLHruSPM1IPQ
+zP3i5ZoByxSkKvEEfkHhhwzQvcpzZoTAP2uxKwPilHGtSR6vKsE1WF6Edy0IHrBCPZAB0i20RGvq
+khQYu+UECZZcp2OmyYSeJ3stYxFDjxTr3rClhPREAzoJ2LA1DPMyhFO2keKN16HqbjVP2eTq+sPt
+213Z4FBi714Sz5d8bZ4Q6B1xUQNCYTNJa1Yt5jyxSmO3UfTvxuy0d9KsoVpKm7mB1ndeWsMO3lu3
+rLorDVNz8m0bJ1sWxf4+gF6seFHl4qSxOn/KIr1guCcEz+WKKQjV7TrDlplMMpbL8p7iSdo4OvhT
+Plv5n4Jy9b/K+r++/xsMz3by/9loNNzn/xfO/5O6qpS2Lr9N2gwdaeHmKZPoWkSiqOw6fG9KwyCU
+httMGqTRxGXDhBKvwQn1jZFLkK7CPC3HZV2Jk9lkhj/rifwdzv8znftfef7PBmf9R/i//25//n8X
+/HdNscA+8oUwAe5dl1artHanOooODw/ZL7Uw7kDLEhVUMIGje3Ql8moHEAUogvMu9J3DQOMjd89C
+MC8jepk4Lg4SWFX1CmWsB2Ymc3gLxTx7xDj2apQKGOYo4FS/qpXYETQNFFNPgiQEXLWNJwMeKsVy
+F9JhZ1o8SEyIlTT2EeiDKlu7JLDqrtIcBtaCro7c7uiijTlLs9naQ1NitqZLt0LVRnigevSFW7j4
+yAG071JpPfhCpm0U2WBugentOZdlnRC1LFlV60oZYeLfaplCAfhWFBQOKB6zSYYUntTWRD7rt/I8
+oHV7MQp7Nw0hFvbYuBLlopbl+J+yrFfOvJ+QfUigW5jxh84Sjyunl1bnU3Yv1jFxACSnaL3hyb8m
+DHYz3ry8K4vN6g4onV7evA/roy08Cdt6PZyIt5dTJqn+VGunGGYhxHMPjGmeuIGUegJqHFqRc60K
+xCrshIWqDpaYoX9B3ADZdvdC6q2DzwBhhU4yXi4aTbuU5D4BY65bScEBH2Bww25UKjbuT1Se8wqh
+RO6k0stcUPoOisawlo7pvO4oPia//CDWM4V2YbNTb5JJJuf27YcphYJVi0Xu2585Cd90dWQLHzEU
+gCdbrQF9wsaIcCBxwuU9Ax8bcqUXEU/Za/rCoKlU6RtmsP8kc37tBtZM2KVAK/Pp8+T60+fvnYtu
+wmUy4jMNodnpYSyfQV80GA2k8GmDEMlW5rrdpWs6T9+2hfO9m78ecW9ODhnol1om99RlygUPmdLI
+1JE749QaqcHCIgoHotP2YAvXJZv6W/apt+QTgrbam0pVNTVPcLjvpQICwykQUMjxmEuNxNpAM5j1
+aoBxtKuLjF2dh3SABIxQeRA5+6mb839+fSw7r2/c8v6m95zjAPsU81jTUrFcIbI1pUKCeSdtPypJ
+v4RT5rPu2FBv7du0q/5mD6E4bMJgzQocKH4vQg+3VDV63xny1P3GME+oIsugA/Kn2zAUwA9vrU1O
+0/curlBZ2o6UIp9oKbSV3r2woIDiM2M1WtsmqI5CxPha8GNz1dC5zthEUTv7tQuOE+aqkDeQy8Qn
+TtVKC0N2aQ2m5t4Zu2WqlZTxALJXtua+vCIHwKEhC+YI3Slp+wgQxNEgRr5GduLwek5XJjnEirRN
+ZkBJlGifzCV/mzYec4nRlb+62lVlV+89RH9+/J9KvtC8MM/UAnzt/nf0qP8fnp/29/j/hfH/JUE9
+OpTvQzi0/f2wvfq98X8sbUgKIr+t6X6Q5x0cEkBjIG7Di7F/wNxNmrTrCogHD/1qaN27u4DdXR5u
+9poLWUqec0VJk3TYpQUaSLScoSaijXDZqSt0g2t5u4LCwO3eoX7mrjmQZzXNVhnyJ+X9Kyqnjxdj
+crOFyNDfuYOBeg8Dl+rdGJCGk64l0OdfZ/rbGU/uUazuDXuN9W+O6BJ7YrHN7pqPSPCGqP9+cfnD
+5OPF5Xf04moEcCEBrNQzyxUgB3AGBmPH6sZdl+7Ipy2+Cqq+onVLn89NxRPHJ1EEjm3A1WGHjt+l
+5iaLHL+f/vIz6/W+7WjrvrkxzO2MdBTxX3fWdga9DBp031qGsI/zwK2mi3zC11F0GdzwyFst8EHZ
+dl6ngLJYSVe9zkCblihsEBHVRG/BV7Kgykv7l/RfElCamjChv16IBqcY10dsMEqgaZDCvrrsn/2z
+f/6fn/8CkNQ0BgAoAAA=
 EO_EXAMPLE_DOCS
 }
 

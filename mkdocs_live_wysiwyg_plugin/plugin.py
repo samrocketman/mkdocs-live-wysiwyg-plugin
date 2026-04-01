@@ -111,6 +111,24 @@ def _build_emoji_map() -> dict[str, str]:
     return emoji_map
 
 
+def _mkdocs_nav_weight_upstream_default_page_weight() -> int:
+    """Schema default for ``default_page_weight`` from the installed mkdocs-nav-weight package."""
+    try:
+        from mkdocs_nav_weight import MkDocsNavWeight
+
+        for name, opt in MkDocsNavWeight.config_scheme:
+            if name == "default_page_weight":
+                return int(opt.default)
+    except Exception:
+        pass
+    return 0
+
+
+_NAV_WEIGHT_UPSTREAM_DEFAULT_PAGE_WEIGHT = (
+    _mkdocs_nav_weight_upstream_default_page_weight()
+)
+
+
 class LiveWysiwygPlugin(BasePlugin):
     """
     WYSIWYG editor plugin that enhances mkdocs-live-edit-plugin with
@@ -331,6 +349,8 @@ class LiveWysiwygPlugin(BasePlugin):
         nav_weight_plugin = config["plugins"].get("mkdocs-nav-weight")
         if nav_weight_plugin:
             nw_cfg = nav_weight_plugin.config
+            _upstream_dpw = _NAV_WEIGHT_UPSTREAM_DEFAULT_PAGE_WEIGHT
+            dpw = nw_cfg.get("default_page_weight", _upstream_dpw)
             self._nw_config = {
                 "enabled": True,
                 "installed": True,
@@ -341,11 +361,10 @@ class LiveWysiwygPlugin(BasePlugin):
                 "headless_included": nw_cfg.get(
                     "headless_included", False
                 ),
-                "default_page_weight": nw_cfg.get(
-                    "default_page_weight", 0
-                ),
+                "default_page_weight": dpw,
+                "upstream_default_page_weight": _upstream_dpw,
                 "frontmatter_defaults": {
-                    "weight": nw_cfg.get("default_page_weight", 0),
+                    "weight": dpw,
                     "index_weight": nw_cfg.get("index_weight", -10),
                     "headless": False,
                     "retitled": False,
@@ -356,6 +375,9 @@ class LiveWysiwygPlugin(BasePlugin):
             self._nw_config = {
                 "enabled": False,
                 "installed": _nw_installed,
+                "upstream_default_page_weight": (
+                    _NAV_WEIGHT_UPSTREAM_DEFAULT_PAGE_WEIGHT
+                ),
             }
 
         return nav
@@ -444,6 +466,10 @@ class LiveWysiwygPlugin(BasePlugin):
         )
         preamble_parts.append(
             f"const liveWysiwygPageSrcPath = {json.dumps(page.file.src_path)};\n"
+        )
+        preamble_parts.append(
+            "const liveWysiwygNavWeightUpstreamDefaultPageWeight = "
+            f"{json.dumps(_NAV_WEIGHT_UPSTREAM_DEFAULT_PAGE_WEIGHT)};\n"
         )
 
         nav_ref = getattr(self, "_nav_ref", None)

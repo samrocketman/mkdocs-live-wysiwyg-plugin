@@ -1,6 +1,7 @@
 site_name: Your Documentation Site
 plugins:
-  - mkdocs-nav-weight
+  - mkdocs-nav-weight:
+      default_page_weight: 1000
 theme:
   features:
     - content.code.annotate

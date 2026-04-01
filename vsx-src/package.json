@@ -3,7 +3,7 @@
   "displayName": "MkDocs WYSIWYG",
   "description": "WYSIWYG editor for MkDocs Material themed docs. Launch and manage the MkDocs live preview server from VS Code.",
   "version": "0.0.0",
-  "publisher": "samrocketman",
+  "publisher": "mkdocs-wysiwyg",
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"

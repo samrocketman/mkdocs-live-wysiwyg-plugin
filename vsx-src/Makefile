@@ -14,6 +14,7 @@ resources/icon.png: resources/icon.svg
 
 pre-build: icon
 	cp ../.github/download-utilities.yml resources/download-utilities.yml
+	cp ../README.md README.md
 	rm -rf resources/example-docs
 	cp -r ../example-docs resources/example-docs
 	rm -rf resources/example-docs/site
@@ -28,7 +29,7 @@ build: pre-build
 	@ls dist/*.vsix
 
 clean:
-	rm -rf dist/ resources/icon.png resources/download-utilities.yml resources/example-docs
+	rm -rf dist/ resources/icon.png resources/download-utilities.yml resources/example-docs README.md
 
 shell:
 	docker run --rm -it $(IMAGE_NAME) /bin/bash

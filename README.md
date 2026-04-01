@@ -1,14 +1,16 @@
 # mkdocs-live-wysiwyg-plugin
 
 [![PyPI - Version](https://img.shields.io/pypi/v/mkdocs-live-wysiwyg-plugin)](https://pypi.org/project/mkdocs-live-wysiwyg-plugin/)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/mkdocs-wysiwyg.mkdocs-wysiwyg)](https://marketplace.visualstudio.com/items?itemName=mkdocs-wysiwyg.mkdocs-wysiwyg)
+[![Open VSX](https://img.shields.io/open-vsx/v/mkdocs-wysiwyg/mkdocs-wysiwyg)](https://open-vsx.org/extension/mkdocs-wysiwyg/mkdocs-wysiwyg)
 
 An all-in-one editor for GitHub and mkdocs documentation.
 
 1. Add [techdocs-preview.sh][1] to your `$PATH`.
-2. Edit documentation across your porojects.
+2. Edit documentation across your projects.
 
 <details class="note">
-<summary>📝 A small tutorial (click to expand)</summary>
+<summary>📝 A small CLI tutorial (click to expand)</summary>
 
 
 ## Try it out

@@ -82,6 +82,22 @@ jobs:
               f.write(script)
           PYEOF
 
+      - name: Sync pip-packages.txt into techdocs-preview.sh
+        run: |
+          python3 << 'PYEOF'
+          with open('techdocs-preview.sh') as f:
+              script = f.read()
+          with open('.github/pip-packages.txt') as f:
+              packages = f.read()
+          start_marker = "cat <<'EO_PIP_PACKAGES'\n"
+          end_marker = "\nEO_PIP_PACKAGES"
+          start_idx = script.index(start_marker) + len(start_marker)
+          end_idx = script.index(end_marker, start_idx)
+          script = script[:start_idx] + packages.rstrip('\n') + script[end_idx:]
+          with open('techdocs-preview.sh', 'w') as f:
+              f.write(script)
+          PYEOF
+
       - name: Commit and tag
         run: |
           git config user.name "github-actions[bot]"

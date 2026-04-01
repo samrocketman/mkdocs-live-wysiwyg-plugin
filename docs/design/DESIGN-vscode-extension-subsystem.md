@@ -26,7 +26,7 @@ Any change to a feature relevant to both subsystems must be updated in both. Thi
 |---|---|---|---|
 | **Environment bootstrap** | `uv()` / `yq()` functions, embedded download YAML | `platform.ts` (TS port of yml-install-files), reads bundled `download-utilities.yml` | `~/.techdocs/` path, binary versions from `.github/download-utilities.yml` |
 | **Venv creation** | `uv venv --python 3.13 ~/.techdocs/python3` | `environment.ts` calls `uv venv` via `child_process` | `~/.techdocs/python3` path |
-| **Package installation** | `pip()` wrapper → `uv pip install` | `environment.ts` calls `uv pip install` | Identical package list and version pins |
+| **Package installation** | `pip()` wrapper → `uv pip install`, pins synced from `.github/pip-packages.txt` at release | `environment.ts` calls `uv pip install`, reads bundled `resources/pip-packages.txt` at runtime | `.github/pip-packages.txt` single source of truth for version pins |
 | **Config generation** | `mkdocs_config` function (yq-based) | `config-generator.ts` (js-yaml-based) | Same output: plugin chain, theme, extensions, mermaid superfences |
 | **Theme handling** | `--theme` flag, Material defaults, `restore_theme.py` hook | `--theme` setting, same defaults, same hook generation | Material default palette, techdocs-core interaction |
 | **Mermaid superfences** | `add_superfences_with_mermaid_if_missing` (yq + snippet file) | `config-generator.ts` additive-only logic (js-yaml) | Additive-only rule (cardinal rule 7 analogy) |
@@ -79,9 +79,9 @@ Temp docs generation from `*.md` files with frontmatter injection, smart asset d
 
 Build and init command wrappers.
 
-### `constants.ts` — Python Package Pins
+### `constants.ts` — Version and Config Constants
 
-Holds `WYSIWYG_VERSION` and the pip package list. Binary versions come from `download-utilities.yml`, not from this file.
+Holds `WYSIWYG_VERSION`, port defaults, and managed plugin list. Pip package pins come from the bundled `resources/pip-packages.txt` (read at runtime by `environment.ts`), not from this file. Binary versions come from `download-utilities.yml`.
 
 ## VS Code UI
 
@@ -104,15 +104,17 @@ Holds `WYSIWYG_VERSION` and the pip package list. Binary versions come from `dow
 
 2. **`.github/download-utilities.yml` is the single source of truth for binaries.** No binary version, checksum, or download URL may be hardcoded in TypeScript. All values come from the YAML at runtime.
 
-3. **The extension must not call `techdocs-preview.sh`.** It reimplements the same behavior in TypeScript for cross-platform support.
+3. **`.github/pip-packages.txt` is the single source of truth for pip package pins.** No pip package version may be hardcoded in TypeScript or duplicated in the shell script. The release workflow syncs the file into `techdocs-preview.sh`; the VSIX build bundles it as `resources/pip-packages.txt` for runtime reading by `environment.ts`.
 
-4. **The shared venv path `~/.techdocs/` must not change.** Both CLI and extension depend on this location. On Windows this resolves to `%USERPROFILE%\.techdocs\`.
+4. **The extension must not call `techdocs-preview.sh`.** It reimplements the same behavior in TypeScript for cross-platform support.
 
-5. **Plugin ordering must match the CLI.** `techdocs-core` before `live-edit` before `live-wysiwyg`. This is required for correct theme configuration and plugin dependencies.
+5. **The shared venv path `~/.techdocs/` must not change.** Both CLI and extension depend on this location. On Windows this resolves to `%USERPROFILE%\.techdocs\`.
 
-6. **The dual `mkdocs.yml` contract must be preserved.** The `$TMPDIR/original-mkdocs.yml` path is how `plugin.py` detects dual-write mode. The extension must set `TMPDIR` identically to the CLI.
+6. **Plugin ordering must match the CLI.** `techdocs-core` before `live-edit` before `live-wysiwyg`. This is required for correct theme configuration and plugin dependencies.
 
-7. **All Node.js dependencies must resolve from public registries.** `package.json`, `package-lock.json`, and any other dependency manifest must reference only publicly accessible registries (e.g. `https://registry.npmjs.org/`). No private or corporate registry URLs may appear in committed files. This ensures CI, Docker builds, and external contributors can resolve dependencies without special network access.
+7. **The dual `mkdocs.yml` contract must be preserved.** The `$TMPDIR/original-mkdocs.yml` path is how `plugin.py` detects dual-write mode. The extension must set `TMPDIR` identically to the CLI.
+
+8. **All Node.js dependencies must resolve from public registries.** `package.json`, `package-lock.json`, and any other dependency manifest must reference only publicly accessible registries (e.g. `https://registry.npmjs.org/`). No private or corporate registry URLs may appear in committed files. This ensures CI, Docker builds, and external contributors can resolve dependencies without special network access.
 
 ## Server Readiness Checks
 

@@ -1,0 +1,9 @@
+mkdocs-techdocs-core
+mkdocs-same-dir
+mkdocs-gen-files
+mkdocstrings
+mkdocstrings-python
+mkdocs-nav-weight
+griffe
+websockets
+mkdocs-live-edit-plugin

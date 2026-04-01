@@ -4,14 +4,15 @@
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/mkdocs-wysiwyg.mkdocs-wysiwyg)](https://marketplace.visualstudio.com/items?itemName=mkdocs-wysiwyg.mkdocs-wysiwyg)
 [![Open VSX](https://img.shields.io/open-vsx/v/mkdocs-wysiwyg/mkdocs-wysiwyg)](https://open-vsx.org/extension/mkdocs-wysiwyg/mkdocs-wysiwyg)
 
-An all-in-one editor for GitHub and mkdocs documentation.
+An all-in-one editor for GitHub and mkdocs documentation.  Available from an
+extension store above or from GitHub release.  Alternately available as a simple
+shell script.
 
 1. Add [techdocs-preview.sh][1] to your `$PATH`.
 2. Edit documentation across your projects.
 
 <details class="note">
 <summary>📝 A small CLI tutorial (click to expand)</summary>
-
 
 ## Try it out
 

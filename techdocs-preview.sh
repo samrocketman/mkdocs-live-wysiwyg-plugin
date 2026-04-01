@@ -362,17 +362,19 @@ install_techdocs() (
   # shellcheck disable=SC1090
   source ~/.techdocs/python3/bin/activate
   pip install \
-    mkdocs-techdocs-core==1.5.3 \
-    mkdocs-same-dir==0.1.3 \
-    mkdocs-gen-files==0.5.0 \
-    mkdocstrings==0.28.2 \
-    mkdocstrings-python==1.16.2 \
-    mkdocs-nav-weight==0.3.0 \
-    griffe==1.6.0
-
-  pip install websockets==16.0 \
-    mkdocs-live-edit-plugin==0.4.1 \
-    mkdocs-live-wysiwyg-plugin=="$WYSIWYG_VERSION"
+    mkdocs-live-wysiwyg-plugin=="$WYSIWYG_VERSION" \
+    $(cat <<'EO_PIP_PACKAGES'
+mkdocs-techdocs-core==1.5.3
+mkdocs-same-dir==0.1.3
+mkdocs-gen-files==0.5.0
+mkdocstrings==0.28.2
+mkdocstrings-python==1.16.2
+mkdocs-nav-weight==0.3.0
+griffe==1.6.0
+websockets==16.0
+mkdocs-live-edit-plugin==0.4.1
+EO_PIP_PACKAGES
+    )
 
   echo "$WYSIWYG_VERSION" > ~/.techdocs/current
 )

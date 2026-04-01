@@ -10,7 +10,7 @@ import {
   executableName,
   downloadUtility,
 } from './platform';
-import { WYSIWYG_VERSION, PYTHON_VERSION, PIP_PACKAGES } from './constants';
+import { WYSIWYG_VERSION, PYTHON_VERSION } from './constants';
 
 function uvPath(): string {
   return getBinaryPath('uv');
@@ -45,6 +45,16 @@ function isCurrentVersion(): boolean {
 
 function writeCurrentVersion(): void {
   fs.writeFileSync(currentVersionFile(), WYSIWYG_VERSION, 'utf8');
+}
+
+function loadPipPackages(extensionPath: string): string[] {
+  const filePath = path.join(extensionPath, 'resources', 'pip-packages.txt');
+  const content = fs.readFileSync(filePath, 'utf8');
+  const packages = content.split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
+  packages.push(`mkdocs-live-wysiwyg-plugin==${WYSIWYG_VERSION}`);
+  return packages;
 }
 
 function runUv(args: string[], cwd?: string): Promise<string> {
@@ -103,7 +113,7 @@ export async function ensureEnvironment(
   await runUv([
     'pip', 'install',
     '--python', pythonPath,
-    ...PIP_PACKAGES,
+    ...loadPipPackages(extensionPath),
   ]);
 
   writeCurrentVersion();
@@ -133,7 +143,7 @@ export async function upgradeEnvironment(
   await runUv([
     'pip', 'install', '--reinstall',
     '--python', pythonPath,
-    ...PIP_PACKAGES,
+    ...loadPipPackages(extensionPath),
   ]);
 
   writeCurrentVersion();

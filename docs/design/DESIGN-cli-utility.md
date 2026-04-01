@@ -11,7 +11,7 @@ All code lives in `techdocs-preview.sh`.
 ### Environment Bootstrap
 
 - **Python virtual environment**: Creates `~/.techdocs/python3` via `uv venv --python 3.13`. Uses `uv` as the package manager (with automatic download via `yml-install-files` if not available).
-- **Dependency installation**: Installs `mkdocs-techdocs-core`, `mkdocs-same-dir`, `mkdocs-gen-files`, `mkdocstrings`, `mkdocs-nav-weight`, `mkdocs-live-edit-plugin`, and `mkdocs-live-wysiwyg-plugin` at pinned versions.
+- **Dependency installation**: Installs all packages listed in `.github/pip-packages.txt` (the single source of truth for version pins) plus `mkdocs-live-wysiwyg-plugin` pinned to `$WYSIWYG_VERSION`. The release workflow syncs `pip-packages.txt` into the shell script's `EO_PIP_PACKAGES` heredoc block at release time.
 - **Version tracking**: After installation, the current version string is written to `~/.techdocs/current`. On subsequent runs, `install_techdocs` skips pip install if the file matches `WYSIWYG_VERSION`. When the file contains `dev`, installation is always skipped — even with `FORCE_UPDATE=1` (upgrade) — to protect locally-installed development packages.
 - **Dev mode auto-detection**: `add_plugins` checks whether any non-flag argument is a directory containing `mkdocs_live_wysiwyg_plugin/`. If found, it writes `dev` to `~/.techdocs/current`, preventing future runs from overwriting the local development install.
 - **Upgrade path**: `techdocs-preview.sh upgrade` re-runs installation with `FORCE_UPDATE=1`. Respects the `dev` guard — if `~/.techdocs/current` is `dev`, upgrade is a no-op.

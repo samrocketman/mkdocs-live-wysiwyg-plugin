@@ -13212,10 +13212,13 @@
 
     var siteTitleText = _extractSiteName(_virtualMkdocsYml) ||
       (document.title ? document.title.split(' - ').pop().trim() : 'Navigation');
+    var titleRow = document.createElement('span');
+    titleRow.className = 'live-wysiwyg-nav-title-row';
     var siteTitleSpan = document.createElement('span');
     siteTitleSpan.className = 'live-wysiwyg-nav-site-title';
     siteTitleSpan.textContent = siteTitleText;
-    navTitle.appendChild(siteTitleSpan);
+    titleRow.appendChild(siteTitleSpan);
+    navTitle.appendChild(titleRow);
 
     navTitle.addEventListener('mouseenter', function () {
       navTitle.classList.add('live-wysiwyg-nav-title-hover');
@@ -13236,7 +13239,7 @@
 
     var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
     if (nwCfg.enabled && _navMaxWeight > 0 && !_navMigrationPending) {
-      var defWeight = nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 1000;
+      var defWeight = _effectiveDefaultPageWeight(nwCfg);
       if (_navMaxWeight > defWeight) {
         var suggested = Math.ceil((_navMaxWeight + 500) / 1000) * 1000;
         if (!_hasNavTopWarning('weight-exceeds-default')) {
@@ -13277,7 +13280,7 @@
           }
           _showNavPopup(warnIcon, warn.text, actions);
         });
-        navTitle.appendChild(warnIcon);
+        titleRow.appendChild(warnIcon);
       })(_navTopWarnings[tw]);
     }
 
@@ -13923,7 +13926,7 @@
         if (!_isRootIndex(item)) {
           if (nwCfg.enabled && item.weight != null) {
             if (item.weight > _navMaxWeight) _navMaxWeight = item.weight;
-            var defWeight = (nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 1000);
+            var defWeight = _effectiveDefaultPageWeight(nwCfg);
             if (!item.isIndex && item.weight > defWeight) {
               var weightIcon = document.createElement('span');
               weightIcon.className = 'live-wysiwyg-nav-caution';
@@ -13934,9 +13937,15 @@
                 wIcon.addEventListener('click', function (ev) {
                   ev.preventDefault();
                   ev.stopPropagation();
+                  var suggested = Math.ceil((_navMaxWeight + 500) / 1000) * 1000;
+                  var actions = [{
+                    text: 'Apply to mkdocs.yml',
+                    primary: true,
+                    action: function () { _applyDefaultPageWeight(suggested); }
+                  }];
                   _showNavPopup(wIcon,
-                    'Weight ' + wItem.weight + ' exceeds default page weight ' + wDef + '. See caution at top of nav menu to resolve.',
-                    []);
+                    'Weight ' + wItem.weight + ' exceeds default page weight ' + wDef + '. Increase default_page_weight to ' + suggested + '?',
+                    actions);
                 });
               })(weightIcon, item, defWeight);
               a.appendChild(weightIcon);
@@ -15996,6 +16005,34 @@
     return value;
   };
 
+  /** Introspected schema default from mkdocs-nav-weight (injected as liveWysiwygNavWeightUpstreamDefaultPageWeight). */
+  function _navWeightUpstreamDefault() {
+    if (typeof liveWysiwygNavWeightUpstreamDefaultPageWeight === 'number') {
+      return liveWysiwygNavWeightUpstreamDefaultPageWeight;
+    }
+    return 0;
+  }
+
+  function _snapshotDefaultPageWeight(cfg) {
+    if (!cfg) return _navWeightUpstreamDefault();
+    if (cfg.default_page_weight !== undefined && cfg.default_page_weight !== null) {
+      return cfg.default_page_weight;
+    }
+    return _navWeightUpstreamDefault();
+  }
+
+  /** Effective threshold: merged MkDocs config value, else upstream schema default (plugin.py + liveWysiwygNavWeightConfig.upstream_default_page_weight). */
+  function _effectiveDefaultPageWeight(cfg) {
+    if (!cfg) return _navWeightUpstreamDefault();
+    if (cfg.default_page_weight !== undefined && cfg.default_page_weight !== null) {
+      return cfg.default_page_weight;
+    }
+    if (cfg.upstream_default_page_weight !== undefined && cfg.upstream_default_page_weight !== null) {
+      return cfg.upstream_default_page_weight;
+    }
+    return _navWeightUpstreamDefault();
+  }
+
   function _computeNavContentHash(snap) {
     var parts = [
       JSON.stringify(snap.navData, _navContentHashReplacer),
@@ -16003,7 +16040,10 @@
       snap.mkdocsYml || '',
       snap.generatedMkdocsYml || '',
       snap.migrationPending ? '1' : '0',
-      snap.pendingFolderDelete ? JSON.stringify(snap.pendingFolderDelete) : ''
+      snap.pendingFolderDelete ? JSON.stringify(snap.pendingFolderDelete) : '',
+      JSON.stringify(snap.topWarnings || []),
+      JSON.stringify(snap.navWeightConfig || null),
+      JSON.stringify(snap.badges || [])
     ];
     return _djb2Hash(parts.join('\x00'));
   }
@@ -16166,7 +16206,15 @@
       mkdocsYml: _virtualMkdocsYml,
       generatedMkdocsYml: _virtualGeneratedMkdocsYml,
       hasNavKey: _ymlHasNavKey(_virtualMkdocsYml),
-      navWeightConfig: { installed: !!cfg.installed, enabled: !!cfg.enabled, default_page_weight: cfg.default_page_weight || 1000, frontmatter_defaults: cfg.frontmatter_defaults || null }
+      navWeightConfig: {
+        installed: !!cfg.installed,
+        enabled: !!cfg.enabled,
+        default_page_weight: _snapshotDefaultPageWeight(cfg),
+        upstream_default_page_weight: (cfg.upstream_default_page_weight !== undefined && cfg.upstream_default_page_weight !== null)
+          ? cfg.upstream_default_page_weight
+          : _navWeightUpstreamDefault(),
+        frontmatter_defaults: cfg.frontmatter_defaults || null
+      }
     };
     snap.contentHash = _computeNavContentHash(snap);
     return snap;
@@ -16191,6 +16239,9 @@
         liveWysiwygNavWeightConfig.installed = snapshot.navWeightConfig.installed;
         liveWysiwygNavWeightConfig.enabled = snapshot.navWeightConfig.enabled;
         liveWysiwygNavWeightConfig.default_page_weight = snapshot.navWeightConfig.default_page_weight;
+        if (snapshot.navWeightConfig.upstream_default_page_weight !== undefined && snapshot.navWeightConfig.upstream_default_page_weight !== null) {
+          liveWysiwygNavWeightConfig.upstream_default_page_weight = snapshot.navWeightConfig.upstream_default_page_weight;
+        }
         if (snapshot.navWeightConfig.frontmatter_defaults) {
           liveWysiwygNavWeightConfig.frontmatter_defaults = snapshot.navWeightConfig.frontmatter_defaults;
         }
@@ -16212,7 +16263,13 @@
       mkdocsYml: snap.mkdocsYml,
       generatedMkdocsYml: snap.generatedMkdocsYml,
       hasNavKey: snap.hasNavKey,
-      navWeightConfig: nwc ? { installed: nwc.installed, enabled: nwc.enabled, default_page_weight: nwc.default_page_weight, frontmatter_defaults: nwc.frontmatter_defaults } : null
+      navWeightConfig: nwc ? {
+        installed: nwc.installed,
+        enabled: nwc.enabled,
+        default_page_weight: nwc.default_page_weight,
+        upstream_default_page_weight: nwc.upstream_default_page_weight,
+        frontmatter_defaults: nwc.frontmatter_defaults
+      } : null
     };
   }
 
@@ -21150,7 +21207,7 @@
     }
 
     var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
-    var curDefaultWeight = nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 1000;
+    var curDefaultWeight = _effectiveDefaultPageWeight(nwCfg);
     var migMaxWeight = 0;
     for (var mw = 0; mw < tree.pages.length; mw++) {
       if (tree.pages[mw].weight != null && tree.pages[mw].weight > migMaxWeight) migMaxWeight = tree.pages[mw].weight;
@@ -21404,7 +21461,8 @@
 
   function _insertNavWeightEntry(yml) {
     var pluginsMatch = yml.match(/^plugins:\s*$/m);
-    var newEntry = '\n  - mkdocs-nav-weight:\n      default_page_weight: 1000\n';
+    var d = _navWeightUpstreamDefault();
+    var newEntry = '\n  - mkdocs-nav-weight:\n      default_page_weight: ' + d + '\n';
     if (pluginsMatch) {
       return yml.substring(0, pluginsMatch.index + pluginsMatch[0].length) + newEntry +
         yml.substring(pluginsMatch.index + pluginsMatch[0].length);
@@ -21417,8 +21475,11 @@
       window.liveWysiwygNavWeightConfig = {};
     }
     liveWysiwygNavWeightConfig.enabled = true;
+    if (liveWysiwygNavWeightConfig.upstream_default_page_weight == null) {
+      liveWysiwygNavWeightConfig.upstream_default_page_weight = _navWeightUpstreamDefault();
+    }
     if (liveWysiwygNavWeightConfig.default_page_weight == null) {
-      liveWysiwygNavWeightConfig.default_page_weight = 1000;
+      liveWysiwygNavWeightConfig.default_page_weight = _navWeightUpstreamDefault();
     }
     if (!liveWysiwygNavWeightConfig.frontmatter_defaults) {
       var dpw = liveWysiwygNavWeightConfig.default_page_weight;
@@ -21443,11 +21504,17 @@
   }
 
   function _applyDefaultPageWeight(newWeight) {
+    if (!_navEditMode) _enterNavEditMode();
     _applyYmlTransform(function (y) { return _replaceDefaultPageWeight(y, newWeight); });
     liveWysiwygNavWeightConfig.default_page_weight = newWeight;
     _removeNavTopWarning('weight-exceeds-default');
+    if (!_navBadges.some(function (b) { return b.text === 'Update default_page_weight in mkdocs.yml'; })) {
+      _addNavBadge({
+        className: 'live-wysiwyg-nav-normalize-badge',
+        text: 'Update default_page_weight in mkdocs.yml'
+      });
+    }
     _commitNavSnapshot();
-    if (!_navEditMode) _enterNavEditMode();
   }
 
   function _replaceDefaultPageWeight(yml, newWeight) {
@@ -21462,6 +21529,18 @@
       return yml.substring(0, match.index + match[0].length) +
         indent + '    default_page_weight: ' + newWeight + '\n' +
         yml.substring(match.index + match[0].length);
+    }
+    // Bare plugin list item (no colon): in-place upgrade per DESIGN-changing-mkdocs-yml.md Rule 2
+    var bareRe = /^(\s*)(-\s*)mkdocs-nav-weight\s*$/m;
+    var bareMatch = bareRe.exec(yml);
+    if (bareMatch) {
+      var lineIndent = bareMatch[1];
+      var dashPart = bareMatch[2];
+      // Do not append \n after newWeight: suffix already starts with the line break that followed the bare list item.
+      return yml.substring(0, bareMatch.index) +
+        lineIndent + dashPart + 'mkdocs-nav-weight:\n' +
+        lineIndent + '    default_page_weight: ' + newWeight +
+        yml.substring(bareMatch.index + bareMatch[0].length);
     }
     return yml;
   }
@@ -23452,9 +23531,11 @@
       '}' +
 
       // --- Nav menu in left sidebar (matches md-sidebar--primary / md-nav--primary at >=76.25em) ---
+      // --live-wysiwyg-nav-vscode-inset: one arrow width (12px); avoids left-edge clipping of nav arrows in VSCode webview
       '.live-wysiwyg-focus-sidebar-left{' +
+        '--live-wysiwyg-nav-vscode-inset:12px;' +
         'display:flex;flex-direction:column;overflow:hidden;max-height:calc(var(--_panel-h,calc(100vh - 2.4rem)) - 1.5rem);' +
-        'padding:1.2rem .2rem 0 0;position:sticky;top:0;' +
+        'padding:1.2rem .2rem 0 var(--live-wysiwyg-nav-vscode-inset);position:sticky;top:0;' +
         'font-size:.7rem;line-height:1.3;' +
         'margin-left:calc(-56px - var(--_nav-extend,0px));background-color:var(--md-default-bg-color,#fff);' +
         'transition:transform .3s ease-in-out,opacity .3s ease-in-out;' +
@@ -23473,7 +23554,7 @@
         'font-size:.7rem;line-height:1.3;' +
       '}' +
       '.live-wysiwyg-focus-sidebar-left .md-nav__title{' +
-        'display:block;padding:.4rem .6rem;font-weight:700;' +
+        'display:flex;align-items:center;padding:.4rem .6rem;font-weight:700;' +
         'color:var(--md-default-fg-color--light,#999);' +
         'background:var(--md-default-bg-color,#fff);' +
         'box-shadow:0 0 .4rem .4rem var(--md-default-bg-color,#fff);' +
@@ -24050,8 +24131,15 @@
       '.live-wysiwyg-nav-title-hover .live-wysiwyg-nav-site-gear{' +
         'display:inline-block;' +
       '}' +
+      '.live-wysiwyg-nav-title-row{' +
+        'display:flex;align-items:center;gap:4px;flex:1;min-width:0;overflow:hidden;' +
+      '}' +
+      '.live-wysiwyg-nav-title-row .live-wysiwyg-nav-caution,' +
+      '.live-wysiwyg-nav-title-row .live-wysiwyg-nav-warning{' +
+        'flex-shrink:0;' +
+      '}' +
       '.live-wysiwyg-nav-site-title{' +
-        'display:block;overflow:hidden;text-overflow:ellipsis;' +
+        'flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
       '}' +
 
       // --- Hidden (headless) pages in nav ---
@@ -25879,7 +25967,7 @@
   function _adjustDefaultPageWeightSilent() {
     var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
     if (!nwCfg.enabled) return;
-    var defWeight = nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 1000;
+    var defWeight = _effectiveDefaultPageWeight(nwCfg);
     var maxW = 0;
     (function walk(items) {
       for (var i = 0; i < items.length; i++) {
@@ -25901,7 +25989,7 @@
     if (typeof liveWysiwygNavData === 'undefined' || !liveWysiwygNavData.length) return false;
     var nwCfg = typeof liveWysiwygNavWeightConfig !== 'undefined' ? liveWysiwygNavWeightConfig : {};
     if (!nwCfg.enabled) return false;
-    var defWeight = nwCfg.default_page_weight !== undefined ? nwCfg.default_page_weight : 1000;
+    var defWeight = _effectiveDefaultPageWeight(nwCfg);
     var maxW = 0;
     (function walk(items) {
       for (var i = 0; i < items.length; i++) {

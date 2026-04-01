@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # since rapidly developing I'll track this at the top for now
-WYSIWYG_VERSION=0.4.1
+WYSIWYG_VERSION=0.4.2
 YML_INSTALL_FILES_VERSION="v3.8"
 
 # GITHUB_DOWNLOAD_MIRROR=...
@@ -364,15 +364,52 @@ install_techdocs() (
   pip install \
     mkdocs-live-wysiwyg-plugin=="$WYSIWYG_VERSION" \
     $(cat <<'EO_PIP_PACKAGES'
-mkdocs-techdocs-core==1.5.3
-mkdocs-same-dir==0.1.3
+babel==2.18.0
+certifi==2026.2.25
+charset-normalizer==3.4.6
+click==8.3.1
+colorama==0.4.6
+ghp-import==2.1.0
+griffe==1.6.0
+idna==3.11
+jinja2==3.1.6
+markdown==3.7
+markdown-graphviz-inline==1.1.3
+markupsafe==3.0.3
+mdx-truly-sane-lists==1.3
+mergedeep==1.3.4
+mkdocs==1.6.1
+mkdocs-autorefs==1.4.4
 mkdocs-gen-files==0.5.0
+mkdocs-get-deps==0.2.2
+mkdocs-live-edit-plugin==0.4.1
+mkdocs-material==9.6.5
+mkdocs-material-extensions==1.3.1
+mkdocs-monorepo-plugin==1.1.0
+mkdocs-nav-weight==0.3.0
+mkdocs-redirects==1.2.2
+mkdocs-same-dir==0.1.3
+mkdocs-techdocs-core==1.5.3
 mkdocstrings==0.28.2
 mkdocstrings-python==1.16.2
-mkdocs-nav-weight==0.3.0
-griffe==1.6.0
+packaging==26.0
+paginate==0.5.7
+pathspec==1.0.4
+plantuml-markdown==3.11.1
+platformdirs==4.9.4
+pygments==2.19.1
+pymdown-extensions==10.14.3
+python-dateutil==2.9.0.post0
+python-slugify==8.0.4
+pyyaml==6.0.3
+pyyaml-env-tag==1.1
+regex==2026.3.32
+requests==2.33.1
+six==1.17.0
+text-unidecode==1.3
+urllib3==2.6.3
+watchdog==6.0.0
 websockets==16.0
-mkdocs-live-edit-plugin==0.4.1
 EO_PIP_PACKAGES
     )
 
@@ -549,7 +586,7 @@ init_data() {
 cat << 'EO_EXAMPLE_DOCS'
 H4sIAAAAAAACA+1abW8bNxL25/0VtP0hycVSLVlyAOHQg89pal/PveBkIAiKwqJ2KS3h3eWW5FrS
 /fp7huSuVi9BWuDsXlEtklhaDuedM8/QyR8TFZvuKs+Onu05x3M5GNDP3rthr/3TPcN+76g37F1e
-nF8O3/XOj857/eFF74idH73AUxnLNVTRVVEI/WW6r63/QR8jrXgoeC5G7LOqNHuv4ioXheVWqoKN
+nL/rnQ8vj857/eFF74idH73AUxnLNVTRVVEI/WW6r63/QR8jrXgoeC5G7LOqNHuv4ioXheVWqoKN
 sRqVWTWXhRlFjHVY7vKlU/CnzkLIeWojmwrsxuJMcFtp4QiJNFaFBadurBLR5UWhwFREOddgsSge
 xBKrBlICZ57kqpAk1n0tVzmRLbuJsFxmZvOlqUqhZ6KIa3GMxYikyh82X9Imb10udM5l0rzHhowb
 s29hpvDGjtjxcbmyqSq+cRz2ye66Hw9k4YPfFf3B4k/R/OaZZdAZfzccfvH849k6/73B5fkRGx7O
@@ -584,7 +621,7 @@ xbUJkaHfcwcHdZ76rtS7d0AaTrqWQJ9/nepvpzx+RLN6NOw19r85oUvssYWZ7T0fUeANUf/96vqH
 8cer6+/oi+sRwIUEsBLPLFOAHMAZeNl1rO7cdemWfDLxVVD1Fe1b+HpuSh47PrEicGwDrg4WOn7X
 mps0cvx++svPrNP5tqWt++TeYW3rTUsR/3Frb+ull0Ev3aeGIfzjInCv6SKf8HUUXYcw7ESrAT5o
 2y7qlFAWO+mq1zloPRIFA5FRdfbmfClz6rxkv6T/koDWVKcJ/fZC1DjFuDlijVECTY0UDt3l8Bye
-w/P//PwXNo9pDgAoAAA=
+w/P//PwX7DjTgwAoAAA=
 EO_EXAMPLE_DOCS
 }
 

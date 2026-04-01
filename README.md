@@ -38,7 +38,7 @@ techdocs-preview.sh -c -a docs
 
 ## Features
 
-A WYSIWYG (What-You-See-Is-What-You-Get) editor for exiting `mkdocs` documentation.
+A WYSIWYG (What-You-See-Is-What-You-Get) editor for editing `mkdocs` documentation.
 
 - 🌈✨ Author quality of life features
   - 👁-👁 Focus mode with collapsible nav sidebar, editing tools, and table of contents.

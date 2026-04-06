@@ -13,6 +13,8 @@ interface UtilityConfig {
   os?: Record<string, string | Record<string, string>>;
   arch?: Record<string, string | Record<string, string>>;
   extension?: string | Record<string, string>;
+  /** Installed basename suffix; OS/arch aware like yml-install-files. */
+  final_ext?: string | Record<string, unknown>;
   download?: string;
   extract?: string | Record<string, string>;
   dest?: string;
@@ -178,6 +180,36 @@ export function executableName(name: string): string {
   return os.platform() === 'win32' ? `${name}.exe` : name;
 }
 
+/**
+ * Resolved suffix for the installed file (e.g. `.exe`), from YAML `final_ext` with
+ * yml-install-files-style precedence. If unset and the resolved OS is a Windows
+ * family label, implies `.exe` (same idea as download-utilities.sh).
+ */
+function resolveFinalExt(
+  utility: UtilityConfig,
+  resolvedOs: string,
+  resolvedArch: string
+): string {
+  const fromYaml = resolveField(utility.final_ext, resolvedOs, resolvedArch);
+  if (fromYaml !== '') {
+    return fromYaml;
+  }
+  if (isWindowsResolvedOs(resolvedOs)) {
+    return '.exe';
+  }
+  return '';
+}
+
+/** Translated os values used for Windows in bundled YAML / checksums. */
+function isWindowsResolvedOs(resolvedOs: string): boolean {
+  const lower = resolvedOs.toLowerCase();
+  return lower === 'windows' || lower === 'pc-windows-msvc' || resolvedOs === 'Windows';
+}
+
+function utilityFileBasename(utilityName: string, finalExt: string): string {
+  return `${utilityName}${finalExt}`;
+}
+
 export function getBinaryPath(name: string): string {
   return path.join(getTechdocsHome(), executableName(name));
 }
@@ -204,17 +236,17 @@ function extractBinary(
   data: Buffer,
   downloadUrl: string,
   utilityName: string,
+  fileBasename: string,
   dest: string,
   resolvedOs: string,
   resolvedArch: string
 ): void {
-  const binaryName = executableName(utilityName);
-  const binaryPath = path.join(dest, binaryName);
+  const binaryPath = path.join(dest, fileBasename);
 
   if (downloadUrl.endsWith('.tar.gz') || downloadUrl.endsWith('.tgz')) {
     extractTarGz(data, utilityName, dest, resolvedOs, resolvedArch);
   } else if (downloadUrl.endsWith('.zip')) {
-    extractZip(data, binaryName, dest);
+    extractZip(data, fileBasename, dest);
   } else {
     fs.writeFileSync(binaryPath, data);
   }
@@ -316,6 +348,9 @@ export async function downloadUtility(
 
   fs.mkdirSync(dest, { recursive: true });
 
+  const finalExt = resolveFinalExt(utility, resolvedOs, resolvedArch);
+  const fileBasename = utilityFileBasename(utilityName, finalExt);
+
   const vars: Record<string, string> = {
     version,
     os: resolvedOs,
@@ -323,6 +358,8 @@ export async function downloadUtility(
     extension,
     dest,
     utility: utilityName,
+    final_ext: finalExt,
+    utility_file: fileBasename,
   };
 
   const downloadUrl = interpolate(utility.download ?? '', vars);
@@ -330,9 +367,9 @@ export async function downloadUtility(
 
   const data = await httpGet(downloadUrl);
 
-  extractBinary(data, downloadUrl, utilityName, dest, resolvedOs, resolvedArch);
+  extractBinary(data, downloadUrl, utilityName, fileBasename, dest, resolvedOs, resolvedArch);
 
-  const binaryPath = path.join(dest, executableName(utilityName));
+  const binaryPath = path.join(dest, fileBasename);
 
   if (expectedChecksum) {
     const binaryData = fs.readFileSync(binaryPath);

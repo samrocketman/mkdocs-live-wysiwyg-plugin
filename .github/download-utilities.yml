@@ -1,18 +1,18 @@
 versions:
   gh: 2.89.0
-  uv: 0.11.2
+  uv: 0.11.3
   yq: 4.52.5
 checksums:
   uv:
     unknown-linux-gnu:
-      x86_64: 5c339318bf969cb34848d7616a0c9e6ab27478a8b5cb46dd3ae94d182ea5aa8d
-      aarch64: 6df7e4d21f3bba10f46a202d0bd04e2c59408b0a7c8e71c352384f28a4f050f2
+      x86_64: fa5fc652fa5ed5b44fa8e7dda507f27975c02f59643787fd8ab4bf36f1ba7438
+      aarch64: 9a7aa4d5f2892fa3cc56759e040e64977b960d6b69c85621292f3083704e1d04
     apple-darwin:
-      aarch64: 65910fd6aad18674516122e077a932248c672ff849dc2946045d69326480e3e6
-      x86_64: 597464488a968dba4f4173ccf95728d000616b2730c8ee00657df5a58f7f3a68
+      aarch64: 4424f8430c3cb3990daaa68268af640bdc61190f2e5c276197e3473358b1e4e8
+      x86_64: 48f0103ad226bfafbf78c6dc86164107faf649b20ed45771917a12776a61ddc4
     pc-windows-msvc:
-      x86_64: 8881afb877996a1373a12e816395122a8d39a3ac06cd066272acdb49510cf0fe
-      aarch64: 45ba7b72a7435343d650c73d21d65d2e8bdda47f6bd39af00e37f3cb70aa79ef
+      x86_64: 07876908e19cf9a875a01d3b702c89b25ded154cc736079feeb4ef78a8f4ca64
+      aarch64: 28e9604f85504d0213a145b1484de0e78397aa1a6278a5394f06d96277f9014b
   yq:
     darwin:
       arm64: 45a12e64d4bd8a31c72ee1b889e81f1b1110e801baad3d6f030c111db0068de0
@@ -31,12 +31,15 @@ checksums:
       arm64: 91d2de52d3aa2d87fe6b8baf18f20500031b337885642d2df225134bd0544acf
       amd64: b3cbc5defffe19cfe53b60232d325ed2c5cea57f1c1c1140e3e213e3b832a6c6
     windows:
-      arm64: ''
-      amd64: ''
+      arm64: 'c9d687bcc4029a5ff3b1fa2d91d861976c0013d3a6d6acfa89768f76240494ab'
+      amd64: 'c3b2dea7d4961d5c54133e3bddf2b9b67505ef4cc0409759569a9972b81e35c2'
 
 defaults: &defaults
   dest: '${DESTINATION_DIR:-/usr/local/bin}'
   perm: '0755'
+  final_ext:
+    windows: .exe
+    pc-windows-msvc: .exe
   update: |
     owner="$(awk -F/ '{print $4"/"$5}' <<< "${download}")"
     export download=https://github.com/"${owner}"/releases/latest
@@ -108,5 +111,5 @@ utility:
         }
     pre_command: |
       if [ "${checksum_failed:-true}" = true ]; then
-        rm -f ${dest}/${utility}
+        rm -f ${dest}/${utility_file}
       fi

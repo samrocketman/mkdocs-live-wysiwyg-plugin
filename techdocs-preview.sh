@@ -8,7 +8,7 @@ set -euo pipefail
 
 # since rapidly developing I'll track this at the top for now
 WYSIWYG_VERSION=0.4.5
-YML_INSTALL_FILES_VERSION="v3.8"
+YML_INSTALL_FILES_VERSION="v3.9"
 
 # GITHUB_DOWNLOAD_MIRROR=...
 # RAW_GITHUB_DOWNLOAD_MIRROR=...

@@ -16,7 +16,7 @@ jobs:
 
       - name: Install uv from .github/download-utilities.yml
         run: |
-          YML_INSTALL_FILES_VERSION="v3.8"
+          YML_INSTALL_FILES_VERSION="v3.9"
           curl -fsSL -o download-utilities.sh "https://raw.githubusercontent.com/samrocketman/yml-install-files/${YML_INSTALL_FILES_VERSION}/download-utilities.sh"
           chmod +x download-utilities.sh
           ./download-utilities.sh .github/download-utilities.yml uv
@@ -43,7 +43,7 @@ jobs:
 
       - name: Install uv and yq from .github/download-utilities.yml
         run: |
-          YML_INSTALL_FILES_VERSION="v3.8"
+          YML_INSTALL_FILES_VERSION="v3.9"
           curl -fsSL -o download-utilities.sh "https://raw.githubusercontent.com/samrocketman/yml-install-files/${YML_INSTALL_FILES_VERSION}/download-utilities.sh"
           chmod +x download-utilities.sh
           ./download-utilities.sh .github/download-utilities.yml uv yq

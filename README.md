@@ -1,7 +1,7 @@
 # mkdocs-live-wysiwyg-plugin
 
 [![PyPI - Version](https://img.shields.io/pypi/v/mkdocs-live-wysiwyg-plugin)](https://pypi.org/project/mkdocs-live-wysiwyg-plugin/)
-[![VS Code Marketplace](https://vsmarketplacebadges.dev/version-short/mkdocs-wysiwyg.mkdocs-wysiwyg.svg?label=vscode)](https://marketplace.visualstudio.com/items?itemName=mkdocs-wysiwyg.mkdocs-wysiwyg)
+[![VS Code Marketplace](https://vsmarketplacebadges.dev/version-short/mkdocs-wysiwyg.mkdocs-wysiwyg.svg?label=vscode&colorB=orange)](https://marketplace.visualstudio.com/items?itemName=mkdocs-wysiwyg.mkdocs-wysiwyg)
 [![Open VSX](https://img.shields.io/open-vsx/v/mkdocs-wysiwyg/mkdocs-wysiwyg)](https://open-vsx.org/extension/mkdocs-wysiwyg/mkdocs-wysiwyg)
 
 An all-in-one editor for GitHub and mkdocs documentation.  Available from an

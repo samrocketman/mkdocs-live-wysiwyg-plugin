@@ -23,6 +23,8 @@ classifiers = [
 dependencies = [
     "mkdocs>=1.5",
     "mkdocs-live-edit-plugin",
+    "mkdocs-material>=9.7.7",
+    "mkdocs-nav-weight>=0.3.0",
 ]
 
 [project.optional-dependencies]
